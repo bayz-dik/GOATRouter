@@ -43,3 +43,15 @@ export {
   sealSecret,
   type SecretEnvelope,
 } from "./crypto.js";
+export {
+  MIGRATIONS,
+  TARGET_SCHEMA_VERSION,
+  readSchemaVersion,
+  runMigrations,
+  type Migration,
+} from "./migrations.js";
+export {
+  openDatabase,
+  type BayzDatabase,
+  type OpenDatabaseOptions,
+} from "./database.js";
