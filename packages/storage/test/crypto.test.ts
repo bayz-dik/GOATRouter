@@ -48,10 +48,20 @@ function expectCorrupt(run: () => unknown, label: string): void {
 
 test("round-trips a secret, including multi-byte UTF-8", () => {
   const key = kek(0x11);
-  for (const plaintext of [PLAINTEXT, "kunci-rahasia-日本語-🔐-ünïcode", "x"]) {
+  for (const plaintext of [PLAINTEXT, "kunci-rahasia-日本語-🔐-ünïcode", "x", ""]) {
     const envelope = sealSecret(key, NAME, plaintext);
     assert.equal(openSecret(key, NAME, envelope), plaintext);
   }
+});
+
+test("an empty secret still produces a non-empty authenticated ciphertext", () => {
+  // AES-GCM of an empty string yields zero ciphertext bytes, which would be
+  // indistinguishable from an emptied column. Framing keeps empty secrets
+  // storable while an emptied ciphertext stays detectable as corruption.
+  const key = kek(0x12);
+  const envelope = sealSecret(key, NAME, "");
+  assert.ok(envelope.ciphertext.byteLength >= 1);
+  assert.equal(openSecret(key, NAME, envelope), "");
 });
 
 test("envelope carries the metadata needed for later migration", () => {

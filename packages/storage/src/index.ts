@@ -55,3 +55,13 @@ export {
   type BayzDatabase,
   type OpenDatabaseOptions,
 } from "./database.js";
+export {
+  openSecretStorage,
+  type CorruptibleColumn,
+  type OpenSecretStorageOptions,
+  type SecretEnvelopeView,
+  type SecretRecordMetadata,
+  type SecretStorage,
+  type SecureSecretRepository,
+  type StorageLogger,
+} from "./secret-repository.js";

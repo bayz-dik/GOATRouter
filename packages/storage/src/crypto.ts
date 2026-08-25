@@ -16,6 +16,17 @@ const TAG_LENGTH = 16;
 const KEY_ID_INFO = "bayz-kek-id-v1";
 const KEY_ID_LENGTH = 16;
 
+/**
+ * Framing prefix prepended to the plaintext before encryption.
+ *
+ * AES-GCM of an empty string produces zero bytes of ciphertext, which is
+ * indistinguishable from a truncated-to-nothing record. Framing guarantees the
+ * ciphertext is always at least one byte, so an empty secret stays storable while
+ * an emptied ciphertext column is still rejected as corrupt. The byte also acts
+ * as an authenticated format marker for future payload layouts.
+ */
+const PLAINTEXT_FRAME_V1 = 0x01;
+
 export type SecretEnvelope = {
   version: typeof ENVELOPE_VERSION;
   algorithm: typeof SECRET_ALGORITHM;
@@ -147,7 +158,12 @@ export function sealSecret(
     const cipher = createCipheriv(SECRET_ALGORITHM, dek, iv);
     cipher.setAAD(aad);
     const ciphertext = Buffer.concat([
-      cipher.update(Buffer.from(plaintext, "utf8")),
+      cipher.update(
+        Buffer.concat([
+          Buffer.of(PLAINTEXT_FRAME_V1),
+          Buffer.from(plaintext, "utf8"),
+        ]),
+      ),
       cipher.final(),
     ]);
     const tag = cipher.getAuthTag();
@@ -192,11 +208,14 @@ export function openSecret(
     );
     decipher.setAAD(aad);
     decipher.setAuthTag(Buffer.from(envelope.tag));
-    const plaintext = Buffer.concat([
+    const framed = Buffer.concat([
       decipher.update(Buffer.from(envelope.ciphertext)),
       decipher.final(),
     ]);
-    return plaintext.toString("utf8");
+    if (framed.byteLength < 1 || framed[0] !== PLAINTEXT_FRAME_V1) {
+      throw new StorageError("secret_corrupt", "plaintext-frame");
+    }
+    return framed.subarray(1).toString("utf8");
   } catch (error) {
     // Fail closed. Never an empty string, never null, never partial plaintext.
     throw asStorageError("secret_corrupt", "open-secret", error);
