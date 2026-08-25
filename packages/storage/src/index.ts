@@ -34,3 +34,12 @@ export {
   type ResolveKeyProviderOptions,
   type SecureFileOptions,
 } from "./key-provider.js";
+export {
+  ENVELOPE_VERSION,
+  SECRET_ALGORITHM,
+  computeKeyId,
+  openSecret,
+  rewrapEnvelope,
+  sealSecret,
+  type SecretEnvelope,
+} from "./crypto.js";
