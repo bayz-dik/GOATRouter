@@ -1,1 +1,1 @@
-export { redactSecrets } from "./redact.js";
+export { isSecretKey, redactSecrets } from "./redact.js";
