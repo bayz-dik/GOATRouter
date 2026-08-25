@@ -14,3 +14,33 @@ test("GET /api/health returns the typed Core health response", async (t) => {
   assert.equal(body.version, "0.1.0");
   assert.ok(body.uptimeSeconds >= 0);
 });
+
+test("preserves a valid client request ID", async (t) => {
+  const app = buildApp({ logger: false });
+  t.after(() => app.close());
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/health",
+    headers: { "x-request-id": "req_client_123" },
+  });
+  assert.equal(response.headers["x-request-id"], "req_client_123");
+});
+
+test("returns a redacted stable error envelope", async (t) => {
+  const app = buildApp({ logger: false, registerTestRoutes: true });
+  t.after(() => app.close());
+  const response = await app.inject({
+    method: "GET",
+    url: "/__test/error",
+    headers: { "x-request-id": "req_error_123" },
+  });
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(response.json(), {
+    error: {
+      code: "internal_error",
+      message: "Request failed",
+      requestId: "req_error_123",
+    },
+  });
+  assert.doesNotMatch(response.body, /sk-secret/);
+});
