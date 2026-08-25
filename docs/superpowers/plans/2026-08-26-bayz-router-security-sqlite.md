@@ -1,57 +1,71 @@
-# Bayz Router — Security and SQLite Storage Implementation Plan
+# Bayz Router — Security and SQLite Storage Implementation Plan (Fortress)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a local SQLite storage layer with versioned idempotent migrations
-and an AES-256-GCM encrypted-secret primitive, isolated in `@bayz/storage`, wired
-into Core startup, with no provider/proxy/routing/usage feature and no dashboard
-change.
+**Goal:** Add a local SQLite storage layer behind a driver adapter boundary, with
+versioned idempotent migrations, envelope encryption (per-secret DEK wrapped by a
+KEK), a KeyProvider abstraction, and transactional root-key rotation — isolated in
+`@bayz/storage`, wired into Core startup, with no provider/proxy/routing/usage
+feature and no dashboard change.
 
-**Spec:** `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2)
 
 **Phase 1:** `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md` — complete, 8 commits, `runtime:verify` green. Do not modify or revert those commits.
 
-**Tech Stack:** TypeScript, Node.js 24+, built-in `node:sqlite` (`DatabaseSync`), built-in `node:crypto` (AES-256-GCM), Node test runner through `tsx`. **Zero new runtime dependencies.**
+**Tech Stack:** TypeScript, Node.js 24+, `node:sqlite` (`DatabaseSync`) behind an adapter, `node:crypto` (AES-256-GCM, `randomBytes`, `scryptSync`, `hkdfSync`, `timingSafeEqual`), Node test runner through `tsx`. **Zero new dependencies.**
 
 ## Global Constraints
 
 - Do not repeat Foundation Task 1–8 work.
-- Do not redesign the dashboard or touch `apps/dashboard`.
+- Do not touch `apps/dashboard`.
 - Do not implement Provider Manager, Proxy Manager, routing, combos, or usage.
-- Do not create fake/demo provider rows.
-- No SQL and no `DatabaseSync` outside `packages/storage/src`.
-- Never log or return a master key, plaintext secret, credential, authorization
-  header, cookie, proxy password, or token.
-- Reuse `redactSecrets` from `@bayz/security`; do not duplicate the key list.
-- Master key must never be stored in SQLite.
-- Decryption must fail closed — never return `""`, `null`, or partial plaintext.
-- Raw SQLite and raw crypto error text must not cross the storage boundary.
-- Default host `127.0.0.1`, default port `20128`, default data dir `~/.bayz` all unchanged.
-- Termux/proot ARM64 is a first-class target; no native addon.
+- Do not create fake/demo provider rows or speculative schema.
+- `node:sqlite` may be imported in **exactly one file**; migrations, repository,
+  and crypto see only the `SqlDatabase` interface.
+- No SQL outside `packages/storage/src`.
+- Never log or return a KEK, DEK, passphrase, `BAYZ_MASTER_KEY`, plaintext
+  secret, or full authorization header.
+- Extend `redactSecrets` in `@bayz/security`; do not fork the key list.
+- Never persist a plaintext DEK. Never reuse an IV. No deterministic encryption.
+- Decryption must fail closed — never `""`, `null`, or partial plaintext.
+- Raw SQLite and raw OpenSSL text must not cross the storage boundary.
+- Do not implement `better-sqlite3`, `sql.js`, or a real OS keystore in this phase.
+- Do not fake Argon2id or full anti-rollback.
+- Default host `127.0.0.1`, port `20128`, data dir `~/.bayz` unchanged.
+- Zero native dependency; Termux/ARM64 first-class.
 - Do not push to GitHub.
 
 ## File structure locked by this phase
 
 ```text
+packages/security/
+  src/redact.ts                    MODIFY: alias/casing-aware key matching
+  test/redact.test.ts              MODIFY: alias coverage
 packages/storage/
   package.json
   tsconfig.json
   src/errors.ts
+  src/sql.ts                       SqlDriver/SqlDatabase/SqlStatement contracts
+  src/drivers/node-sqlite.ts       ONLY file importing node:sqlite
   src/paths.ts
-  src/database.ts
+  src/key-provider.ts              Env / Passphrase / OsKeystore(iface) / SecureFile
+  src/crypto.ts                    DEK+KEK envelope, AAD binding, keyId
   src/migrations.ts
-  src/master-key.ts
-  src/crypto.ts
+  src/database.ts
   src/secret-repository.ts
   src/index.ts
   test/errors.test.ts
+  test/sql-driver.test.ts
+  test/driver-boundary.test.ts
   test/paths.test.ts
+  test/key-provider.test.ts
   test/crypto.test.ts
-  test/master-key.test.ts
-  test/database.test.ts
   test/migrations.test.ts
+  test/database.test.ts
   test/secret-repository.test.ts
+  test/rotation.test.ts
   test/persistence.test.ts
+  test/logging.test.ts
 apps/server/src/storage.ts
 apps/server/test/storage.test.ts
 scripts/storage-smoke.mjs
@@ -59,416 +73,363 @@ scripts/storage-smoke.mjs
 
 ---
 
-### Task 1: Scaffold `@bayz/storage` with stable error semantics
+### Task 1: Extend redaction for aliases and casing
+
+Done first so every later task logs through a hardened redactor.
 
 **Files:**
-- Create: `packages/storage/package.json`
-- Create: `packages/storage/tsconfig.json`
-- Create: `packages/storage/test/errors.test.ts`
-- Create: `packages/storage/src/errors.ts`
-- Create: `packages/storage/src/index.ts`
+- Modify: `packages/security/test/redact.test.ts`
+- Modify: `packages/security/src/redact.ts`
 
-**Interfaces:**
-- Consumes: nothing.
-- Produces: `StorageError`, `StorageErrorCode`, `asStorageError`.
+**Interfaces:** `redactSecrets<T>(value: T): T` — unchanged signature, wider coverage.
 
-- [ ] **Step 1: Create the package manifests and the failing error test**
+- [ ] **Step 1: Write failing alias/casing tests**
 
-`package.json` mirrors the Phase 1 package shape (`type: module`, `exports:
-./src/index.ts`, `test` via `node --import tsx --test test/*.test.ts`, `build`
-via `tsc --noEmit`), with `engines.node >= 24.0.0`, a dependency on
-`@bayz/security` at `0.1.0`, and no other dependency.
+Assert every spec §12 key redacts, in `camelCase`, `snake_case`, `kebab-case`,
+and `UPPERCASE`: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`,
+`apiKey`, `password`, `proxyPassword`, `token`, `accessToken`, `refreshToken`,
+`clientSecret`, `masterKey`, `privateKey`, `secret`, `credential`, `dek`, `kek`,
+`wrappedDek`, `passphrase`, `ciphertext`. Assert non-secret neighbours
+(`model`, `tokenCount`, `secretName`) are **not** redacted — substring matching
+would be a silent data-destroying bug. Keep the existing Phase 1 assertions.
 
-`tsconfig.json` matches `packages/security/tsconfig.json` plus `"types": ["node"]`.
+- [ ] **Step 2: Verify RED** — `npm run test --workspace @bayz/security`
 
-Test asserts: `StorageError` carries `code` and optional `stage`; `instanceof
-Error` holds; `asStorageError` wraps an arbitrary thrown value into a
-`StorageError` with the supplied code and **does not** copy the original message
-or attach it as `cause`.
+- [ ] **Step 3: Implement**
 
-- [ ] **Step 2: Verify RED**
+Normalize each key by lowercasing and stripping `-`/`_`, then match against a
+normalized set. Preserve non-mutation, array recursion, and `Date`/primitive
+passthrough from Phase 1.
 
-```bash
-npm run test --workspace @bayz/storage
-```
+- [ ] **Step 4: Verify GREEN + `npm run build --workspace @bayz/security`**
 
-Expected: FAIL — `packages/storage/src/index.ts` does not exist.
-
-- [ ] **Step 3: Implement `errors.ts` and a placeholder `index.ts`**
-
-`StorageErrorCode` = `"storage_unavailable" | "master_key_invalid" |
-"secret_not_found" | "secret_corrupt"`. `asStorageError(code, stage, cause)`
-returns a `StorageError` whose message is a fixed safe string derived from the
-code and stage only.
-
-- [ ] **Step 4: Verify GREEN and typecheck**
-
-```bash
-npm run test --workspace @bayz/storage
-npm run build --workspace @bayz/storage
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage package.json package-lock.json
-git commit -m "feat: add Bayz storage error boundary"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: harden secret redaction aliases"`
 
 ---
 
-### Task 2: Private data-directory resolution
+### Task 2: Storage package, error boundary, SQL driver adapter
 
 **Files:**
-- Create: `packages/storage/test/paths.test.ts`
-- Create: `packages/storage/src/paths.ts`
-- Modify: `packages/storage/src/index.ts`
+- Create: `packages/storage/{package.json,tsconfig.json}`
+- Create: `packages/storage/test/{errors.test.ts,sql-driver.test.ts,driver-boundary.test.ts}`
+- Create: `packages/storage/src/{errors.ts,sql.ts,drivers/node-sqlite.ts,index.ts}`
 
-**Interfaces:**
-- Produces: `ensureDataDir(dataDir: string): void`, `databasePath(dataDir)`, `masterKeyPath(dataDir)`.
+**Interfaces:** `StorageError`, `StorageErrorCode`, `asStorageError`, `SqlDriver`, `SqlDatabase`, `SqlStatement`, `nodeSqliteDriver`, `selectDriver()`.
 
-- [ ] **Step 1: Write the failing path tests**
+- [ ] **Step 1: Write failing error + driver tests**
 
-Assert: a fresh nested dir is created; on a POSIX filesystem its mode is `0o700`;
-`databasePath` ends in `bayz.db`; `masterKeyPath` ends in `master.key`; an
-already-existing dir is accepted idempotently; a path whose parent is a **regular
-file** raises `StorageError` with code `storage_unavailable`.
+Errors: `code` and optional `stage` present; `instanceof Error`; `asStorageError`
+wraps a thrown value without copying its message and **without** setting `cause`.
+
+Driver: `selectDriver().name === "node:sqlite"`; open a temp file, `exec` DDL,
+`prepare` + `run`/`get`/`all`; BLOB (`Uint8Array`) round-trips byte-exact;
+`bigint`/`null`/`number`/`string` round-trip; opening under an `ENOTDIR` parent
+raises `StorageError` `storage_unavailable` whose message contains neither the
+absolute path nor `"unable to open database file"`.
+
+Boundary: read every file under `packages/storage/src` and assert `node:sqlite`
+appears **only** in `drivers/node-sqlite.ts`. This makes the layering rule
+executable rather than aspirational.
+
+- [ ] **Step 2: Verify RED** — `npm run test --workspace @bayz/storage`
+
+- [ ] **Step 3: Implement**
+
+`package.json` mirrors Phase 1 package shape (`type: module`, `exports:
+./src/index.ts`, tsx test script, `tsc --noEmit` build), `engines.node >=
+24.0.0`, dependency `@bayz/security@0.1.0` only.
+
+`sql.ts` holds interfaces plus `SqlParam`/`SqlValue` =
+`null | number | bigint | string | Uint8Array` — deliberately no `boolean`, which
+`node:sqlite` rejects; callers store `0`/`1`.
+
+`drivers/node-sqlite.ts` wraps `DatabaseSync`, translating every throw into
+`StorageError`.
+
+- [ ] **Step 4: Verify GREEN + typecheck**
+
+- [ ] **Step 5: Commit** — `git commit -m "feat: add Bayz storage driver boundary"`
+
+---
+
+### Task 3: Private data-directory resolution
+
+**Files:** Create `test/paths.test.ts`, `src/paths.ts`; modify `src/index.ts`.
+
+**Interfaces:** `ensureDataDir`, `databasePath`, `masterKeyPath`.
+
+- [ ] **Step 1: Write failing tests**
+
+Fresh nested dir created; mode `0o700` where the platform reports one;
+`bayz.db` / `master.key` suffixes; existing dir accepted idempotently; a parent
+that is a **regular file** raises `storage_unavailable`.
 
 The `ENOTDIR` approach is deliberate: the suite may run as uid 0, where a
-`chmod 0o500` directory is still writable, so a permission-based test would pass
-vacuously. `ENOTDIR` fails for root too.
+`chmod 0o500` dir is still writable and a permission test would pass vacuously.
+`ENOTDIR` fails for root too.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Verify RED** — `node --import tsx --test packages/storage/test/paths.test.ts`
 
-```bash
-node --import tsx --test packages/storage/test/paths.test.ts
-```
+- [ ] **Step 3: Implement** — `mkdirSync(recursive, mode 0o700)` then best-effort
+`chmodSync`, whose failure is swallowed (Android mounts). Other failures become
+`storage_unavailable` stage `"ensure-data-dir"`.
 
-- [ ] **Step 3: Implement `paths.ts`**
+- [ ] **Step 4: Verify GREEN + typecheck**
 
-`mkdirSync(dataDir, { recursive: true, mode: 0o700 })`, then a best-effort
-`chmodSync(dataDir, 0o700)` whose failure is swallowed (some Android mounts
-ignore modes; the spec states nothing depends on the mode for correctness). Any
-other failure becomes `storage_unavailable` with stage `"ensure-data-dir"`.
-
-- [ ] **Step 4: Verify GREEN and typecheck**
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage
-git commit -m "feat: add private Bayz data directory resolution"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: add private Bayz data directory resolution"`
 
 ---
 
-### Task 3: AES-256-GCM secret envelope
+### Task 4: KeyProvider abstraction
 
-**Files:**
-- Create: `packages/storage/test/crypto.test.ts`
-- Create: `packages/storage/src/crypto.ts`
-- Modify: `packages/storage/src/index.ts`
+**Files:** Create `test/key-provider.test.ts`, `src/key-provider.ts`; modify `src/index.ts`.
 
-**Interfaces:**
-- Produces: `SecretEnvelope`, `CIPHER_VERSION`, `SECRET_ALGORITHM`, `sealSecret`, `openSecret`.
+**Interfaces:** `KeyProvider`, `KeyProviderKind`, `EnvKeyProvider`, `PassphraseKeyProvider`, `SecureFileKeyProvider`, `OsKeystoreKeyProvider` (unavailable), `resolveKeyProvider({ dataDir, env, mode })`, `SCRYPT_PARAMS`.
 
-- [ ] **Step 1: Write the failing crypto tests**
+- [ ] **Step 1: Write failing provider tests**
 
-Cover, per spec §9 and requirement F:
+Env: 64-char hex accepted, `kind: "environment"`; base64 decoding to 32 bytes
+accepted; malformed/short/long raises `master_key_invalid` and is **not** hashed,
+padded, or truncated.
 
-1. round-trip returns the exact plaintext, including a UTF-8 multi-byte string;
-2. two seals of identical plaintext under one key yield different `iv` **and**
-   different `ciphertext`;
-3. envelope carries `cipherVersion: 1`, `algorithm: "aes-256-gcm"`, 12-byte iv,
-   16-byte authTag;
-4. plaintext bytes do not appear in `ciphertext`;
-5. wrong key → `StorageError` code `secret_corrupt`;
-6. flipped ciphertext byte → `secret_corrupt`;
-7. flipped authTag byte → `secret_corrupt`;
-8. unknown `cipherVersion` → `secret_corrupt`;
-9. wrong-length key → `master_key_invalid`;
-10. a failure never returns a value — asserted via `assert.throws`, so an
-    accidental `return ""` would fail the suite.
+SecureFile: generates on first use, `kind: "secure-file"`, file mode `0o600`;
+second call returns the identical key rather than regenerating; wrong-size file
+raises `master_key_invalid`; a group/world-readable file **warns** but still
+loads (Android mounts cannot represent modes; hard-failing would make BAYZ
+unusable there) and the warning contains no key bytes.
 
-- [ ] **Step 2: Verify RED**
+Passphrase: same passphrase + stored salt ⇒ same KEK; different passphrase ⇒
+different KEK; salt is 16 random bytes persisted alongside `SCRYPT_PARAMS`;
+`kind: "passphrase"`; empty passphrase rejected.
 
-```bash
-node --import tsx --test packages/storage/test/crypto.test.ts
-```
+OsKeystore: `available === false` and `loadKek()` throws — asserting it is an
+unimplemented interface, so nobody can mistake it for working custody.
 
-- [ ] **Step 3: Implement `crypto.ts`**
-
-`sealSecret` uses `randomBytes(12)`, `createCipheriv("aes-256-gcm", key, iv)`,
-and captures `getAuthTag()`. `openSecret` validates key length, `cipherVersion`,
-and `algorithm` before touching the cipher, calls `setAuthTag`, and wraps **any**
-throw from `update`/`final` as `secret_corrupt` with the original message
-discarded.
-
-- [ ] **Step 4: Verify GREEN and typecheck**
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage
-git commit -m "feat: add authenticated secret encryption"
-```
-
----
-
-### Task 4: Master key load-or-create
-
-**Files:**
-- Create: `packages/storage/test/master-key.test.ts`
-- Create: `packages/storage/src/master-key.ts`
-- Modify: `packages/storage/src/index.ts`
-
-**Interfaces:**
-- Produces: `loadMasterKey({ dataDir, env }): MasterKey` where `MasterKey = { key: Buffer; source: "environment" | "generated" }`.
-
-- [ ] **Step 1: Write the failing master-key tests**
-
-Assert: hex `BAYZ_MASTER_KEY` is accepted and reported as `source:
-"environment"`; base64 decoding to 32 bytes is accepted; a malformed or
-wrong-length `BAYZ_MASTER_KEY` raises `master_key_invalid` **and is not silently
-hashed or truncated**; with no env var a key file is generated with mode `0o600`
-and `source: "generated"`; a second call reads the same key back rather than
-regenerating; a key file of the wrong size raises `master_key_invalid`; the
-returned object exposes no method that stringifies the key.
+`resolveKeyProvider`: `FORTRESS` ⇒ passphrase (throws without one); `SECURE` ⇒
+env, and errors rather than silently downgrading to file; `STANDARD` ⇒ env when
+`BAYZ_MASTER_KEY` is set, else secure-file.
 
 - [ ] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement `master-key.ts`**
+- [ ] **Step 3: Implement**
 
-Resolution order exactly as spec §8. Generated keys are written with
-`{ flag: "wx", mode: 0o600 }` so a concurrent starter cannot clobber an existing
-key. Hex is detected by `/^[0-9a-fA-F]{64}$/`; otherwise base64 is attempted and
-must decode to exactly 32 bytes.
+`SCRYPT_PARAMS = { N: 1<<16, r: 8, p: 1, keyLength: 32 }` — 194 ms / 64 MiB
+measured on this ARM64 device; `maxmem` set to `256*N*r + (1<<24)` since the Node
+default is too low for N=2¹⁶. Params persisted so they can be raised later.
 
-- [ ] **Step 4: Verify GREEN and typecheck**
+Generated key files use `{ flag: "wx", mode: 0o600 }` so a concurrent start
+cannot clobber an existing key. Hex detected by `/^[0-9a-fA-F]{64}$/`, else
+base64 that must decode to exactly 32 bytes.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Verify GREEN + typecheck**
 
-```bash
-git add packages/storage
-git commit -m "feat: add local master key management"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: add Bayz key provider abstraction"`
 
 ---
 
-### Task 5: Database open with enforced pragmas
+### Task 5: Envelope encryption with DEK/KEK and AAD binding
 
-**Files:**
-- Create: `packages/storage/test/database.test.ts`
-- Create: `packages/storage/src/database.ts`
-- Modify: `packages/storage/src/index.ts`
+**Files:** Create `test/crypto.test.ts`, `src/crypto.ts`; modify `src/index.ts`.
 
-**Interfaces:**
-- Produces: `openDatabase({ dataDir }): BayzDatabase` exposing `db`, `path`, `journalMode`, `close()`.
+**Interfaces:** `SecretEnvelope`, `ENVELOPE_VERSION`, `SECRET_ALGORITHM`, `sealSecret(kek, name, plaintext)`, `openSecret(kek, name, envelope)`, `rewrapEnvelope(oldKek, newKek, name, envelope)`, `computeKeyId(kek)`.
 
-- [ ] **Step 1: Write the failing database tests**
+- [ ] **Step 1: Write failing crypto tests**
 
-Assert: opening in a temp dir creates `bayz.db`; `pragma foreign_keys` is `1` and
-an FK violation actually throws; `busy_timeout` is `5000`; `journalMode` is
-reported and is `wal` on a filesystem that supports it; a data dir whose parent
-is a regular file raises `storage_unavailable`; the raised message contains
-neither `"unable to open database file"` nor the absolute db path — this is the
-concrete guard for "raw SQLite errors must not leak".
+Round-trip including a UTF-8 multi-byte string. Envelope shape: `version: 1`,
+`algorithm: "aes-256-gcm"`, 12-byte `iv` and `wrapIv`, 16-byte `tag` and
+`wrapTag`, 32-byte `wrappedDek`, `keyId` prefixed `kek_`.
+
+Two seals of identical plaintext under one KEK differ in `iv`, `ciphertext`,
+`wrappedDek`, **and** the unwrapped DEK — proving per-record DEKs, not just fresh
+IVs. Plaintext bytes absent from `ciphertext`.
+
+Fail closed with `secret_corrupt` for: wrong KEK; flipped `ciphertext` byte;
+flipped `tag` byte; flipped `wrappedDek` byte; flipped `wrapTag` byte; unsupported
+`version`; unknown `algorithm`; truncated `iv`; truncated `wrappedDek`;
+**mismatched `name`** (AAD binding — verified that GCM rejects a different AAD).
+Wrong-length KEK ⇒ `master_key_invalid`.
+
+Every failure asserted with `assert.throws`, so an accidental `return ""` fails
+the suite.
+
+`rewrapEnvelope`: output opens under the new KEK, fails under the old, preserves
+`ciphertext`/`iv`/`tag` byte-identically, and changes `keyId`.
+
+`computeKeyId`: stable for one KEK, differs across KEKs, 16 bytes hex, and does
+**not** contain any 8-byte run of the KEK — guarding the non-secret-fingerprint
+claim.
 
 - [ ] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement `database.ts`**
+- [ ] **Step 3: Implement**
 
-Order per spec §6. WAL is best-effort: attempt it, read back whatever mode
-resulted, and continue. `foreign_keys` is asserted and a failure to enable it is
-fatal.
+Per spec §3/§5. AAD = `Buffer.from(\`bayz:v1:${name}\`)` on both layers. DEK from
+`randomBytes(32)` per `put`. IVs from `randomBytes(12)` per encryption. All
+lengths and the version validated **before** any cipher runs. Transient DEK
+buffers `fill(0)` in `finally`. `keyId` via
+`hkdfSync("sha256", kek, "", "bayz-kek-id-v1", 16)`, compared with
+`timingSafeEqual`. Any cipher throw becomes `secret_corrupt` with the OpenSSL
+message discarded.
 
-- [ ] **Step 4: Verify GREEN and typecheck**
+- [ ] **Step 4: Verify GREEN + typecheck**
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage
-git commit -m "feat: open Bayz SQLite with safe pragmas"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: add envelope encryption with per-secret DEKs"`
 
 ---
 
-### Task 6: Versioned idempotent migrations
+### Task 6: Migrations and database initialization
 
-**Files:**
-- Create: `packages/storage/test/migrations.test.ts`
-- Create: `packages/storage/src/migrations.ts`
-- Modify: `packages/storage/src/database.ts`
-- Modify: `packages/storage/src/index.ts`
+**Files:** Create `test/migrations.test.ts`, `test/database.test.ts`, `src/migrations.ts`, `src/database.ts`; modify `src/index.ts`.
 
-**Interfaces:**
-- Produces: `MIGRATIONS`, `TARGET_SCHEMA_VERSION`, `runMigrations(db): number`, `readSchemaVersion(db): number`.
+**Interfaces:** `MIGRATIONS`, `TARGET_SCHEMA_VERSION`, `runMigrations(db)`, `readSchemaVersion(db)`, `openDatabase({ dataDir, driver })`.
 
-- [ ] **Step 1: Write the failing migration tests**
+- [ ] **Step 1: Write failing tests**
 
-Assert, per requirement F: a fresh database reaches `TARGET_SCHEMA_VERSION` and
-gains the `schema_migrations`, `secrets`, and `runtime_metadata` tables; a second
-`runMigrations` applies **0** migrations and leaves `user_version` and the table
-set unchanged; `pragma user_version` equals `max(schema_migrations.version)`;
-`secrets.name` is `UNIQUE`; a migration whose statement is invalid leaves
-`user_version` at the previous value and creates none of its tables — the
-atomicity guarantee; and there is **no** `providers`/`proxies`/`routes`/`usage`
-table, which pins the "no speculative schema" constraint as an executable test.
+Migrations: fresh DB reaches `TARGET_SCHEMA_VERSION` with `schema_migrations`,
+`secrets`, `runtime_metadata` present; second run applies **0** and leaves
+`user_version` and the table set unchanged; `user_version` equals
+`max(schema_migrations.version)`; `secrets.name` is `UNIQUE`; an invalid statement
+leaves `user_version` at its prior value and creates none of that migration's
+tables (atomicity); and **no** `providers`/`proxies`/`routes`/`combos`/`usage`
+table exists — pinning "no speculative schema" as an executable test.
+
+Database: `bayz.db` created; `foreign_keys` is `1` **and** an FK violation
+actually throws; `busy_timeout` is `5000`; `journalMode` reported, `wal` where
+supported; `ENOTDIR` parent ⇒ `storage_unavailable` whose message leaks neither
+the path nor raw SQLite text.
 
 - [ ] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement `migrations.ts`**
+- [ ] **Step 3: Implement**
 
-Each pending migration runs inside `BEGIN IMMEDIATE`, applies its statements,
-inserts its `schema_migrations` row, sets `pragma user_version`, then `COMMIT`;
-on any throw, `ROLLBACK` and raise `storage_unavailable` with stage
-`"migrate:<version>"`.
+Schema exactly as spec §7. Each pending migration in `BEGIN IMMEDIATE` →
+statements → `schema_migrations` row → `pragma user_version` → `COMMIT`, with
+`ROLLBACK` and `storage_unavailable` stage `"migrate:<version>"` on error.
+`user_version` interpolated only behind `Number.isInteger`; no external input
+reaches it.
 
-`pragma user_version` cannot be parameterized, so the version is interpolated
-only after an `Number.isInteger` guard — no external input reaches it.
+`openDatabase` order per spec §7: ensure dir → driver open → `foreign_keys` ON
+(asserted, fatal) → `busy_timeout` → WAL best-effort with read-back →
+`synchronous = NORMAL` → migrate.
 
-Wire `runMigrations` into `openDatabase`.
+- [ ] **Step 4: Verify GREEN + typecheck + full storage suite**
 
-- [ ] **Step 4: Verify GREEN, then re-run the database suite for regression**
-
-```bash
-npm run test --workspace @bayz/storage
-npm run build --workspace @bayz/storage
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage
-git commit -m "feat: add versioned idempotent storage migrations"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: add transactional storage migrations"`
 
 ---
 
-### Task 7: Encrypted secret repository with transactional writes
+### Task 7: SecureSecretRepository, rotation, persistence, logging
 
-**Files:**
-- Create: `packages/storage/test/secret-repository.test.ts`
-- Create: `packages/storage/test/persistence.test.ts`
-- Create: `packages/storage/src/secret-repository.ts`
-- Modify: `packages/storage/src/index.ts`
+**Files:** Create `test/secret-repository.test.ts`, `test/rotation.test.ts`, `test/persistence.test.ts`, `test/logging.test.ts`, `src/secret-repository.ts`; modify `src/index.ts`.
 
-**Interfaces:**
-- Produces: `openSecretStorage({ dataDir, env }): SecretStorage` (a `SecretRepository` plus `journalMode`, `schemaVersion`, `masterKeySource`).
+**Interfaces:** `SecureSecretRepository`, `SecretRecordMetadata`, `openSecretStorage({ dataDir, env, mode, driver })`.
 
-- [ ] **Step 1: Write the failing repository and persistence tests**
+- [ ] **Step 1: Write failing tests**
 
-Repository: `put`/`get` round-trip; `put` twice upserts rather than duplicating
-and `updated_at` advances; `find` returns `undefined` for an absent name while
-`get` throws `secret_not_found`; `list` returns metadata and **no** field whose
-value equals the plaintext; `delete` returns `true` then `false`; a `put` that
-fails mid-transaction leaves the prior row intact and adds no partial row; a row
-whose `ciphertext` is tampered with directly in SQL causes `get` to throw
-`secret_corrupt` rather than returning anything.
+Repository: `put`/`get` round-trip; `put` twice upserts (no duplicate row,
+`updated_at` advances, and the new row has a **different** DEK and IV); two
+different names have different DEKs; `find` ⇒ `undefined` while `get` throws
+`secret_not_found`; `list()` returns metadata and **no** field equal to the
+plaintext; `delete` ⇒ `true` then `false`; a `put` failing mid-transaction leaves
+the prior row intact and adds no partial row; direct SQL tampering of
+`ciphertext`, `wrapped_dek`, or `tag` makes `get` throw `secret_corrupt`; a
+malformed envelope (bad lengths) fails closed.
 
-Persistence: write a sentinel secret, `close()`, reopen from the same `dataDir`,
-read it back; then read `bayz.db` (plus `-wal`) as raw bytes and assert the
-sentinel plaintext does **not** occur; assert the master key bytes do not occur
-either; and assert reopening with a *different* `BAYZ_MASTER_KEY` yields
-`secret_corrupt` instead of plaintext.
+Rotation: after `rotateRootKey`, every secret reads under the new KEK and fails
+under the old; `ciphertext` bytes are unchanged (rewrap-only); `active_key_id` in
+`runtime_metadata` updated; a rotation that throws part-way leaves **every**
+record readable by the **old** key.
+
+Persistence: sentinel written, `close()`, reopened in the same `dataDir`, read
+back; raw `bayz.db`, `-wal`, `-shm` bytes contain neither the sentinel plaintext
+nor the KEK bytes; reopening with a different `BAYZ_MASTER_KEY` yields
+`master_key_mismatch` or `secret_corrupt`, never plaintext.
+
+Logging: capture the logger, exercise a full write/read/rotate cycle, and assert
+the captured output contains no sentinel, no KEK hex, no DEK, and no passphrase.
 
 - [ ] **Step 2: Verify RED**
 
-- [ ] **Step 3: Implement `secret-repository.ts`**
+- [ ] **Step 3: Implement**
 
-All SQL is parameterized. `put` wraps delete+insert (or `INSERT … ON CONFLICT DO
-UPDATE`) in `BEGIN IMMEDIATE`/`COMMIT` with `ROLLBACK` on error. Encryption
-happens inside `put`; decryption inside `get`/`find`. No method returns a
-`SecretEnvelope` to a caller.
+All SQL parameterized. `put` wraps upsert in `BEGIN IMMEDIATE`/`COMMIT` with
+`ROLLBACK`. Encryption inside `put`, decryption inside `get`/`find`. No method
+returns an envelope, a DEK, or a KEK. On open, compare the provider's `keyId`
+against `active_key_id` and raise `master_key_mismatch` before touching
+ciphertext. `rotateRootKey` rewraps every row in one transaction.
 
-- [ ] **Step 4: Verify GREEN and typecheck**
+- [ ] **Step 4: Verify GREEN + typecheck**
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add packages/storage
-git commit -m "feat: add encrypted secret repository"
-```
+- [ ] **Step 5: Commit** — `git commit -m "feat: add secure secret repository with key rotation"`
 
 ---
 
-### Task 8: Core startup wiring, real-runtime proof, and phase verification
+### Task 8: Core wiring, real-runtime proof, phase verification
 
-**Files:**
-- Create: `apps/server/src/storage.ts`
-- Create: `apps/server/test/storage.test.ts`
-- Modify: `apps/server/src/index.ts`
-- Modify: `apps/server/package.json`
-- Create: `scripts/storage-smoke.mjs`
-- Modify: `README.md`
-- Modify: `WORK-HANDOFF.md`
+**Files:** Create `apps/server/src/storage.ts`, `apps/server/test/storage.test.ts`, `scripts/storage-smoke.mjs`; modify `apps/server/{src/index.ts,package.json}`, `README.md`, `WORK-HANDOFF.md`.
 
-**Interfaces:**
-- Produces: `initializeStorage(config): StorageHandle`; startup fails safely when storage cannot initialize.
+**Interfaces:** `initializeStorage(config): StorageHandle`.
 
-- [ ] **Step 1: Write the failing server storage tests**
+- [ ] **Step 1: Write failing server tests**
 
-Assert: `initializeStorage` with a temp `dataDir` returns a handle whose
-`schemaVersion` equals the target and whose secret round-trip works; an
-unopenable `dataDir` raises `StorageError` `storage_unavailable`; the thrown
-message leaks neither the absolute path nor raw SQLite text; and — the
-regression guard — `GET /api/health` still returns exactly
+`initializeStorage` with a temp `dataDir` returns a handle whose `schemaVersion`
+is the target and whose secret round-trip works; an unopenable `dataDir` raises
+`storage_unavailable`; the message leaks neither the absolute path nor raw SQLite
+text; and the regression guard — `GET /api/health` still returns exactly
 `{status, version, uptimeSeconds}` with no storage field, so Phase 1's contract
-and the dashboard are untouched.
+and the dashboard stay untouched.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Verify RED** — `node --import tsx --test apps/server/test/storage.test.ts`
 
-```bash
-node --import tsx --test apps/server/test/storage.test.ts
-```
+- [ ] **Step 3: Implement and wire startup**
 
-- [ ] **Step 3: Implement `storage.ts` and wire startup**
+`storage.ts` calls `openSecretStorage` and logs, through `redactSecrets`, only
+`{ schemaVersion, journalMode, driver, keyProvider, keyId, dataDir }`. `index.ts`
+calls it before `listen`; a `StorageError` logs a redacted diagnostic and exits
+non-zero without starting the listener. Add `@bayz/storage` to `apps/server`
+dependencies. No new route; no `/api/health` change.
 
-`apps/server/src/storage.ts` calls `openSecretStorage` and logs, through
-`redactSecrets`, only `{ schemaVersion, journalMode, masterKeySource, dataDir }`
-— never the key and never a secret. `src/index.ts` calls it before `listen`; a
-`StorageError` logs a redacted diagnostic and sets a non-zero exit code without
-starting the listener. Add `@bayz/storage` to `apps/server` dependencies.
+- [ ] **Step 4: Write and run the non-mocked smoke script**
 
-- [ ] **Step 4: Write and run the non-mocked storage smoke script**
-
-`scripts/storage-smoke.mjs` must, against a real on-disk database:
+`scripts/storage-smoke.mjs`, against a real on-disk DB, must:
 
 1. create a fresh temp data dir;
-2. open storage, write a sentinel secret, report schema version and journal mode;
-3. close, reopen, and read the secret back — proving persistence;
-4. scan `bayz.db`, `bayz.db-wal`, `bayz.db-shm` raw bytes for the sentinel and
-   fail if found;
-5. scan the captured log output for the sentinel and for the master key and fail
-   if found;
-6. confirm a wrong master key fails closed;
-7. exit non-zero on any check failure.
+2. open storage, write a sentinel, report schema version, journal mode, driver,
+   provider kind, `keyId`;
+3. close, reopen **in a separate child process**, read the sentinel back —
+   proving cross-process persistence, not just in-process reuse;
+4. scan `bayz.db`, `-wal`, `-shm` raw bytes for the sentinel and the KEK, failing
+   if either is found;
+5. scan captured log output for the sentinel, KEK, and DEK;
+6. rotate the root key, then re-read every secret successfully;
+7. confirm the old key now fails closed;
+8. confirm a tampered ciphertext fails closed;
+9. exit non-zero on any failure.
 
 ```bash
 node scripts/storage-smoke.mjs
 ```
 
-This satisfies requirement H's "jalankan storage nyata, bukan hanya mocked tests".
-
-- [ ] **Step 5: Boot the real server and confirm no regression**
+- [ ] **Step 5: Boot the real server**
 
 Start the Core with a temp `BAYZ_DATA_DIR`, confirm it logs storage readiness and
-serves `/api/health`, confirm `bayz.db` exists on disk afterwards, and confirm
-the log contains no secret. Use a free port if `20128` is occupied, and record
-which port was used.
+serves `/api/health`, confirm `bayz.db` exists afterwards, and confirm the log
+holds no secret. Use a free port if `20128` is occupied and record which.
 
-- [ ] **Step 6: Document the phase honestly**
+- [ ] **Step 6: Document honestly**
 
-Append a Phase 2 section to `README.md` covering the data dir, `BAYZ_MASTER_KEY`,
-and the threat-model ceiling from spec §8. Update `WORK-HANDOFF.md` with Phase 2
-state, deviations, and the still-DEFERRED Sites build.
+Append a Phase 2 section to `README.md`: data dir, `BAYZ_MASTER_KEY`, the three
+modes, and the threat-model ceiling from spec §13 including the "does not
+protect" list. Update `WORK-HANDOFF.md` with Phase 2 state, deviations, and the
+still-DEFERRED Sites build.
 
-Do not describe key rotation, provider storage, or any Phase 3+ feature as
-working.
+Do **not** describe the OS keystore, Argon2id, full anti-rollback, provider
+storage, or any Phase 3+ feature as working.
 
-- [ ] **Step 7: Run the full completion gate**
+- [ ] **Step 7: Run the completion gate**
 
 ```bash
+npm run test --workspace @bayz/security
 npm run test --workspace @bayz/storage
 npm run test --workspace @bayz/server
 node --test tests/runtime-structure.test.mjs
@@ -478,31 +439,32 @@ git diff --check
 git status --short
 ```
 
-- [ ] **Step 8: Commit**
-
-```bash
-git add apps/server packages/storage scripts README.md WORK-HANDOFF.md docs package.json package-lock.json
-git commit -m "feat: wire Bayz storage into Core startup"
-```
+- [ ] **Step 8: Commit** — `git commit -m "feat: wire Bayz secure storage into Core startup"`
 
 ## Phase completion checklist
 
-- [ ] `@bayz/storage` tests pass and its `tsc --noEmit` exits 0.
-- [ ] `@bayz/server` tests pass, including the health-contract regression guard.
+- [ ] `@bayz/security`, `@bayz/storage`, `@bayz/server` tests pass; each `tsc --noEmit` exits 0.
 - [ ] `npm run runtime:verify` exits 0 with every Foundation test still green.
 - [ ] `node scripts/storage-smoke.mjs` exits 0 against a real database file.
-- [ ] Database reopened in a separate process and persistence proven.
-- [ ] Sentinel plaintext absent from `bayz.db`, `-wal`, `-shm`, and logs.
-- [ ] Master key absent from the database and from all logs.
-- [ ] Wrong key and tampered ciphertext both fail closed with `secret_corrupt`.
-- [ ] Migrations idempotent; re-run applies zero and is asserted.
-- [ ] Failed write leaves no partial row.
-- [ ] Unwritable/invalid data dir yields `storage_unavailable`, not raw SQLite text.
-- [ ] No SQL or `DatabaseSync` outside `packages/storage/src`.
-- [ ] No new runtime dependency; Termux/ARM64 needs no native build.
-- [ ] Default host `127.0.0.1`, port `20128`, data dir `~/.bayz` unchanged.
+- [ ] Persistence proven by reopening in a **separate process**.
+- [ ] Sentinel plaintext absent from `bayz.db`, `-wal`, `-shm`, and all logs.
+- [ ] KEK and DEK absent from the database and all logs.
+- [ ] Two records provably use different DEKs.
+- [ ] Identical plaintexts produce different ciphertext.
+- [ ] Wrong KEK, tampered ciphertext, tampered wrapped DEK, tampered tag,
+      unsupported version, and mismatched name all fail closed with `secret_corrupt`.
+- [ ] Root-key rotation preserves readability; failed rotation leaves old state usable.
+- [ ] Migrations idempotent; re-run applies zero, asserted.
+- [ ] Failed write leaves no partial row or half-written envelope.
+- [ ] Invalid data dir yields `storage_unavailable`, not raw SQLite text.
+- [ ] `node:sqlite` imported in exactly one file, asserted by a source-scan test.
+- [ ] `master.key` mode restrictive where the platform supports it.
+- [ ] Redaction covers aliases and casing; non-secret neighbours untouched.
+- [ ] No new dependency; Termux/ARM64 needs no native build.
+- [ ] Default host `127.0.0.1`, port `20128`, data dir `~/.bayz` unchanged; remote off.
 - [ ] No provider, proxy, route, combo, or usage schema or record introduced.
-- [ ] `apps/dashboard` untouched.
+- [ ] `apps/dashboard` untouched; no storage/crypto path reachable from the UI.
+- [ ] OS keystore, Argon2id, and anti-rollback documented as deferred, not working.
 - [ ] `git diff --check` clean.
 - [ ] No push to GitHub.
 - [ ] Sites/UI build remains documented as DEFERRED, not as failing or passing.

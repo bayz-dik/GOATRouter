@@ -1,164 +1,254 @@
-# Bayz Router — Security and SQLite Storage Design
+# Bayz Router — Security and SQLite Storage Design (Fortress Architecture)
 
-**Status:** Design / Phase 2 of the approved scope decomposition.
+**Status:** Design / Phase 2 of the approved scope decomposition. Revision 2.
+**Supersedes:** Revision 1 (single master key + flat AES-GCM). Revision 1's flat
+key model is explicitly rejected below and must not be implemented.
 **Phase 1:** `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md` — complete and verified.
 **Date:** 2026-08-26
 
-## 1. Purpose
+## 1. Purpose and scope
 
-Phase 1 produced a runnable Core with a health endpoint, request tracing, safe
-error envelopes, and a dashboard served from one process. It has no persistence
-and no way to hold a secret.
+Phase 1 produced a runnable Core with health, request tracing, safe error
+envelopes, and a dashboard served from one process. It has no persistence and no
+way to hold a secret.
 
-Phase 2 adds exactly two things:
+Phase 2 adds:
 
-1. A local SQLite storage layer with versioned, idempotent migrations.
-2. An encrypted-at-rest secret primitive so that Phase 3 can store provider
-   credentials without ever writing them as plaintext.
+1. A local SQLite storage layer behind a **driver adapter boundary**, with
+   versioned idempotent migrations.
+2. **Envelope encryption** with a per-secret Data Encryption Key wrapped by a
+   Key Encryption Key, so compromising one record yields no key for any other.
+3. A **KeyProvider abstraction** so key custody can move to OS-backed or
+   passphrase-derived storage without touching crypto, repository, or domain code.
+4. **Root-key rotation** that rewraps DEKs without ever writing plaintext
+   secrets to disk.
 
-Phase 2 deliberately ships **no** Provider Manager, **no** Proxy Manager, **no**
-routing, **no** combos, **no** usage data, and **no** dashboard changes. It
-creates the storage boundary those phases will consume.
+Phase 2 ships **no** Provider Manager, **no** Proxy Manager, **no** routing, **no**
+combos, **no** usage data, **no** new HTTP route, and **no** dashboard change.
 
-## 2. Non-goals
+### Non-goals
 
-- No ORM, no query builder, no migration framework dependency.
-- No provider/proxy/route/combo tables, and no seed or demo rows.
-- No new API routes and no dashboard UI work.
-- No multi-user auth, no key rotation implementation (the envelope is designed
-  to *permit* later rotation, which is not the same as implementing it).
-- No remote key management service.
+- No ORM, no query builder, no migration framework, no crypto library.
+- No provider/proxy/route/combo/usage tables, no seed or demo rows.
+- No OS keychain *implementation* (interface only — see §4).
+- No native dependency of any kind.
+- No claim of unhackability. See §13.
 
-## 3. Driver decision: `node:sqlite`
+## 2. Storage driver boundary
 
-The runtime uses the **built-in `node:sqlite` module** (`DatabaseSync`).
+Requirement: the repository and migrations must not depend directly on
+`node:sqlite`, so a future release can add a `better-sqlite3 → node:sqlite →
+sql.js` fallback chain without changing the repository or domain API.
 
-Verified on the target machine (Node `v24.19.0`, `linux arm64`):
+The minimal synchronous surface actually needed:
+
+```ts
+export interface SqlStatement {
+  run(...params: SqlParam[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: SqlParam[]): Record<string, SqlValue> | undefined;
+  all(...params: SqlParam[]): Record<string, SqlValue>[];
+}
+
+export interface SqlDatabase {
+  prepare(sql: string): SqlStatement;
+  exec(sql: string): void;
+  close(): void;
+}
+
+export interface SqlDriver {
+  readonly name: string;              // "node:sqlite"
+  open(filename: string): SqlDatabase;
+}
+```
+
+`SqlParam` / `SqlValue` are `null | number | bigint | string | Uint8Array`, which
+is the intersection all three candidate drivers support. Notably it excludes
+`boolean`, which `node:sqlite` rejects — booleans are stored as `0`/`1` integers
+at the repository layer, so the adapter contract stays honest.
+
+Phase 2 implements exactly one driver: `nodeSqliteDriver` in
+`src/drivers/node-sqlite.ts`. `better-sqlite3` and `sql.js` are **not**
+implemented, not depended on, and not stubbed. `selectDriver()` returns the
+Node driver and is the single place a future chain gets added.
+
+Migrations, the repository, and crypto import only `SqlDatabase`/`SqlStatement`.
+`node:sqlite` is imported in exactly one file, which a test asserts by scanning
+sources.
+
+Driver-thrown errors are translated at the adapter edge, so `ERR_SQLITE_ERROR`
+text — which embeds absolute filesystem paths — never propagates.
+
+### Driver choice for the first adapter
+
+Verified on this machine (Node `v24.19.0`, `linux arm64`):
 
 | Capability | Result |
 | --- | --- |
 | `node:sqlite` present | yes, SQLite `3.53.3` |
 | `ExperimentalWarning` on import | none emitted |
-| ESM `import { DatabaseSync }` | works |
 | `pragma journal_mode=wal` | returns `wal` |
-| `pragma foreign_keys=ON` | enforced; FK violation raises `ERR_SQLITE_ERROR` |
-| `pragma busy_timeout` | settable |
+| `pragma foreign_keys=ON` | enforced; violation raises `ERR_SQLITE_ERROR` |
+| `pragma busy_timeout` | settable, reads back |
 | BLOB round-trip | `typeof=blob`, exact length |
 | `BEGIN` / `ROLLBACK` | rolls back correctly |
 
-Rejected alternatives and why:
+`better-sqlite3` is rejected for the baseline: it needs `node-gyp`, a C++
+toolchain, and an ABI-matched prebuild, which is routinely unavailable on
+Termux/ARM64. `sql.js` avoids native builds but weakens WAL and file locking.
+Neither is justified when the runtime already ships SQLite. `DatabaseSync` is
+synchronous, which suits short, local, infrequent migration and secret access
+and removes a class of interleaving bugs.
 
-- **`better-sqlite3`** — native addon requiring `node-gyp`, a C++ toolchain, and
-  a prebuilt binary matching the ABI. On Termux/ARM64 prebuilds are frequently
-  absent and source builds are slow or fail. Constraint G forbids picking a
-  native dependency that cannot realistically be installed on ARM64 Android
-  without strong justification. There is no such justification when the runtime
-  already ships SQLite.
-- **`node-sqlite3-wasm` / `sql.js`** — no native build, but slower, and WAL plus
-  real file-locking semantics are weaker. Unnecessary once `node:sqlite` exists.
+## 3. Key hierarchy — envelope encryption
 
-Consequence: **zero new runtime dependencies** for storage. This is the single
-biggest Termux compatibility win available and it directly satisfies
-constraint G.
-
-`DatabaseSync` is synchronous. That is acceptable and in fact preferable here:
-migrations and secret access are short, local, and infrequent, and synchronous
-access removes a whole class of interleaving bugs. Should a future phase find a
-hot path, that phase can revisit; it is not a Phase 2 concern.
-
-## 4. Package boundary
-
-A new workspace package `packages/storage` (`@bayz/storage`).
+Revision 1 used one key for every secret. That is rejected: it makes every
+record a single-key compromise and makes rotation require decrypting and
+rewriting every plaintext.
 
 ```text
-packages/storage/
-  package.json
-  tsconfig.json
-  src/
-    index.ts          public surface only
-    errors.ts         StorageError + stable codes
-    paths.ts          data-dir resolution and private-permission creation
-    database.ts       open, pragmas, close
-    migrations.ts     versioned idempotent migration runner
-    master-key.ts     master key load-or-create
-    crypto.ts         AES-256-GCM envelope seal/open
-    secret-repository.ts SQLite-backed secret persistence
-  test/
-    paths.test.ts
-    database.test.ts
-    migrations.test.ts
-    master-key.test.ts
-    crypto.test.ts
-    secret-repository.test.ts
-    persistence.test.ts
+KeyProvider
+    │  supplies 32-byte Key Encryption Key (KEK), memory only
+    ▼
+KEK ── AES-256-GCM wrap ──►  wrappedDek + wrapIv + wrapTag     (in SQLite)
+                                   │
+                                   ▼ unwrap at read time
+                            per-secret DEK (256-bit, memory only)
+                                   │
+                                   ▼ AES-256-GCM
+                            ciphertext + iv + tag              (in SQLite)
 ```
 
-Boundary rule (constraint D): **no SQL string and no `DatabaseSync` value may
-appear outside `packages/storage/src`.** Route handlers and `apps/server` see
-only the typed interfaces below. `apps/server` gains a startup wiring module; it
-gains no inline SQL.
+Rules:
 
-Dependency direction: `@bayz/storage` depends on `@bayz/security` (for
-`redactSecrets`) and on nothing else. It does not depend on Fastify. It stays
-independently testable.
+- Every `put` mints a **fresh random 256-bit DEK** via `randomBytes(32)`. DEKs
+  are never shared between records and never reused across writes of the same
+  name.
+- Every encryption — both the secret and the DEK wrap — uses its own fresh
+  96-bit `randomBytes(12)` IV. No IV is ever reused. No deterministic or
+  convergent encryption anywhere.
+- SQLite stores only: wrapped DEK, wrap IV, wrap tag, ciphertext, IV, tag, and
+  non-secret metadata. A plaintext DEK is never persisted.
+- Both GCM tags are verified on every read.
+- **AAD binding.** The secret's `name` and `cipherVersion` are passed as GCM
+  Additional Authenticated Data on both layers. Verified behavior: decryption
+  with a different AAD fails. This makes a row's ciphertext cryptographically
+  bound to its identity, so an attacker with write access to `bayz.db` cannot
+  move a known-value envelope onto a different secret name (a confusion attack
+  that plain GCM would allow).
 
-## 5. Filesystem and data directory
+Compromise containment: recovering one DEK — by any means — decrypts exactly one
+record. Recovering the KEK is required to reach the rest.
 
-- Database path: `<BAYZ_DATA_DIR>/bayz.db`.
-- Master key path: `<BAYZ_DATA_DIR>/master.key`.
-- `BAYZ_DATA_DIR` default remains `~/.bayz`, unchanged from Phase 1
-  `loadRuntimeConfig`.
-- The data directory is created recursively with mode `0o700`.
-- `master.key` is written with mode `0o600` via an exclusive-create open flag
-  (`wx`) so a concurrent start cannot clobber an existing key.
-- Modes are applied best-effort. On a filesystem that ignores POSIX modes the
-  runtime proceeds; it does not hard-fail, because Termux and some Android
-  mounts legitimately cannot honor them. Nothing in the design *relies* on the
-  mode for correctness — the mode is defense in depth.
-- Verified caveat: when the process runs as uid 0, a `0o500` directory is still
-  writable, so a chmod-based "unwritable directory" test would be vacuous. The
-  unwritable-path test therefore forces a genuine failure via an `ENOTDIR`
-  parent (a regular file used as a directory component), which was verified to
-  produce `ERR_SQLITE_ERROR: unable to open database file`.
+## 4. KeyProvider abstraction
 
-## 6. Database initialization
+```ts
+export type KeyProviderKind = "environment" | "passphrase" | "os-keystore" | "secure-file";
 
-`openDatabase({ dataDir })` performs, in order:
+export interface KeyProvider {
+  readonly kind: KeyProviderKind;
+  readonly available: boolean;
+  loadKek(): Buffer;                 // 32 bytes; throws master_key_invalid
+  persistKek?(kek: Buffer): void;    // only for providers with durable custody
+}
+```
 
-1. Ensure the data directory exists with private permissions.
-2. Open `<dataDir>/bayz.db`.
-3. `pragma foreign_keys = ON` — required, and asserted.
-4. `pragma busy_timeout = 5000`.
-5. `pragma journal_mode = WAL` — **best effort.** If the filesystem refuses WAL
-   the runtime keeps the journal mode SQLite fell back to and continues. A
-   refusal is not a startup failure; requirement A says "WAL jika didukung".
-6. `pragma synchronous = NORMAL` (safe and appropriate under WAL).
-7. Run migrations.
+Resolution order for public release, highest custody first:
 
-Any failure in steps 1–4 or 7 raises a `StorageError` with code
-`storage_unavailable` and a message that names the failing stage but **never**
-embeds the raw SQLite message, since SQLite error text can contain full
-filesystem paths.
+| Priority | Provider | Phase 2 status |
+| --- | --- | --- |
+| A | `EnvKeyProvider` — `BAYZ_MASTER_KEY` | **implemented** |
+| B | `PassphraseKeyProvider` — operator unlock factor | **implemented**, opt-in (§10) |
+| C | `OsKeystoreKeyProvider` — DPAPI / Keychain / Secret Service / Android Keystore | **interface only, deliberately unimplemented** |
+| D | `SecureFileKeyProvider` — `<BAYZ_DATA_DIR>/master.key` | **implemented**, zero-config fallback |
 
-## 7. Migrations
+Every OS-backed option needs a native module or a platform binary, which breaks
+the zero-native-dependency Termux baseline. So `OsKeystoreKeyProvider` exists as
+an interface and a `available: false` placeholder that throws if forced. It is
+**not** faked and must not be described as working. It is scheduled for the
+packaging/stabilization phase, where per-platform artifacts already exist and a
+native optional dependency can be gated per platform.
 
-A hand-rolled, ordered, idempotent runner. No dependency.
+The file fallback is a **compatibility fallback, not the architecture.**
 
-- Migrations are an ordered array of `{ version: number, statements: string[] }`
-  with strictly increasing versions starting at 1.
-- Applied version is tracked in **two** places, both of which must agree:
-  - `pragma user_version` — cheap to read, survives everything.
-  - a `schema_migrations` table recording `version` and `applied_at` for audit.
-- The runner reads `user_version`, then applies only migrations with
-  `version > current`, in ascending order.
-- Each migration runs inside `BEGIN IMMEDIATE` … `COMMIT`, with `ROLLBACK` on
-  error, so a failed migration leaves no partial schema. `user_version` is set
-  inside the same transaction as the migration's statements, which is what makes
-  it atomic (constraint E).
-- Running the runner twice is a no-op: the second pass sees `user_version`
-  already at the target and applies nothing. This is asserted by test.
+`EnvKeyProvider` accepts 64-char hex or base64 decoding to exactly 32 bytes.
+Malformed input raises `master_key_invalid` — never silently hashed, padded, or
+truncated, because a caller who supplied a bad key must be told rather than
+quietly handed a different key.
 
-Phase 2 schema, migration version 1:
+`SecureFileKeyProvider` generates `randomBytes(32)` and writes with
+`{ flag: "wx", mode: 0o600 }` — exclusive create, so a concurrent start cannot
+clobber an existing key. On read it checks the mode where the platform reports
+one and **warns** (not fails) if the file is group/world-readable, since some
+Android and FAT-derived mounts cannot represent POSIX modes and a hard failure
+would make BAYZ unusable there. The warning names the path, never the key.
+
+## 5. Versioned crypto envelope
+
+```ts
+export type SecretEnvelope = {
+  version: 1;                    // envelope format
+  algorithm: "aes-256-gcm";      // both layers
+  kdf: "none" | "scrypt";        // how the KEK was derived, for rotation logic
+  keyId: string;                 // NON-SECRET KEK fingerprint, see §9
+  wrappedDek: Uint8Array;
+  wrapIv: Uint8Array;
+  wrapTag: Uint8Array;
+  ciphertext: Uint8Array;
+  iv: Uint8Array;
+  tag: Uint8Array;
+};
+```
+
+The metadata is sufficient to migrate the algorithm, rotate the KEK, re-encrypt
+old records, and detect format corruption. Phase 2 reads only `version: 1` and
+rejects any other value as `secret_corrupt`. A record whose lengths are wrong
+(IV ≠ 12, tag ≠ 16, DEK unwrap ≠ 32) is rejected before any cipher runs.
+
+## 6. Key rotation
+
+```ts
+rotateRootKey(next: KeyProvider): { rotated: number; keyId: string };
+```
+
+Algorithm: for each secret row, unwrap the DEK with the **old** KEK, rewrap the
+same DEK with the **new** KEK, and write back the new `wrappedDek`, `wrapIv`,
+`wrapTag`, and `keyId`. The secret ciphertext, IV, and tag are untouched because
+the DEK and algorithm did not change.
+
+Consequences, all of which are the point of the hierarchy:
+
+- No plaintext secret is ever produced, held, or written during rotation.
+- Cost is O(rows) tiny wraps, not O(bytes) re-encryption.
+- The whole rotation runs in one `BEGIN IMMEDIATE` transaction. On any failure it
+  rolls back, leaving every row readable by the **old** key — a failed rotation
+  degrades to "nothing happened", never to a half-rotated unreadable database.
+- The active `keyId` in `runtime_metadata` is updated in the same transaction.
+
+Rotation is invoked programmatically in Phase 2 and covered by tests. No HTTP
+route or dashboard control is added for it.
+
+## 7. Filesystem, database, migrations
+
+- Database: `<BAYZ_DATA_DIR>/bayz.db`. Key file: `<BAYZ_DATA_DIR>/master.key`.
+  `BAYZ_DATA_DIR` default stays `~/.bayz`.
+- Data dir created `mkdirSync(recursive, mode 0o700)`, then best-effort chmod.
+  Mode failures are tolerated (Android mounts); nothing relies on the mode for
+  correctness — it is defense in depth.
+- Open sequence: ensure dir → open via driver → `foreign_keys = ON` (asserted,
+  fatal if it fails) → `busy_timeout = 5000` → `journal_mode = WAL`
+  (**best-effort**, read back whatever resulted) → `synchronous = NORMAL` →
+  migrate.
+- Migrations are an ordered array `{ version, statements[] }`. The runner reads
+  `pragma user_version`, applies only greater versions ascending, and records
+  each in `schema_migrations` for audit. Both must agree.
+- Each migration runs in `BEGIN IMMEDIATE` … `COMMIT` with `ROLLBACK` on error,
+  and sets `user_version` **inside the same transaction** — that is what makes it
+  atomic. A failed migration leaves no partial schema.
+- Re-running is a no-op: the second pass applies zero migrations. Asserted.
+- `pragma user_version` cannot be parameterized; the value is interpolated only
+  behind an `Number.isInteger` guard and never derives from external input.
+
+Schema, migration version 1:
 
 ```sql
 CREATE TABLE schema_migrations (
@@ -167,15 +257,20 @@ CREATE TABLE schema_migrations (
 );
 
 CREATE TABLE secrets (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  name           TEXT    NOT NULL UNIQUE,
-  cipher_version INTEGER NOT NULL,
-  algorithm      TEXT    NOT NULL,
-  iv             BLOB    NOT NULL,
-  auth_tag       BLOB    NOT NULL,
-  ciphertext     BLOB    NOT NULL,
-  created_at     TEXT    NOT NULL,
-  updated_at     TEXT    NOT NULL
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT    NOT NULL UNIQUE,
+  version      INTEGER NOT NULL,
+  algorithm    TEXT    NOT NULL,
+  kdf          TEXT    NOT NULL,
+  key_id       TEXT    NOT NULL,
+  wrapped_dek  BLOB    NOT NULL,
+  wrap_iv      BLOB    NOT NULL,
+  wrap_tag     BLOB    NOT NULL,
+  ciphertext   BLOB    NOT NULL,
+  iv           BLOB    NOT NULL,
+  tag          BLOB    NOT NULL,
+  created_at   TEXT    NOT NULL,
+  updated_at   TEXT    NOT NULL
 );
 
 CREATE TABLE runtime_metadata (
@@ -184,213 +279,282 @@ CREATE TABLE runtime_metadata (
 );
 ```
 
-`secrets.name` is the caller's namespaced identifier. Phase 3 will use values
-shaped like `provider:<providerId>:api_key`. Phase 2 does not create any such
-row; the naming convention is documented, not populated.
+`secrets.name` is a namespaced identifier; Phase 3 will use shapes like
+`provider:<id>:api_key`. Phase 2 documents the convention and creates no such
+row. There is no `providers`, `proxies`, `routes`, or `usage` table — a test
+asserts their absence so speculative schema cannot creep in.
 
-There is no `providers` table, no `proxies` table, and no usage table. Those
-belong to their own phases and would be speculative here.
-
-## 8. Master key
-
-`loadMasterKey({ dataDir, env })` resolves a 32-byte key:
-
-1. If `BAYZ_MASTER_KEY` is set, decode it. Accepted encodings: 64-character hex,
-   or base64 that decodes to exactly 32 bytes. Anything else — wrong length,
-   undecodable, empty — raises `StorageError` code `master_key_invalid`. No
-   silent padding, hashing, or truncation of a malformed key; a caller who
-   supplied a bad key must be told, not quietly given a different key.
-2. Otherwise, if `<dataDir>/master.key` exists, read it and validate it is
-   exactly 32 bytes.
-3. Otherwise generate `crypto.randomBytes(32)` and write it to
-   `<dataDir>/master.key` with `flag: "wx"`, `mode: 0o600`.
-
-The key is returned as a `Buffer` and held only in memory. It is **never**
-written to SQLite — that is the whole point, since a stolen `bayz.db` must not
-be sufficient to decrypt. It is never logged, never returned from any API, and
-never included in an error message. A dedicated test asserts the key material
-does not appear in the database bytes.
-
-`describeMasterKeySource()` returns `"environment"` or `"generated"` for
-operator-facing diagnostics. It returns the *source*, never the key.
-
-### Threat model (explicit, per requirement C)
-
-This design protects secrets **at rest**, against:
-
-- someone who obtains a copy of `bayz.db` alone (backup, sync folder, careless
-  copy, cloud snapshot) — the ciphertext is useless without the key;
-- accidental plaintext disclosure through logs, error envelopes, or API
-  responses.
-
-It does **not** protect against:
-
-- an attacker with full or root access to the running device, who can read
-  `master.key` (mode `0o600` stops other unprivileged users, not root) or dump
-  process memory;
-- a malicious process running as the same user;
-- anyone who obtains `BAYZ_MASTER_KEY` from the environment or a shell history.
-
-This is the honest ceiling for a local-first, single-admin runtime with no
-hardware keystore and no external KMS. Claiming more would be false. Operators
-who need a stronger boundary must supply `BAYZ_MASTER_KEY` from an external
-secret manager at start time and not persist it on the device.
-
-## 9. Encryption envelope
-
-`sealSecret(key, plaintext)` → `SecretEnvelope`; `openSecret(key, envelope)` →
-`string`.
+## 8. Repository boundary
 
 ```ts
-type SecretEnvelope = {
-  cipherVersion: 1;
-  algorithm: "aes-256-gcm";
-  iv: Buffer;         // 12 bytes, crypto.randomBytes per call
-  authTag: Buffer;    // 16 bytes
-  ciphertext: Buffer;
-};
-```
-
-- AES-256-GCM, 96-bit random IV generated **per encryption call**. Two
-  encryptions of identical plaintext under the same key therefore produce
-  different IVs and different ciphertexts. Asserted by test.
-- The 16-byte GCM authentication tag is stored and verified on every open.
-- `cipherVersion` and `algorithm` are persisted so a later phase can introduce
-  version 2 and migrate records without guessing how existing rows were
-  encrypted. Phase 2 reads only version 1 and rejects anything else with
-  `secret_corrupt`.
-- **Fail closed.** A wrong key, a flipped ciphertext byte, a flipped tag byte, a
-  truncated IV, or an unknown `cipherVersion` all raise `StorageError` code
-  `secret_corrupt`. The function never returns `""`, never returns `null`, and
-  never returns partially-decrypted bytes. Node's `decipher.final()` throws on
-  tag mismatch, and that throw is translated — not swallowed — into
-  `secret_corrupt`. The underlying OpenSSL message is discarded so that crypto
-  internals do not leak (constraint E).
-
-## 10. Repository interface
-
-```ts
-export type SecretRecordMetadata = {
-  name: string;
-  cipherVersion: number;
-  algorithm: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export interface SecretRepository {
+export interface SecureSecretRepository {
   put(name: string, plaintext: string): void;
-  get(name: string): string;              // throws secret_not_found
-  find(name: string): string | undefined; // undefined when absent
-  list(): SecretRecordMetadata[];         // metadata only, never plaintext
+  get(name: string): string;               // throws secret_not_found
+  find(name: string): string | undefined;
+  list(): SecretRecordMetadata[];          // metadata only, never plaintext
   delete(name: string): boolean;
+  rotateRootKey(next: KeyProvider): { rotated: number; keyId: string };
   close(): void;
 }
 ```
 
-Design points:
+Mandatory layering (requirement 14):
 
-- `put` is an upsert on `name`, executed inside a transaction. A failure mid-way
-  leaves no partial row (constraint E), which is asserted by a rollback test.
-- `get` throws `secret_not_found` rather than returning a falsy value, so a
-  caller cannot mistake "absent" for "empty secret". `find` exists for the
-  genuinely optional case.
-- `list` returns metadata only. There is no code path that bulk-returns
-  plaintext, because such a path is the most likely future source of a leak.
-- Encryption happens inside the repository. Callers pass and receive plain
-  strings and never see an envelope, so no caller can accidentally persist
-  plaintext.
+```text
+Domain (Provider Manager, Proxy Manager, Router, Usage, UI)
+        ▼   knows only this interface
+SecureSecretRepository
+        ▼
+CryptoEnvelope (DEK/KEK, GCM, AAD)
+        ▼
+KeyProvider + SqlDatabase
+        ▼
+SQLite adapter (node:sqlite today)
+```
 
-## 11. Error semantics
+Provider Manager, Proxy Manager, Router, Usage, and UI must never know how
+encryption works. They receive and return plain strings; they never see an
+envelope, a DEK, or a KEK. `list()` returns metadata only — there is
+deliberately no bulk-plaintext path, because that is the most likely future
+source of a leak.
+
+`get` throws `secret_not_found` rather than returning a falsy value so a caller
+cannot confuse "absent" with "empty secret". `find` covers the genuinely
+optional case.
+
+`put` is an upsert inside `BEGIN IMMEDIATE`/`COMMIT` with `ROLLBACK` on error,
+so a failed write cannot leave a partial or half-written envelope.
+
+## 9. Integrity and anti-rollback metadata
+
+`runtime_metadata` records, all non-secret:
+
+- `crypto_format_version` — envelope format in use.
+- `active_key_id` — KEK fingerprint.
+- schema version, mirroring `user_version`.
+
+`keyId` is computed as `hkdfSync("sha256", kek, salt="", info="bayz-kek-id-v1",
+16)` rendered hex, prefixed `kek_`. HKDF is one-way, the output is 16 bytes, and
+the info string is domain-separated, so the identifier permits no practical key
+recovery while still detecting "you started with the wrong key" before any
+ciphertext is touched. Comparison uses `timingSafeEqual`.
+
+A mismatch between `active_key_id` and the supplied KEK raises
+`master_key_mismatch` at startup — a clear, safe signal instead of a confusing
+cascade of `secret_corrupt` failures.
+
+**Honest limit:** this detects accidental key mismatch and casual tampering. It
+is **not** rollback protection. An attacker with write access to `bayz.db` can
+restore an older file wholesale, and nothing in a plain local SQLite file can
+prevent that. Real anti-rollback needs OS-backed monotonic secure storage; it is
+recorded here as a future hardening capability and must not be presented as
+available.
+
+## 10. Operating modes
+
+| Mode | KEK custody | Phase 2 |
+| --- | --- | --- |
+| `STANDARD` (default) | `SecureFileKeyProvider`, zero config | implemented |
+| `SECURE` | `EnvKeyProvider`, or OS keystore when it exists | env implemented; keystore interface only |
+| `FORTRESS` | `PassphraseKeyProvider`, KEK only in process memory, locked on restart | implemented, opt-in |
+
+`STANDARD` stays the default because the runtime must remain usable with no
+configuration.
+
+**Fortress KDF.** `scryptSync` is memory-hard, in-tree, vetted, and needs no
+native dependency. Measured on this ARM64 device:
+
+| Params | Time | Memory |
+| --- | --- | --- |
+| N=2¹⁴, r=8, p=1 | 49 ms | 16 MiB |
+| N=2¹⁵, r=8, p=1 | 95 ms | 32 MiB |
+| **N=2¹⁶, r=8, p=1** | **194 ms** | **64 MiB** |
+| N=2¹⁷, r=8, p=1 | 393 ms | 128 MiB |
+
+Phase 2 selects **N=2¹⁶, r=8, p=1, 32-byte output, 16-byte random salt**. 194 ms
+and 64 MiB is a real cost for an attacker while staying tolerable on a phone.
+Parameters are stored in `runtime_metadata` so they can be raised later without
+guessing how an existing KEK was derived.
+
+PBKDF2/SHA-256 is explicitly rejected as a final design: it is not memory-hard.
+Argon2id would be preferable on paper but every Node binding is native, which
+breaks the Termux baseline; the `kdf` envelope field exists precisely so Argon2id
+can be added when a compatibility plan exists. `scrypt` is a genuine implementation,
+not a placeholder.
+
+Fortress additionally implies stricter network defaults: remote access stays off
+and no unlock factor is ever accepted over HTTP in this phase.
+
+## 11. Secret lifetime and memory hygiene
+
+- Plaintext is materialized only inside `put`/`get`, only when asked for.
+- No plaintext credential cache, no plaintext in module or global state.
+- No plaintext crosses into React, the dashboard, or any API response. Future
+  credential responses expose masked metadata only.
+- Key material is held in `Buffer`, and transient DEK and KEK buffers are
+  `fill(0)` in a `finally` block once used. Verified that `Buffer.fill(0)`
+  observably clears the bytes.
+- Secret-bearing objects are never `JSON.stringify`-ed for debugging.
+
+**Honest limit:** JavaScript cannot guarantee zeroization. The garbage collector
+may copy a `Buffer`, V8 may retain intermediate `string` values, and strings are
+immutable so a plaintext `string` cannot be wiped at all. Zeroing reduces the
+window; it does not close it. Any claim of guaranteed erasure would be false.
+
+## 12. Errors, logging, redaction
 
 ```ts
 type StorageErrorCode =
   | "storage_unavailable"
   | "master_key_invalid"
+  | "master_key_mismatch"
   | "secret_not_found"
   | "secret_corrupt";
-
-class StorageError extends Error {
-  readonly code: StorageErrorCode;
-  readonly stage?: string;
-}
 ```
 
-Rules:
+**Fail closed.** Wrong KEK, corrupt wrapped DEK, modified ciphertext, invalid
+auth tag on either layer, unsupported version, wrong-length field, truncated
+record, or malformed envelope all raise `secret_corrupt`. The code never returns
+`""`, never returns `null`, never falls back to plaintext, never silently resets
+a credential, and never treats corruption as an empty credential.
 
-- Raw SQLite errors (`ERR_SQLITE_ERROR`, which can embed absolute paths) and raw
-  OpenSSL crypto errors are caught at the storage boundary and re-thrown as
-  `StorageError`. The original is **not** attached as `cause` on the object that
-  crosses the boundary, because `cause` is serialized by several loggers.
-- The Phase 1 error handler in `apps/server/src/errors.ts` already returns a
-  fixed `internal_error` / `"Request failed"` envelope for anything uncaught, so
-  a `StorageError` reaching an HTTP path cannot leak its message to a client.
-  Phase 2 does not weaken that handler.
-- Startup storage failure is fatal and safe: the process logs a redacted
-  diagnostic and exits non-zero rather than serving traffic with no storage.
+Raw `ERR_SQLITE_ERROR` and raw OpenSSL messages are caught at the boundary and
+replaced with a fixed safe message derived from code and stage only. The original
+is **not** attached as `cause`, because several loggers serialize `cause`.
 
-All storage logging passes through `redactSecrets` from `@bayz/security`
-(constraint B), reusing the Phase 1 primitive rather than duplicating a key list.
+Phase 1's error handler already returns a fixed `internal_error` / `"Request
+failed"` envelope for anything uncaught, so a `StorageError` reaching an HTTP
+path cannot leak to a client. Phase 2 does not weaken it.
 
-## 12. Server integration
+`@bayz/security` `redactSecrets` is **extended** (not duplicated) to cover
+`authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `apikey`,
+`api_key`, `api-key`, `password`, `proxypassword`, `proxy_password`, `token`,
+`accesstoken`, `access_token`, `refreshtoken`, `refresh_token`, `clientsecret`,
+`client_secret`, `masterkey`, `master_key`, `privatekey`, `private_key`,
+`secret`, `credential`, plus `dek`, `kek`, `wrappeddek`, `passphrase`, and
+`ciphertext`. Matching normalizes case and `-`/`_` so alias and casing variants
+are caught. Existing Phase 1 redaction tests must stay green.
 
-`apps/server/src/storage.ts` is a thin wiring module:
+Never logged, under any level: KEK, DEK, `BAYZ_MASTER_KEY`, passphrase, plaintext
+credential, or a full authorization header.
 
-```ts
-initializeStorage(config: RuntimeConfig): StorageHandle
-```
+## 13. Threat model — truthful
 
-It is called from `src/index.ts` during startup, before `listen`. On
-`StorageError` the process logs a redacted message and exits non-zero.
+**Protects against:**
 
-Deliberately **not** in Phase 2:
+- A stolen `bayz.db`, or a stolen backup/sync/cloud snapshot of it: rows hold
+  only ciphertext and KEK-wrapped DEKs.
+- Database inspection by anyone with read access to the file but not the KEK.
+- Ciphertext modification: both GCM tags plus AAD binding make tampering a
+  detected failure, not a silent wrong value.
+- Envelope relocation between records, via AAD name binding.
+- One-record compromise: a leaked DEK decrypts exactly one secret.
+- Accidental disclosure through logs, error envelopes, or API responses.
+- Wrong/rotated root key: detected up front via `keyId`, with rotation that never
+  materializes plaintext and rolls back cleanly on failure.
 
-- no new HTTP route,
-- no secret exposed through `/api/health`,
-- no dashboard change.
+**Does NOT protect against:**
 
-`/api/health` keeps its exact Phase 1 contract. Adding a storage field would
-change a shape Phase 1 tests and the dashboard already depend on, for no Phase 2
-benefit.
+- An attacker with active root or kernel control of the device — they can read
+  `master.key` (mode `0o600` stops other unprivileged users, not root), read the
+  environment, or dump process memory while secrets are unlocked.
+- Malicious code running inside the BAYZ process.
+- A compromised dependency or build pipeline.
+- Hardware or OS compromise while secrets are unlocked.
+- Rollback of the database file to an earlier state (§9).
+- Anyone who obtains `BAYZ_MASTER_KEY` from the environment or shell history, or
+  the Fortress passphrase.
 
-## 13. Test plan
+Fortress mode narrows the at-rest window by keeping the KEK out of persistent
+storage entirely, at the cost of an unlock on every start. It does not change any
+"does not protect" item above.
 
-Mapping requirement F to concrete tests:
+BAYZ is not unhackable. No such claim is made anywhere in this design.
+
+## 14. Server integration
+
+`apps/server/src/storage.ts` is thin wiring: `initializeStorage(config)` selects
+the provider, opens storage, and logs — through `redactSecrets` — only
+`{ schemaVersion, journalMode, keyProvider, keyId, dataDir, driver }`. Never a
+key, never a secret. `src/index.ts` calls it before `listen`; a `StorageError`
+logs a redacted diagnostic and exits non-zero rather than serving with no storage.
+
+Deliberately **not** added: any HTTP route, any storage field on `/api/health`
+(its Phase 1 shape is depended on by Phase 1 tests and the dashboard), and any
+dashboard change. The dashboard has no path to the storage or crypto layer.
+
+Default host `127.0.0.1`, default port `20128`, remote access off by default —
+all unchanged.
+
+## 15. Test plan
+
+Mapping requirement 12 to tests:
 
 | Requirement | Test |
 | --- | --- |
-| fresh DB migration | `migrations.test.ts` — fresh file reaches target version, tables exist |
-| migration twice is safe | `migrations.test.ts` — second run applies 0, schema unchanged |
-| schema version correct | `migrations.test.ts` — `user_version` and `schema_migrations` agree |
-| DB persists across reopen | `persistence.test.ts` — write, close, reopen, read back |
-| encrypted round-trip | `crypto.test.ts`, `secret-repository.test.ts` |
-| plaintext absent from DB bytes | `persistence.test.ts` — scan raw `bayz.db` bytes for the sentinel |
-| distinct IV for equal plaintext | `crypto.test.ts` — two seals differ in IV and ciphertext |
-| wrong master key fails | `crypto.test.ts` — `secret_corrupt` |
-| tampered ciphertext fails | `crypto.test.ts` — flipped ciphertext byte and flipped tag byte both fail |
-| redaction still works | Phase 1 `redact.test.ts` stays green; `storage` logs a redacted payload |
-| transaction rollback | `secret-repository.test.ts` — failed write leaves no row |
-| invalid/unwritable data dir fails safely | `paths.test.ts` / `database.test.ts` — `ENOTDIR` parent yields `storage_unavailable`, not a raw SQLite error |
-| Foundation tests stay green | `npm run runtime:verify` |
+| identical plaintexts → different ciphertext | `crypto.test.ts` |
+| two records have different DEKs | `secret-repository.test.ts` (compare unwrapped DEKs) |
+| DB bytes contain no plaintext | `persistence.test.ts` (scan `.db`, `-wal`, `-shm`) |
+| wrong KEK fails | `crypto.test.ts`, `persistence.test.ts` |
+| tampered ciphertext fails | `crypto.test.ts` |
+| tampered wrapped DEK fails | `crypto.test.ts` |
+| tampered auth tag fails (both layers) | `crypto.test.ts` |
+| unsupported crypto version fails | `crypto.test.ts` |
+| AAD/name binding enforced | `crypto.test.ts` |
+| rotation preserves readability | `rotation.test.ts` |
+| failed rotation leaves old state usable | `rotation.test.ts` |
+| repeated migration safe | `migrations.test.ts` |
+| records survive close/reopen | `persistence.test.ts` |
+| plaintext never in logged output | `logging.test.ts`, smoke script |
+| redaction covers aliases/casing | `packages/security/test/redact.test.ts` |
+| `master.key` permissions restrictive | `key-provider.test.ts` |
+| transaction failure leaves no half envelope | `secret-repository.test.ts` |
+| malformed envelope fails closed | `crypto.test.ts`, `secret-repository.test.ts` |
+| driver boundary respected | `driver-boundary.test.ts` (source scan) |
+| no speculative schema | `migrations.test.ts` |
+| Foundation stays green | `npm run runtime:verify` |
 
-Plus a **non-mocked runtime proof** (constraint H): a real script that opens a
-real database file on disk, writes a real secret, closes, reopens, reads it
-back, greps the raw file bytes for the plaintext, and greps captured logs for
-the plaintext and the key. Mocked tests alone do not satisfy H.
+Plus a **non-mocked runtime proof**: a script against a real on-disk database
+that writes a sentinel, closes, reopens in a fresh process, reads it back, greps
+raw `.db`/`-wal`/`-shm` bytes and captured logs for the sentinel and the key,
+rotates the root key and re-reads, and confirms a wrong key fails closed. Mocked
+tests alone do not satisfy the completion gate.
 
-## 14. Compatibility
+## 16. Compatibility
 
-- Node.js 24+ (`node:sqlite` is the hard floor; it does not exist in Node 20).
-- Zero new runtime dependencies, so nothing to compile on Termux/ARM64.
-- One process, local-first. Default host `127.0.0.1`, default port `20128`,
-  both unchanged from Phase 1.
-- `~/.bayz` default data dir unchanged.
+- Node.js 24+ (`node:sqlite` does not exist in Node 20).
+- **Zero new dependencies**, runtime or dev. Nothing to compile on Termux/ARM64.
+- One process, local-first. Host `127.0.0.1`, port `20128`, data dir `~/.bayz`.
+- All crypto from `node:crypto`: AES-256-GCM, `randomBytes`, `scryptSync`,
+  `hkdfSync`, `timingSafeEqual`.
 
-## 15. Open items intentionally deferred
+## 17. Self-review
 
-- Key rotation and re-encryption — the envelope carries `cipherVersion` so this
-  is possible later; it is not implemented and must not be described as working.
-- Provider, proxy, route, combo, and usage schemas — their own phases.
-- The existing private BAYZ Sites/UI source is still absent from this workspace,
-  so the root Sites build remains DEFERRED from Phase 1. This is not a Phase 2
-  regression and Phase 2 does not attempt to recreate that UI.
+- **Crypto ambiguity** — Algorithm, key sizes, IV sizes, tag sizes, AAD content,
+  and KDF parameters are all pinned to exact values above. Both layers are named.
+- **Key lifecycle** — Provider → KEK (memory) → per-write DEK (memory) → wrapped
+  DEK (disk). Zeroing and its JS limits stated in §11.
+- **Rotation** — Rewrap-only, transactional, no plaintext, degrades to no-op.
+- **Corruption semantics** — One code, `secret_corrupt`, for every failure class,
+  enumerated in §12, with an explicit prohibition on empty-string fallback.
+- **Termux compatibility** — Zero native deps; scrypt cost measured on ARM64;
+  chmod tolerated as best-effort; OS keystore honestly deferred.
+- **Migration safety** — `user_version` set inside the migration transaction;
+  idempotence asserted; no speculative tables.
+- **Accidental plaintext paths** — Audited: `list()` returns metadata only, no
+  method returns an envelope, no plaintext in logs/errors/API/dashboard,
+  redaction extended with aliases, and a test greps raw DB bytes and log output.
+- **Known residual risks** — Rollback of the DB file, root-level attackers, and
+  guaranteed memory zeroization. All three documented as *not* protected rather
+  than papered over.
+
+## 18. Deferred, and honestly labeled
+
+- `OsKeystoreKeyProvider` — interface only; needs per-platform native support.
+- Argon2id KDF — awaits a Termux-safe binding; `kdf` field reserved.
+- Full anti-rollback — needs OS monotonic secure storage.
+- Key rotation *UI/route* — the API exists and is tested; no operator surface.
+- Provider/proxy/route/combo/usage schemas — their own phases.
+- The private BAYZ Sites/UI source is still absent from this workspace, so the
+  root Sites build remains **DEFERRED** from Phase 1. Not a Phase 2 regression,
+  and Phase 2 does not attempt to recreate that UI.
