@@ -1,0 +1,11 @@
+{
+  "name": "@bayz/security",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "build": "tsc -p tsconfig.json --noEmit"
+  }
+}
