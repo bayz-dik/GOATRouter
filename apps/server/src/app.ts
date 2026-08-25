@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { HealthResponse } from "@bayz/contracts";
 import { installErrorHandling } from "./errors.js";
+import { registerStaticDashboard } from "./static-dashboard.js";
 
 export type BuildAppOptions = {
   version?: string;
   logger?: boolean;
   registerTestRoutes?: boolean;
+  dashboardRoot?: string;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -36,6 +38,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   if (options.registerTestRoutes) {
     app.get("/__test/error", async () => {
       throw new Error("sk-secret");
+    });
+  }
+
+  if (options.dashboardRoot) {
+    app.register(async (instance) => {
+      await registerStaticDashboard(instance, { root: options.dashboardRoot! });
     });
   }
 
