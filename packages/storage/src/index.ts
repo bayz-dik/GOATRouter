@@ -13,3 +13,10 @@ export {
   type SqlValue,
 } from "./sql.js";
 export { nodeSqliteDriver, selectDriver } from "./drivers/node-sqlite.js";
+export {
+  DATABASE_FILENAME,
+  MASTER_KEY_FILENAME,
+  databasePath,
+  ensureDataDir,
+  masterKeyPath,
+} from "./paths.js";
