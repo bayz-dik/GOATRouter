@@ -19,6 +19,8 @@ export {
   databasePath,
   ensureDataDir,
   masterKeyPath,
+  restrictDatabaseFileModes,
+  restrictFileMode,
 } from "./paths.js";
 export {
   EnvKeyProvider,

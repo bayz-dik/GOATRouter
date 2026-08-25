@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -109,6 +109,29 @@ test("reopening an existing database applies no further migrations", () => {
     assert.equal(second.appliedMigrations, 0);
   } finally {
     second.close();
+  }
+});
+
+test("the database file and its sidecars are not world-readable", () => {
+  const dataDir = join(tempRoot(), ".bayz");
+  const handle = openDatabase({ dataDir });
+  try {
+    // The 0700 directory is not enough on its own: a backup tool or sync folder
+    // can copy the file out, carrying its own mode with it.
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const file = `${databasePath(dataDir)}${suffix}`;
+      if (!existsSync(file)) {
+        continue;
+      }
+      const mode = statSync(file).mode & 0o777;
+      assert.equal(
+        mode & 0o077,
+        0,
+        `${file} is group/world accessible with mode 0${mode.toString(8)}`,
+      );
+    }
+  } finally {
+    handle.close();
   }
 });
 

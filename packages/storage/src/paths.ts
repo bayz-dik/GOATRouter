@@ -14,6 +14,32 @@ export function masterKeyPath(dataDir: string): string {
 }
 
 /**
+ * Restrict a storage file to owner-only access.
+ *
+ * The enclosing data directory is already 0700, but the database itself must not
+ * be world-readable on its own: a backup tool, a sync folder, or a file copied
+ * out of the directory would otherwise carry loose permissions with it. WAL and
+ * SHM sidecars are tightened too because they hold recently written pages.
+ *
+ * Best-effort for the same reason as the directory mode: some Android and
+ * FAT-derived mounts cannot represent POSIX modes.
+ */
+export function restrictFileMode(file: string): void {
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // Filesystem does not honor POSIX modes, or the file does not exist yet.
+  }
+}
+
+export function restrictDatabaseFileModes(dataDir: string): void {
+  const base = databasePath(dataDir);
+  for (const suffix of ["", "-wal", "-shm"]) {
+    restrictFileMode(`${base}${suffix}`);
+  }
+}
+
+/**
  * Create the data directory with private permissions.
  *
  * The mode is defense in depth, not a correctness dependency: some Android and

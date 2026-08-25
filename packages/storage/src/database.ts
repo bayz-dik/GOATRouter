@@ -1,7 +1,7 @@
 import { StorageError, asStorageError } from "./errors.js";
 import { selectDriver } from "./drivers/node-sqlite.js";
 import { runMigrations, readSchemaVersion } from "./migrations.js";
-import { databasePath, ensureDataDir } from "./paths.js";
+import { databasePath, ensureDataDir, restrictDatabaseFileModes } from "./paths.js";
 import type { SqlDatabase, SqlDriver } from "./sql.js";
 
 export type OpenDatabaseOptions = {
@@ -51,6 +51,10 @@ export function openDatabase(options: OpenDatabaseOptions): BayzDatabase {
     db.exec("PRAGMA synchronous = NORMAL");
 
     const appliedMigrations = runMigrations(db);
+
+    // Applied after migrations so the WAL and SHM sidecars, which SQLite creates
+    // lazily, are covered too.
+    restrictDatabaseFileModes(options.dataDir);
 
     return {
       db,
