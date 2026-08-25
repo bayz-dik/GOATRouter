@@ -20,3 +20,17 @@ export {
   ensureDataDir,
   masterKeyPath,
 } from "./paths.js";
+export {
+  EnvKeyProvider,
+  KEK_LENGTH,
+  OsKeystoreKeyProvider,
+  PassphraseKeyProvider,
+  SCRYPT_PARAMS,
+  SecureFileKeyProvider,
+  resolveKeyProvider,
+  type BayzSecurityMode,
+  type KeyProvider,
+  type KeyProviderKind,
+  type ResolveKeyProviderOptions,
+  type SecureFileOptions,
+} from "./key-provider.js";
