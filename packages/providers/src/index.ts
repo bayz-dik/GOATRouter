@@ -22,3 +22,11 @@ export {
   parseProviderConfig,
   type ProviderConfig,
 } from "./config.js";
+export {
+  createProviderRepository,
+  type CreateProviderInput,
+  type CreateProviderRepositoryOptions,
+  type ProviderRecord,
+  type ProviderRepository,
+  type UpdateProviderInput,
+} from "./repository.js";

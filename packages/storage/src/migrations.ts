@@ -9,9 +9,11 @@ export type Migration = {
 /**
  * Ordered, hand-rolled migrations. Versions are 1..n with no gaps.
  *
- * Phase 2 stores only an encrypted envelope plus non-secret metadata. There is
- * deliberately no provider, proxy, route, combo, or usage table: those belong to
- * their own phases and would be speculative here.
+ * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
+ * provider registry, which holds routing-independent metadata and deliberately
+ * no credential column: provider keys live in `secrets` under the scoped name
+ * `provider:<id>:api_key`. There is still no proxy, route, combo, or usage
+ * table: those belong to their own phases and would be speculative here.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -40,6 +42,22 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE TABLE runtime_metadata (
          key   TEXT PRIMARY KEY,
          value TEXT NOT NULL
+       )`,
+    ],
+  },
+  {
+    version: 2,
+    statements: [
+      `CREATE TABLE providers (
+         id           TEXT    PRIMARY KEY,
+         kind         TEXT    NOT NULL CHECK (kind IN
+                      ('openai-compatible','openrouter','gemini','codex-oauth')),
+         display_name TEXT    NOT NULL,
+         base_url     TEXT    NOT NULL,
+         enabled      INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+         config_json  TEXT    NOT NULL,
+         created_at   TEXT    NOT NULL,
+         updated_at   TEXT    NOT NULL
        )`,
     ],
   },

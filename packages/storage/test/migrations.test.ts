@@ -49,11 +49,12 @@ test("a fresh database migrates to the target version", () => {
   }
 });
 
-test("a fresh database gains exactly the Phase 2 tables", () => {
+test("a fresh database gains exactly the tables of the current schema", () => {
   const db = freshDb();
   try {
     runMigrations(db);
     assert.deepEqual(tableNames(db), [
+      "providers",
       "runtime_metadata",
       "schema_migrations",
       "secrets",
@@ -183,13 +184,15 @@ test("a failing migration is atomic and leaves the version untouched", () => {
   }
 });
 
-test("no speculative provider, proxy, route, combo, or usage schema exists", () => {
+test("no speculative proxy, route, combo, or usage schema exists", () => {
   const db = freshDb();
   try {
     runMigrations(db);
     const names = tableNames(db);
+    // `providers` is intentionally absent from this list from schema v2 onward:
+    // Phase 3 owns it. Everything below still belongs to a later phase, so
+    // creating it now would be speculative.
     for (const forbidden of [
-      "providers",
       "provider",
       "proxies",
       "proxy",
@@ -204,9 +207,108 @@ test("no speculative provider, proxy, route, combo, or usage schema exists", () 
       assert.equal(
         names.includes(forbidden),
         false,
-        `Phase 2 must not create a ${forbidden} table`,
+        `the current schema must not create a ${forbidden} table`,
       );
     }
+  } finally {
+    db.close();
+  }
+});
+
+test("the providers table holds registry metadata and no credential", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('providers')")
+      .all()
+      .map((row) => String(row.name))
+      .sort();
+
+    assert.deepEqual(columns, [
+      "base_url",
+      "config_json",
+      "created_at",
+      "display_name",
+      "enabled",
+      "id",
+      "kind",
+      "updated_at",
+    ]);
+    // A credential column here would bypass envelope encryption entirely.
+    for (const forbidden of [
+      "api_key",
+      "apikey",
+      "credential",
+      "key",
+      "password",
+      "secret",
+      "token",
+      "authorization",
+      "headers",
+    ]) {
+      assert.equal(
+        columns.includes(forbidden),
+        false,
+        `providers must never store ${forbidden}`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("providers.kind is constrained to the supported kinds", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const insert = db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES (?, ?, 'Display', 'https://example.com', 1, '{}', '2026-08-26T00:00:00.000Z',
+               '2026-08-26T00:00:00.000Z')`,
+    );
+    for (const kind of [
+      "openai-compatible",
+      "openrouter",
+      "gemini",
+      "codex-oauth",
+    ]) {
+      insert.run(`ok-${kind}`, kind);
+    }
+    assert.throws(
+      () => insert.run("bad-kind", "anthropic-secret-backdoor"),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("providers.enabled is constrained to 0 or 1 and the id is the primary key", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const insert = db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES (?, 'gemini', 'Display', 'https://example.com', ?, '{}',
+               '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+    );
+    insert.run("enabled-zero", 0);
+    insert.run("enabled-one", 1);
+    assert.throws(
+      () => insert.run("enabled-two", 2),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("enabled-one", 1),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+      "provider ids must be unique",
+    );
   } finally {
     db.close();
   }
