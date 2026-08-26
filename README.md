@@ -280,6 +280,94 @@ Combos (multi-provider fan-out) and usage accounting are also not implemented,
 and no schema for either exists. Global `fetch` still is not proxied — only the
 router's own `node:http` path honors a proxy.
 
+## Local HTTP API
+
+Phase 6 exposes the managers over an authenticated local API, plus an
+OpenAI-compatible chat endpoint.
+
+```text
+GET    /api/health                      unauthenticated liveness probe
+GET    /api/status                      runtime summary, no key material
+GET    /api/providers                   POST /api/providers
+GET    /api/providers/:id               PATCH, DELETE
+PUT    /api/providers/:id/credential    DELETE (write-only)
+POST   /api/providers/:id/discover
+GET    /api/proxies                     POST /api/proxies
+GET    /api/proxies/:id                 PATCH, DELETE
+PUT    /api/proxies/:id/password        DELETE (write-only)
+POST   /api/proxies/:id/check
+GET    /api/routes                      POST /api/routes
+GET    /api/routes/:id                  PATCH, DELETE
+POST   /v1/chat/completions
+GET    /v1/models
+```
+
+Verify the API against a real listener: `node scripts/api-smoke.mjs`
+
+### The token
+
+A bearer token is required for every endpoint except `/api/health`. On first
+start Bayz generates one, stores it envelope-encrypted like any other secret, and
+prints it **once**:
+
+```text
+Bayz local API token (shown only once, store it now): <64 hex characters>
+```
+
+It is never printed again, never logged, and no endpoint returns it. Set
+`BAYZ_API_TOKEN` to manage it externally instead — that value is used directly and
+deliberately not copied into the database, so there is no second stale copy at
+rest.
+
+Comparison is `timingSafeEqual` over SHA-256 digests, so neither length nor
+content leaks through timing. Only one exactly-shaped `Authorization: Bearer
+<token>` header is accepted: no query parameter, no `Basic`, no comma-joined
+duplicate, no trailing junk. A wrong token and a missing token produce byte-
+identical responses.
+
+### Browser and rebinding defences
+
+- **No CORS headers are emitted, ever.** Permissive CORS on `127.0.0.1` is exactly
+  how local-daemon compromise happens.
+- A request whose `Origin` is not loopback is refused with `403`, so a
+  cross-site POST cannot cause side effects even with a valid token.
+- A request whose `Host` is not loopback is refused with `403` on **every** path
+  including `/api/health`, which blocks DNS rebinding.
+- `Content-Type: application/json` is required for bodies, which also removes the
+  CORS "simple request" shape a cross-site form could send without a preflight.
+
+### Limits
+
+Bodies are capped at 1 MiB. Authenticated requests are limited to 120 per minute
+per address and failed authentications to 10 per minute, after which the API
+answers `429` with `Retry-After`. `/api/health` is exempt so an attacker burning
+the auth budget cannot starve a supervisor's health check.
+
+This is a brute-force brake implemented in-process, not a DDoS defence. It will
+not survive a distributed attack, and Bayz does not claim it will.
+
+### Secrets are write-only
+
+`PUT /api/providers/:id/credential` and `PUT /api/proxies/:id/password` accept
+exactly `{ value: string }` and return `204` with no body. There is **no** GET at
+any path shape for either. Listings report `credentialPresent` and
+`passwordPresent` as booleans. An adversarial test enumerates every route from
+Fastify's own table — so a newly added endpoint cannot silently skip
+authentication — and scans every response body from a full exercise for the stored
+credential, password, API token, and root key.
+
+### Chat
+
+`POST /v1/chat/completions` takes the OpenAI request shape and returns the OpenAI
+response shape. Routing facts travel in `x-bayz-route`, `x-bayz-provider`, and
+`x-bayz-proxy` headers rather than being mixed into the body. `stream` in the body
+is a `400` naming streaming as unimplemented. Prompts and completions are never
+persisted and never logged; the smoke script proves this against the raw database
+bytes and the captured log output.
+
+`GET /v1/models` lists models from enabled routes only, and omits wildcard
+patterns — `gpt-4*` is route configuration, not a model a client could request.
+
 ## Deferred verification
 
 The existing private BAYZ Sites/UI review surface is not present in this

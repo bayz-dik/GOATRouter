@@ -7,27 +7,30 @@
 - Phase 3 Provider Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 4 Proxy Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 5 Router: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Phase 6 Local HTTP API: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-provider-manager.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-proxy-manager.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-router.md`
+  - `docs/superpowers/plans/2026-08-26-bayz-router-http-api.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-proxy-manager-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-router-design.md`
+  - `docs/superpowers/specs/2026-08-26-bayz-router-http-api-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
 ## Verified totals
 
-- `@bayz/storage`: 157 tests pass (schema is now v4).
+- `@bayz/storage`: 157 tests pass (schema is v4).
 - `@bayz/providers`: 111 tests pass.
 - `@bayz/proxy`: 105 tests pass.
 - `@bayz/router`: 122 tests pass.
-- `@bayz/server`: 14 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/contracts`: 3, `@bayz/security`: 6, `@bayz/dashboard`: 2.
 - `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
@@ -40,22 +43,31 @@
   origins, and a real `CONNECT` proxy — proving a direct chat, a proxied chat,
   failover, `auth_failed` stopping the walk, and prompt/completion/credential
   absence from disk and logs.
-- Live boot on `127.0.0.1:20996`: logged
-  `{schemaVersion:3, journalMode:"wal", driver:"node:sqlite", keyProvider:"environment", keyId:"kek_…"}`
-  at the time of Phase 4; schema is v4 as of Phase 5. `/api/health` still returns
-  exactly `{status, version, uptimeSeconds}`.
-- Secret scan over tracked non-test source for `sk-live`, `sk-router`, `hunter2`,
-  `PROMPT-`, `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
-- Getter scan for `getCredential`/`getPassword` across all `src`: no matches.
+- `node scripts/api-smoke.mjs`: 62/62 against a **real listener** on a real port
+  driven by real `fetch` — proving unauthenticated `/api/health`, 401 on every
+  other endpoint, a full provider→proxy→route→chat path, a proxied chat that
+  really tunnels, streaming refusal, rate limiting, `Host`/`Origin` refusal, and
+  absence of every secret from all response bodies, the database, and the logs.
+- Live boot on `127.0.0.1:20997`: logged `schemaVersion:4`, served
+  `/api/health` as exactly `{status, version, uptimeSeconds}`, answered
+  `/api/status` with `401` unauthenticated and `200` with the printed token, and
+  the root key never appeared in the log.
+- Secret scan over tracked non-test source for `sk-*`, `hunter2`, `PROMPT-`,
+  `API-SMOKE`, `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
+- Getter scan for `getCredential`/`getPassword`/`reveal*`/`export*` across all
+  `src`: no matches. `withCredential` exists only in
+  `packages/providers/src/manager.ts` and is consumed only by
+  `packages/router/src/router.ts`.
 - `node:sqlite` imported in exactly one file, enforced by a source-scan test.
-- `apps/dashboard` last touched in Phase 1 (`b78aef2`). No Flux Core or
-  `BAYZ-responsive-master.html` file is tracked, so nothing there was modified.
+- `apps/dashboard` last touched in Phase 1 (`b78aef2`); zero Flux Core or
+  `BAYZ-responsive-master.html` files are tracked, so the LOCKED motion system was
+  not modified.
 
 ## Environment facts
 
 - Node `v24.19.0`, `linux arm64`. `node:sqlite` present, SQLite `3.53.3`, no
   ExperimentalWarning.
-- Zero new dependencies added in Phases 2–5 — runtime or dev.
+- Zero new dependencies added in Phases 2–6 — runtime or dev.
 - scrypt measured on this device: N=2^14 49 ms/16 MiB, 2^15 95 ms/32 MiB,
   **2^16 194 ms/64 MiB (selected)**, 2^17 393 ms/128 MiB.
 
@@ -219,6 +231,53 @@ Global `fetch` (still used by provider discovery) remains direct.
    patchable, so an operator creates a new reviewable binding instead of silently
    repointing an existing one.
 
+## Phase 6 architecture as built
+
+```text
+buildApp                      apps/server/src/app.ts
+  ├─ installApiGuards         Host → Origin → guarded-path → rate → bearer token
+  ├─ installContentTypeGuard  application/json required for bodies
+  ├─ /api/health              unauthenticated, Phase 1 contract pinned
+  ├─ /api/status              operational facts only
+  ├─ routes/providers|proxies|routes|chat
+  └─ installErrorHandling     framework + domain codes → stable envelope
+createBayzRuntime             one SecretStorage → providers, proxies, router
+```
+
+The guard is a global `onRequest` hook, not a per-route decorator. That is the
+whole reason a newly added endpoint cannot forget to authenticate, and it is what
+the adversarial test verifies by enumerating Fastify's own route table.
+
+## Phase 6 deviations from the plan text
+
+1. **`Host` and `Origin` validation added, including on `/api/health`.** The plan
+   named CSRF and rebinding as requirements without specifying placement. Health
+   is exempt from *authentication* and *rate limiting* but not from Host checking,
+   otherwise it would be a usable rebinding oracle.
+2. **Health is exempt from rate limiting.** Not in the plan. Without it, an
+   attacker burning the 10/min auth budget would also take down a supervisor's
+   liveness probe, turning a brute-force brake into a self-inflicted outage.
+3. **`DELETE` is idempotent and always `204`.** The plan did not say. Returning
+   `404` for a missing id would let an unauthenticated-adjacent caller enumerate
+   ids through delete responses; the end state is identical either way.
+4. **Framework error codes mapped explicitly.** Fastify raises
+   `FST_ERR_CTP_BODY_TOO_LARGE`, `FST_ERR_CTP_INVALID_JSON_BODY`, and friends
+   before any handler, so they never reach the domain mapping and would all have
+   answered `500`. They now map to `413`/`400`/`415`. The exact code
+   (`..._INVALID_JSON_BODY`, not `..._INVALID_JSON`) was found by inspecting a real
+   throw, not from documentation.
+5. **The 404 handler is owned by whichever layer is present.** Fastify permits one
+   per scope, and the static dashboard already installs one that serves
+   `index.html` for client routes while keeping `/api/*` misses as JSON. The core
+   handler is therefore conditional rather than unconditional.
+6. **`Host` cannot be set through `fetch`.** The API smoke script issues a raw
+   HTTP/1.1 request over a socket for the rebinding probe, because `fetch` treats
+   `Host` as a forbidden header and silently refuses to override it. A test that
+   used `fetch` here would have passed vacuously.
+7. **`apps/server/src/storage.ts` is now unused by startup** but left in place: it
+   is still covered by Phase 2 regression tests that pin the storage-init contract,
+   and deleting it would remove that coverage for no benefit.
+
 ## Deliberately NOT implemented, and not faked
 
 - **OS keychain custody** — `OsKeystoreKeyProvider` exists as an interface with
@@ -247,10 +306,34 @@ Global `fetch` (still used by provider discovery) remains direct.
   implementation needs incremental parsing plus cancellation semantics.
 - **Combos (multi-provider fan-out) and usage accounting** — not implemented, and
   no schema for either exists. A migration test asserts the tables are absent.
-- **Router HTTP surface** — the Router is a library API. There is no route, no
-  CLI, and no dashboard control for chatting or managing routes.
-- **Combo / usage schema** — a test asserts these tables do *not* exist, so
-  speculative schema cannot creep in.
+- **Router HTTP surface** — now exists as of Phase 6. Chat and management routes
+  are authenticated; see the README API section.
+- **Combo / usage schema and endpoints** — not implemented. A migration test
+  asserts the tables are absent and no route exposes them.
+- **Streaming over HTTP** — `POST /v1/chat/completions` with `stream` returns
+  `400 streaming_unsupported`. Not faked, not silently ignored.
+- **Dashboard controls for any of this** — none. The dashboard is still the Phase 1
+  static shell; it has no API client and no credential UI.
+
+## Phase 6 residual risk
+
+Protected: `/api/health` is the only unauthenticated route and its Phase 1
+contract is pinned; every other route is authenticated, verified by enumerating
+Fastify's route table rather than a hand-written list; malformed, duplicated, and
+query-string token forms all fail closed and are indistinguishable from a missing
+token; no endpoint returns a credential, password, or the API token, and every
+response body in a full exercise is scanned for all three; prompts and completions
+never touch the database or the logs; `Origin` and `Host` are validated so
+cross-site requests and DNS rebinding fail; no CORS header is ever emitted; bodies
+are capped at 1 MiB; failed authentication is throttled.
+
+Not protected: the rate limiter is an in-process fixed-window counter keyed by
+address — a brute-force brake, not a DDoS defence, and it resets on restart. The
+token is a single shared operator credential with no scopes, expiry, or rotation
+endpoint; rotation today means deleting the stored secret and restarting. A root
+attacker on the device can still read `master.key` or the environment, unchanged
+from Phase 2. Prompts still travel to whatever upstream the operator configured, in
+plaintext if that upstream is `http`.
 
 ## Phase 5 residual risk
 
@@ -321,25 +404,25 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 
 `apps/dashboard` is the runtime foundation shell only. It is **not** a redesign
 and does **not** replace `BAYZ-responsive-master.html` as the locked visual
-source of truth. Phases 2–5 made no dashboard change whatsoever
+source of truth. Phases 2–6 made no dashboard change whatsoever
 (`git log -- apps/dashboard` still ends at the Phase 1 commit `b78aef2`). The
-Flux Core animation remains LOCKED and untouched; no Flux source file is tracked
-in this workspace.
+Flux Core motion system remains LOCKED and untouched; no Flux source file is
+tracked in this workspace.
 
 ## Resume steps once the real BAYZ repo/UI is available
 
 1. Copy the Sites/UI source and the real root `package.json` into this workspace.
 2. Merge the workspace fields (`workspaces`, `runtime:*` scripts) into the real
    root `package.json` instead of overwriting it.
-3. Move the README runtime, storage, provider, proxy, and router sections into the
-   real README.
+3. Move the README runtime, storage, provider, proxy, router, and API sections into
+   the real README.
 4. Run the root Sites build and confirm it still exits 0.
-5. Re-run `npm run runtime:verify` and all four smoke scripts.
+5. Re-run `npm run runtime:verify` and all five smoke scripts.
 
 ## Next phase
 
-Phase 6 is the HTTP API surface: an authenticated local API over the Provider,
-Proxy, and Router managers, plus an OpenAI-compatible `/v1/chat/completions`
-endpoint. It is the first phase that exposes any of this to a network listener, so
-authentication and loopback binding are its central concerns — every manager so
-far has deliberately stayed a library API for exactly that reason.
+Phase 7 is the dashboard API client and operator UI: wire the existing shell to the
+Phase 6 endpoints so providers, proxies, and routes can be managed without curl.
+The hard constraints are already set — the token must never be stored where a
+script can read it back, credential fields must be write-only in the UI too, and
+the Flux Core motion system stays LOCKED.

@@ -86,6 +86,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     });
   }
 
-  installErrorHandling(app);
+  // The dashboard mount owns the 404 handler when present, because it must serve
+  // index.html for client-side routes while still answering /api/* misses as JSON.
+  installErrorHandling(app, { notFoundHandler: !options.dashboardRoot });
   return app;
 }
