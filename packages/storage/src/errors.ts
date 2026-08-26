@@ -3,7 +3,8 @@ export type StorageErrorCode =
   | "master_key_invalid"
   | "master_key_mismatch"
   | "secret_not_found"
-  | "secret_corrupt";
+  | "secret_corrupt"
+  | "invalid_argument";
 
 /**
  * Fixed, caller-independent messages. Raw SQLite text embeds absolute
@@ -17,6 +18,8 @@ const MESSAGES: Record<StorageErrorCode, string> = {
   master_key_mismatch: "master_key_mismatch: the root key does not match this database",
   secret_not_found: "secret_not_found: no stored secret with that name",
   secret_corrupt: "secret_corrupt: the stored secret failed authentication",
+  invalid_argument:
+    "invalid_argument: the requested name or argument was rejected",
 };
 
 export class StorageError extends Error {

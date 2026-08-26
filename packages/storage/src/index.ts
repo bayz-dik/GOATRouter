@@ -67,3 +67,7 @@ export {
   type SecureSecretRepository,
   type StorageLogger,
 } from "./secret-repository.js";
+export {
+  scopedSecretStorage,
+  type ScopedSecretView,
+} from "./scoped.js";
