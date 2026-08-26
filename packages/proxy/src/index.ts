@@ -34,3 +34,8 @@ export {
   type Socks5ConnectOptions,
   type Socks5Target,
 } from "./socks5.js";
+export {
+  httpConnect,
+  type HttpConnectOptions,
+  type HttpConnectTarget,
+} from "./http-connect.js";
