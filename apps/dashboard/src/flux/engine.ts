@@ -1,4 +1,5 @@
-import { FLUX_MAX_PROVIDERS, type FluxProviderState, type FluxTempo } from "./types";
+import type { FluxProviderState, FluxTempo } from "./types";
+import type { Viewport } from "./viewport";
 
 /**
  * BAYZ RELAY TRACK / FLUX CORE V2 — canvas engine.
@@ -91,14 +92,39 @@ const HZ = new Float32Array(HN);
 export type FluxEngineOptions = {
   canvas: HTMLCanvasElement;
   wrap: HTMLElement;
-  /** The five provider chip elements, used only to read their layout positions. */
-  chips: HTMLElement[];
+  /**
+   * The approved five chip elements, used only when no anchors are supplied.
+   * Retained so the original DOM-measured layout stays available and tested.
+   */
+  chips?: HTMLElement[];
+  /**
+   * Provider anchors in world-percent coordinates, one per provider.
+   *
+   * Supplied instead of DOM elements so the engine scales past the five approved
+   * chips without measuring N elements every layout, and so a 40-provider field
+   * costs no extra DOM reads.
+   */
+  anchors?: FluxAnchor[];
+  /** Current pan/zoom, read each frame without going through React state. */
+  viewport?: () => Viewport;
   reducedMotion?: boolean;
   /** Reported when a packet reaches the core or a provider state changes. */
   onSync?: (snapshot: FluxSyncSnapshot) => void;
   onChipState?: (index: number, state: FluxProviderState) => void;
   onActivity?: (label: string, message: string) => void;
   onDrillEnd?: () => void;
+};
+
+/** One provider's position in the constellation, in world-percent units. */
+export type FluxAnchor = {
+  id: string;
+  xPct: number;
+  yPct: number;
+  /** Ingress angle at the core rim; shared by every provider in a trunk. */
+  ingressAngle: number;
+  active: boolean;
+  /** 0..1 traffic weight, scaling filament intensity. */
+  weight: number;
 };
 
 export type FluxSyncSnapshot = {
@@ -129,6 +155,9 @@ export type FluxEngine = {
   drilling(): boolean;
   routedRequests(): number;
   shareOf(index: number): number;
+  /** Replace the provider field; safe to call whenever the view model changes. */
+  setAnchors(anchors: FluxAnchor[]): void;
+  providerCount(): number;
   poolSizes(): {
     waves: number;
     dents: number;
@@ -138,7 +167,9 @@ export type FluxEngine = {
 };
 
 export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
-  const { canvas, wrap, chips } = options;
+  const { canvas, wrap } = options;
+  const chips: HTMLElement[] = options.chips ?? [];
+  const viewportOf = options.viewport ?? (() => ({ zoom: 1, x: 0, y: 0 }));
   const ctx = canvas.getContext("2d", { alpha: false });
 
   /* ---------- state ---------- */
@@ -149,9 +180,9 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     energy: 0.74,
     kick: 0,
     surge: 0,
-    act: [true, true, true, true, true],
-    tgt: [1, 1, 1, 1, 1],
-    tint: [1, 1, 1, 1, 1],
+    act: [true, true, true, true, true] as boolean[],
+    tgt: [1, 1, 1, 1, 1] as number[],
+    tint: [1, 1, 1, 1, 1] as number[],
     drill: null as { prim: number; alt: number; altWasOff: boolean } | null,
     req: 128,
     beat: 0,
@@ -222,43 +253,79 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     ph: number;
     pk: Array<{ u: number; w: number; on: boolean; delay: number }>;
   };
-  const FIL: Filament[] = FLUX_NAMES.map((_unused, i) => ({
-    i,
-    ex: 0,
-    ey: 0,
-    ax: 0,
-    ay: 0,
-    dx: 0,
-    dy: 1,
-    wx: 0,
-    wy: 0,
-    wz: 1,
-    bend: i % 2 ? -1 : 1,
-    ph: i * 1.7,
-    pk: [
-      { u: 0, w: 1, on: false, delay: 0 },
-      { u: 0, w: 1, on: false, delay: 0 },
-      { u: 0, w: 1, on: false, delay: 0 },
-    ],
-  }));
+  function makeFilament(i: number): Filament {
+    return {
+      i,
+      ex: 0,
+      ey: 0,
+      ax: 0,
+      ay: 0,
+      dx: 0,
+      dy: 1,
+      wx: 0,
+      wy: 0,
+      wz: 1,
+      bend: i % 2 ? -1 : 1,
+      ph: i * 1.7,
+      pk: [
+        { u: 0, w: 1, on: false, delay: 0 },
+        { u: 0, w: 1, on: false, delay: 0 },
+        { u: 0, w: 1, on: false, delay: 0 },
+      ],
+    };
+  }
+
+  /**
+   * One filament per provider, grown on demand and reused across view-model
+   * changes so a 40-provider field allocates once rather than per frame.
+   */
+  const FIL: Filament[] = FLUX_NAMES.map((_unused, i) => makeFilament(i));
+
+  /** Live provider anchors; empty means fall back to the approved chip layout. */
+  let ANCHORS: FluxAnchor[] = options.anchors ?? [];
+
+  /** The authoritative provider count, driving every bounded loop. */
+  function count(): number {
+    return ANCHORS.length > 0 ? ANCHORS.length : FLUX_NAMES.length;
+  }
+
+  function ensureCapacity(n: number): void {
+    while (FIL.length < n) {
+      FIL.push(makeFilament(FIL.length));
+    }
+    while (S.act.length < n) {
+      S.act.push(true);
+      S.tgt.push(1);
+      S.tint.push(1);
+    }
+  }
 
   function activeCount(): number {
     let n = 0;
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       if (S.act[i]) {
         n += 1;
       }
     }
     return n;
   }
+  /** Weight used for share maths: anchor weight when supplied, approved table otherwise. */
+  function weightOf(i: number): number {
+    const anchor = ANCHORS[i];
+    if (anchor !== undefined) {
+      return Number.isFinite(anchor.weight) ? Math.max(0, anchor.weight) : 0;
+    }
+    return FLUX_SHARE[i] ?? 0;
+  }
+
   function shareOf(i: number): number {
     let tot = 0;
-    for (let k = 0; k < FLUX_MAX_PROVIDERS; k += 1) {
+    for (let k = 0; k < count(); k += 1) {
       if (S.act[k]) {
-        tot += FLUX_SHARE[k]!;
+        tot += weightOf(k);
       }
     }
-    return tot ? Math.round((FLUX_SHARE[i]! / tot) * 100) : 0;
+    return tot ? Math.round((weightOf(i) / tot) * 100) : 0;
   }
 
   function layout(): void {
@@ -275,14 +342,15 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     cxr = W / 2;
     cyr = H / 2;
     RAD = Math.min(W, H) * (mobile ? 0.235 : 0.245);
-    chips.forEach((el, i) => {
-      const f = FIL[i];
-      if (f === undefined) {
-        return;
-      }
-      const r = el.getBoundingClientRect();
-      const ecx = r.left - rc.left + r.width / 2;
-      const ecy = r.top - rc.top + r.height / 2;
+
+    /**
+     * Aim one filament from a source point at the core rim.
+     *
+     * Shared by both layout paths so the approved impact geometry — the 48px pull
+     * back from the source, the 0.985 rim landing, the front-biased 0.42 z
+     * component — is identical however the source position was obtained.
+     */
+    const aim = (f: Filament, ecx: number, ecy: number, ingressAngle?: number): void => {
       let vx = ecx - cxr;
       let vy = ecy - cyr;
       const vl = Math.hypot(vx, vy) || 1;
@@ -291,8 +359,15 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
       const pull = mobile ? 36 : 48;
       f.ex = ecx - vx * pull;
       f.ey = ecy - vy * pull;
-      f.ax = cxr + vx * RAD * 0.985;
-      f.ay = cyr + vy * RAD * 0.985;
+      if (ingressAngle === undefined) {
+        f.ax = cxr + vx * RAD * 0.985;
+        f.ay = cyr + vy * RAD * 0.985;
+      } else {
+        // Bundled trunks converge on a shared ingress point, which is what turns
+        // forty independent cables into a handful of braided trunks.
+        f.ax = cxr + Math.cos(ingressAngle) * RAD * 0.985;
+        f.ay = cyr + Math.sin(ingressAngle) * RAD * 0.985;
+      }
       const dx = f.ax - f.ex;
       const dy = f.ay - f.ey;
       const dl = Math.hypot(dx, dy) || 1;
@@ -303,8 +378,43 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
       f.wx = vx / nl;
       f.wy = vy / nl;
       f.wz = 0.42 / nl;
-    });
+    };
+
+    if (ANCHORS.length > 0) {
+      ensureCapacity(ANCHORS.length);
+      const vp = clampViewportLike(viewportOf());
+      for (let i = 0; i < ANCHORS.length; i += 1) {
+        const anchor = ANCHORS[i]!;
+        const f = FIL[i]!;
+        // World percent -> stage pixels, through the current pan/zoom. No DOM is
+        // measured, so provider count costs nothing at layout time.
+        const wx = ((anchor.xPct - 50) / 100) * Math.min(W, H) * 1.35;
+        const wy = ((anchor.yPct - 50) / 100) * Math.min(W, H) * 1.35;
+        aim(f, cxr + wx * vp.zoom + vp.x, cyr + wy * vp.zoom + vp.y, anchor.ingressAngle);
+        S.act[i] = anchor.active;
+        S.tgt[i] = anchor.active ? 1 : 0;
+      }
+    } else {
+      chips.forEach((el: HTMLElement, i: number) => {
+        const f = FIL[i];
+        if (f === undefined) {
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        aim(f, r.left - rc.left + r.width / 2, r.top - rc.top + r.height / 2);
+      });
+    }
     poke();
+  }
+
+  /** Defensive clamp: an invalid viewport must not warp the stage. */
+  function clampViewportLike(v: Viewport): Viewport {
+    const zoom = Number.isFinite(v.zoom) ? clamp(v.zoom, 0.45, 4) : 1;
+    return {
+      zoom,
+      x: Number.isFinite(v.x) ? clamp(v.x, -2000, 2000) : 0,
+      y: Number.isFinite(v.y) ? clamp(v.y, -2000, 2000) : 0,
+    };
   }
 
   /* ---------- bezier helpers ---------- */
@@ -342,7 +452,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     S.speed = smooth(S.speed, T.sp, dt, 0.5);
     S.energy = smooth(S.energy, clamp(T.en + S.surge * 0.4 + S.kick, 0.2, 1.5), dt, 0.6);
 
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       S.tint[i] = smooth(S.tint[i]!, S.act[i] ? S.tgt[i]! : 0, dt, 0.45);
     }
 
@@ -378,7 +488,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     }
 
     /* packet physics: accelerate toward the core */
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       const f = FIL[i]!;
       const ti = S.tint[i]!;
       for (let k = 0; k < 3; k += 1) {
@@ -401,7 +511,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
 
   function onBeat(): void {
     const den = TEMPO[S.tempo].den;
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       if (!S.act[i] || S.tgt[i]! < 0.2) {
         continue;
       }
@@ -683,11 +793,29 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     }
   }
 
+  /**
+   * Filament draw budget.
+   *
+   * Braided strands are the most expensive per-provider work, so past the approved
+   * count the strand detail drops before anything else does. Every provider still
+   * gets a filament and a packet: only the residue braiding thins out.
+   */
+  function braidBudget(): number {
+    const n = count();
+    if (n <= 5) {
+      return 3;
+    }
+    if (n <= 12) {
+      return 2;
+    }
+    return 1;
+  }
+
   function drawFilaments(t: number, still: boolean): void {
     if (!ctx) {
       return;
     }
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       const f = FIL[i]!;
       const inten = S.tint[i]!;
       const on = S.act[i]!;
@@ -711,7 +839,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
 
       if (on && inten > 0.02 && q < 2) {
         /* braided residue strands */
-        const strands = q >= 1 ? 2 : 3;
+        const strands = Math.min(braidBudget(), q >= 1 ? 2 : 3);
         const SEG = 16;
         for (let s = 0; s < strands; s += 1) {
           const off = (s - (strands - 1) / 2) * 2.5;
@@ -908,7 +1036,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     const n = activeCount();
     const load = Math.round(clamp(16 + S.energy * 55 + n * 4 + S.surge * 10, 8, 97));
     const shares: number[] = [];
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       shares.push(shareOf(i));
     }
     options.onSync?.({
@@ -939,7 +1067,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
   }
 
   function firstActive(): number {
-    for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+    for (let i = 0; i < count(); i += 1) {
       if (S.act[i] && S.tgt[i]! > 0.5) {
         return i;
       }
@@ -948,13 +1076,13 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
   }
   function pickAlt(prim: number): number {
     for (let k = 1; k <= 4; k += 1) {
-      const j = (prim + k) % FLUX_MAX_PROVIDERS;
+      const j = (prim + k) % count();
       if (S.act[j] && S.tgt[j]! > 0.5) {
         return j;
       }
     }
     for (let k = 1; k <= 4; k += 1) {
-      const j = (prim + k) % FLUX_MAX_PROVIDERS;
+      const j = (prim + k) % count();
       if (j !== prim) {
         return j;
       }
@@ -1000,8 +1128,8 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     setActiveCount(n: number): void {
       // Bounded 1..5 by construction: the visualization has five positions and a
       // relay with zero providers is not a state the approved design expresses.
-      const target = clamp(Math.round(n), 1, FLUX_MAX_PROVIDERS);
-      for (let i = 0; i < FLUX_MAX_PROVIDERS; i += 1) {
+      const target = clamp(Math.round(n), 1, count());
+      for (let i = 0; i < count(); i += 1) {
         const on = i < target;
         if (S.act[i] !== on) {
           S.act[i] = on;
@@ -1017,13 +1145,13 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     },
 
     toggleProvider(index: number): "enabled" | "disabled" | "denied" {
-      if (index < 0 || index >= FLUX_MAX_PROVIDERS) {
+      if (index < 0 || index >= count()) {
         return "denied";
       }
       if (!S.act[index]) {
         S.act[index] = true;
         S.tgt[index] = 1;
-        setChip(index, "wake");
+        setChip(index, "recovering");
         options.onActivity?.(FLUX_NAMES[index]!, "provider enabled");
         emitSync();
         return "enabled";
@@ -1089,7 +1217,7 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
         S.drill.altWasOff = !S.act[alt];
         S.act[alt] = true;
         S.tgt[alt] = 1;
-        setChip(alt, "wake");
+        setChip(alt, "recovering");
         options.onActivity?.(FLUX_NAMES[alt]!, "traffic rerouted / route active");
         emitSync();
       }, 900);
@@ -1128,6 +1256,16 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     drilling: () => S.drill !== null,
     routedRequests: () => S.req,
     shareOf,
+
+    setAnchors(anchors: FluxAnchor[]): void {
+      ANCHORS = anchors;
+      ensureCapacity(anchors.length);
+      // Re-aim immediately so a view-model change is visible on the next frame
+      // rather than waiting for a resize.
+      layout();
+      emitSync();
+    },
+    providerCount: count,
 
     poolSizes: () => ({
       waves: WAVES.length,

@@ -414,41 +414,92 @@ to the Core for persistence — the router refuses to store prompts, and the
 dashboard does not undo that from the other side. There is no streaming control,
 because the API rejects `stream`.
 
-### Flux Core V2
+### Flux Core V2 and the provider constellation
 
 `apps/dashboard/src/flux/` holds the approved BAYZ Flux Core V2 relay usage track,
 mounted through `apps/dashboard/src/FluxCoreSlot.tsx`. The canvas engine
 (`flux/engine.ts`) is a port of the approved standalone source: same geometry,
-point-cloud topology, braided provider traffic, packet impact behavior, provider
-positions, adaptive-quality thresholds, and Calm / Live / Surge semantics.
+point-cloud topology, multilayer core depth, organic deformation, internal ribbons,
+braided provider traffic, packet travel and acceleration, packet/core impact,
+topology reaction, provider positions, adaptive-quality thresholds, and Calm / Live
+/ Surge semantics.
 
-Three production changes were required, none of them a visual preference:
+**At 1–5 providers the approved layout is used verbatim** — the original `.p1`–`.p5`
+CSS positions, full chip detail, one filament per provider. The scalable field only
+engages past five, so the approved baseline never drifts.
 
-- **No remote font.** The standalone file imported Google Fonts. That import is
-  removed; `Archivo` / `Archivo Black` / `IBM Plex Mono` are still requested first
-  so an operator who has them installed sees the exact approved faces, with local
-  grotesque and monospace fallbacks behind them. BAYZ stays local-first and a strict
-  CSP needs no `font-src` exception.
-- **No `innerHTML`.** The standalone activity feed built rows with `innerHTML`.
-  Every dynamic string — provider label, model, route, event text — now renders as a
-  React text node. Provider and model strings from the API are treated as untrusted.
-- **CSP-compatible.** No remote font, no remote script, no `eval`, no `Function`
-  constructor, no inline event handler, no injected executable code.
+#### Scaling to many providers
+
+BAYZ supports arbitrarily many registered providers. Beyond five, the space *around*
+the core expands into a zoomable constellation; the core itself is untouched.
+
+- **Every provider is always a node.** Density reduces label detail, never node
+  count. A 120-provider field renders 120 nodes.
+- **Traffic bundles, state does not.** Past five providers, spatially adjacent
+  filaments braid into sector trunks — 40 providers become 12 trunks rather than 40
+  cables. Bundling is purely a rendering decision: `trunkFor()` maps any provider
+  back to its trunk, so focusing one still identifies its own traffic.
+- **Semantic zoom.** Far out, marks only with a small priority label budget; medium,
+  more names; near, full identity with state and share. Label slots are allocated by
+  priority: selected, then failed, then degraded/recovering, then active, then
+  traffic share, with ties broken by id so ordering is stable frame to frame.
+- **Overlap is never solved by deleting nodes.** When there are more exceptions than
+  label slots, the unlabelled ones appear in a named **Incidents** list; clicking a
+  row focuses that provider in the constellation. There is no `+N providers`
+  abstraction anywhere.
+
+#### Provider identity
+
+Every provider keeps an identity: a local monochrome mark, a display name, and a
+stable non-secret short id (`PVD-1A2F`, FNV-1a over the provider id alone).
+Custom providers sharing a display name are disambiguated automatically as
+`CUSTOM — PVD-1A2F`. The short id derives from nothing but the id — a test changes
+every other field and asserts it is unchanged.
+
+Icons are chosen by *key* from a local SVG table. Provider metadata can select which
+local mark to draw; it can never supply markup, a URL, or a data URI. An unknown or
+hostile key falls back to a generic mark plus initials, so provider icon information
+is neither an injection surface nor a remote dependency.
+
+#### Zoom and pan
+
+Wheel/trackpad zoom about the cursor, drag to pan, pinch zoom on touch, click to
+select, double-click to focus, and a reset control. Zoom is clamped to 0.45–4×, pan
+to ±2000px, and every operation repairs a non-finite state, so the Flux Core cannot
+be permanently lost off-screen. Wheel handling is scoped to the stage, so page
+scrolling past the panel is unaffected.
+
+#### Failure and recovery
+
+Monochrome only — no colour is used to signal state. A failed provider keeps its
+node, its mark, and its position, gains a dashed border and diagonal hatch, gets a
+stepped pulse instead of a smooth one, and receives label priority. Recovery moves
+`failed → recovering → active`, with the wake pulse from the approved source, after
+which the label returns to normal semantic-zoom behaviour.
+
+#### Production changes from the standalone source
+
+1. **No remote font.** The Google Fonts `@import` is removed; local stacks lead with
+   Archivo / Archivo Black / IBM Plex Mono and fall back to local grotesques.
+2. **No `innerHTML`.** The standalone activity feed built rows with `innerHTML`.
+   Every dynamic string is now a React text node.
+3. **CSP-compatible.** No remote font, script, or stylesheet; no `eval`, no
+   `Function` constructor, no inline handler, no injected code.
+4. **Scoped CSS.** The standalone file styled `html`, `body`, and bare `button`.
 
 The engine owns all per-frame work and reports a snapshot roughly three times a
-second, so there are no per-frame React updates. Bounded pools (8 waves, 6 dents,
-6 flashes, 3 packets per filament), DPR capped at 2, adaptive quality, visibility
-pause, and `prefers-reduced-motion` all carry over. React cleanup releases the
-animation frame, `ResizeObserver`, `matchMedia` listener, visibility listener,
-ambient interval, and every failover-drill timer, so a remount cannot duplicate a
-loop.
+second — no per-frame React state. Label and collision resolution runs on
+viewport/selection change, slower than the physics loop. Bounded pools (8 waves,
+6 dents, 6 flashes, 3 packets per filament), DPR capped at 2, adaptive quality,
+visibility pause, and `prefers-reduced-motion` all carry over; braid strand count
+steps down as provider count rises so dense fields cost less per frame, not more.
 
-`flux/types.ts` is the display-safe input boundary. It accepts provider id, label,
-state, share, routing mode, routed request count, load percent, and activity
-events. It cannot carry a credential, proxy password, API token, or Authorization
-header, because no such field exists on it and no API returns one. Until real usage
-telemetry is wired, Flux Core runs the approved simulation and labels itself `SIM`
-on screen rather than presenting invented numbers as measurements.
+`flux/types.ts` is the display-safe boundary: provider id, display name, icon key,
+state, share, route participation, load, latency, incident reason, plus global
+routing mode, request count, and period. It cannot carry a credential, proxy
+password, API token, or Authorization header. Until real usage telemetry is wired,
+Flux Core runs the approved simulation adapter and labels itself `SIM`; a live model
+labels itself `LIVE` and disables the simulation-only routing controls.
 
 ## Deferred verification
 

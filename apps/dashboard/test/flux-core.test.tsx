@@ -308,13 +308,15 @@ describe("reduced motion", () => {
 });
 
 describe("untrusted display data", () => {
-  const HOSTILE = '<img src=x onerror="window.__fluxXss = true">';
+  // Short enough to survive the compact-label cap, so this test measures
+  // inertness rather than truncation. A dedicated test covers truncation.
+  const HOSTILE = "<img src=x onerror=z>";
 
   const model: FluxCoreViewModel = {
     source: "live",
     providers: [
-      { id: "p1", label: HOSTILE, state: "active", sharePercent: 40 },
-      { id: "p2", label: "<script>window.__fluxXss = true</script>", state: "degraded", sharePercent: 60 },
+      { id: "p1", displayName: HOSTILE, state: "active", sharePercent: 40 },
+      { id: "p2", displayName: "<script>x=1</script>", state: "degraded", sharePercent: 60 },
     ],
     routedRequests: 7,
     activity: [
@@ -339,18 +341,19 @@ describe("untrusted display data", () => {
     expect((window as unknown as Record<string, unknown>).__fluxXss).toBeUndefined();
   });
 
-  it("caps the provider list at the approved five positions", () => {
+  it("renders every provider rather than capping the list", () => {
     const many: FluxCoreViewModel = {
       source: "live",
       providers: Array.from({ length: 12 }, (_unused, index) => ({
         id: `p${index}`,
-        label: `PROVIDER-${index}`,
+        displayName: `PROVIDER-${index}`,
         state: "active" as const,
         sharePercent: 8,
       })),
     };
     const { container } = render(<FluxCore model={many} />);
-    expect(container.querySelectorAll(".provider")).toHaveLength(5);
+    // Scalability requirement: nodes are never truncated, only labels reduce.
+    expect(container.querySelectorAll(".provider")).toHaveLength(12);
   });
 
   it("tolerates an empty provider list without crashing", () => {

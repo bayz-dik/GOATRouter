@@ -529,3 +529,173 @@
     animation: none;
   }
 }
+
+/* ================= scalable provider constellation ================= */
+/*
+ * The field wraps the provider nodes so pan/zoom moves them with the canvas
+ * filaments. Only a transform is animated, which keeps interaction off the layout
+ * path regardless of provider count.
+ */
+.flux-panel .flux-field {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  transform-origin: 50% 50%;
+  will-change: transform;
+  pointer-events: none;
+}
+.flux-panel .flux-field .provider {
+  pointer-events: auto;
+}
+
+/*
+ * Past the approved five, nodes default to a compact mark. The chip only expands
+ * to a labelled card when semantic zoom or priority grants it a label, which is
+ * what prevents text overlap at density.
+ */
+.flux-panel .flux-field .provider {
+  width: auto;
+  min-height: 0;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.flux-panel .flux-field .provider.labelled {
+  padding: 8px 10px;
+}
+.flux-panel .flux-field .provider.selected {
+  border-width: 2px;
+  z-index: 9;
+}
+
+.flux-panel .provider-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+  flex: none;
+}
+.flux-panel .provider-mark svg {
+  display: block;
+}
+.flux-panel .provider-initials {
+  font-family: var(--flux-font-mono);
+  font-size: 8px;
+  font-style: normal;
+  letter-spacing: 0.06em;
+}
+.flux-panel .provider-label {
+  display: block;
+  min-width: 0;
+}
+.flux-panel .provider-label b {
+  display: block;
+  font-family: var(--flux-font-mono);
+  font-size: 10px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.flux-panel .provider-label small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-family: var(--flux-font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.09em;
+  color: #949494;
+}
+
+/* Monochrome failure language: hatch and outline, never colour. */
+.flux-panel .provider[data-state="failed"] {
+  opacity: 1;
+  border-color: #fff;
+  border-style: dashed;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.14) 0,
+    rgba(255, 255, 255, 0.14) 1px,
+    transparent 1px,
+    transparent 5px
+  );
+}
+.flux-panel .provider[data-state="failed"] .pdot {
+  background: transparent;
+  border: 1px solid #fff;
+  box-shadow: none;
+  animation: fluxFailPulse 1.1s steps(2, end) infinite;
+}
+@keyframes fluxFailPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+.flux-panel .provider[data-state="recovering"] {
+  opacity: 0.9;
+  border-color: #fff;
+  animation: fluxWakePulse 0.85s ease-out 2;
+}
+.flux-panel .provider[data-state="standby"] {
+  opacity: 0.55;
+  border-color: #6f6f6f;
+}
+.flux-panel .provider[data-state="standby"] .pdot {
+  background: transparent;
+  border: 1px solid #9a9a9a;
+  box-shadow: none;
+  animation: none;
+}
+
+/* ================= incident list ================= */
+.flux-panel .flux-incidents {
+  border-top: 1px solid var(--black);
+}
+.flux-panel .incident-row {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 9px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 12px;
+  background: var(--white);
+  color: var(--black);
+  text-align: left;
+  font-size: 10px;
+}
+.flux-panel .incident-row:last-child {
+  border-bottom: 0;
+}
+.flux-panel .incident-row:hover {
+  background: var(--field);
+}
+.flux-panel .incident-row .provider-mark {
+  color: var(--black);
+}
+.flux-panel .incident-row b {
+  font-family: var(--flux-font-mono);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.flux-panel .incident-row span {
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  color: var(--mid);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flux-panel .provider[data-state="failed"] .pdot,
+  .flux-panel .provider[data-state="recovering"] {
+    animation: none;
+  }
+  .flux-panel .flux-field {
+    will-change: auto;
+  }
+}

@@ -34,7 +34,7 @@
 - `@bayz/proxy`: 105 tests pass.
 - `@bayz/router`: 122 tests pass.
 - `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/dashboard`: 128 tests pass across 10 files.
+- `@bayz/dashboard`: 200 tests pass across 15 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
@@ -47,17 +47,19 @@
   origins, and a real `CONNECT` proxy.
 - `node scripts/api-smoke.mjs`: 62/62 against a **real listener** driven by real
   `fetch`.
-- `node scripts/dashboard-smoke.mjs`: 35/35 against the **built bundle** — no
+- `node scripts/dashboard-smoke.mjs`: 41/41 against the **built bundle** — no
   `localStorage`/`sessionStorage`/cookie/`indexedDB`/`window.name` write, no
   `dangerouslySetInnerHTML` prop, no `eval`/`new Function`/`document.write`, no
   credential getter, no 64-hex or `sk-`/`Bearer` literal, token input declared
-  `type="password"` with `autoComplete="off"`, approved Flux Core mounted, and no
-  remote font/script/stylesheet or loadable remote origin.
-- Live boot on `127.0.0.1:20998` with `BAYZ_DASHBOARD_ROOT` pointed at the built
-  dashboard: `schemaVersion:4`, `/api/health` unauthenticated and byte-identical,
-  `/api/status` 401 unauthenticated, dashboard shell served, and the served bundle
-  contains `data-bayz-flux-core-slot`, `relay-wrap`, `flux-vignette`,
-  `requestAnimationFrame`, `OPENROUTER`, and `Surge`. Served CSS contains zero
+  `type="password"` with `autoComplete="off"`, approved Flux Core mounted, no
+  remote font/script/stylesheet or loadable remote origin, and the scalable
+  constellation (`flux-field`, `provider-mark`, `PVD-`, `incident-row`) present
+  with no `+N providers` aggregation.
+- Live boot on `127.0.0.1:20999` with `BAYZ_DASHBOARD_ROOT` on the built dashboard:
+  `schemaVersion:4`, `/api/health` unauthenticated and byte-identical,
+  `/api/status` 401 unauthenticated, shell served, and the served bundle contains
+  `data-bayz-flux-core-slot`, `relay-wrap`, `flux-field`, `provider-mark`, `PVD-`,
+  `incident-row`, `requestAnimationFrame`, and `Surge`. Served CSS contains zero
   `@import` and zero `googleapis`. Root key absent from the log.
 - Secret scan over tracked non-test source for `sk-*`, `hunter2`, `PROMPT-`,
   `API-SMOKE`, `BEGIN … PRIVATE KEY`, `AIza…`, and any 64-hex literal: no matches.
@@ -82,11 +84,16 @@ Source of truth: `/mnt/sdcard/Download/animasi/animasi usage.html`, 47,833 bytes
 `/mnt/sdcard/Download/animasi usage.html` stub was **not** used.
 
 ```text
-apps/dashboard/src/FluxCoreSlot.tsx   mount point, still data-bayz-flux-core-slot
-apps/dashboard/src/flux/types.ts      display-safe view model (no secret fields)
-apps/dashboard/src/flux/engine.ts     ported canvas engine, no DOM ownership
-apps/dashboard/src/flux/FluxCore.tsx  React shell, controls, throttled labels
-apps/dashboard/src/flux/flux.css      ported styles, scoped, no remote font
+apps/dashboard/src/FluxCoreSlot.tsx      mount point, still data-bayz-flux-core-slot
+apps/dashboard/src/flux/types.ts         display-safe view model (no secret fields)
+apps/dashboard/src/flux/engine.ts        ported canvas engine, no DOM ownership
+apps/dashboard/src/flux/FluxCore.tsx     React shell, controls, viewport, labels
+apps/dashboard/src/flux/flux.css         ported styles, scoped, no remote font
+apps/dashboard/src/flux/constellation.ts scalable layout + ingress trunk bundling
+apps/dashboard/src/flux/lod.ts           semantic zoom + label priority/collision
+apps/dashboard/src/flux/viewport.ts      clamped pan/zoom maths
+apps/dashboard/src/flux/identity.ts      safe short id, initials, icon key resolve
+apps/dashboard/src/flux/ProviderMark.tsx local monochrome SVG mark table
 ```
 
 ### Preserved from the approved source
@@ -119,6 +126,67 @@ core copy, legend, HUD layout, and the full failover-drill timing sequence
 5. **Display-safe boundary added** (`flux/types.ts`). Until real telemetry exists,
    the approved simulation drives the view and the panel is labelled `SIM`.
 
+### Scalable provider constellation
+
+The approved source demonstrates a fixed five providers. Production BAYZ needs
+arbitrary counts, so the space *around* the core was extended while the core itself
+was left alone.
+
+- **1–5 providers use the approved layout verbatim** — original `.p1`–`.p5` CSS
+  positions, full chip detail, one filament each, every label shown. A test pins the
+  coordinates to six decimal places so the baseline cannot drift.
+- **Past five**, providers are placed on concentric rings with a golden-angle offset
+  per ring, so adjacent rings never align radially. Layout is pure and
+  deterministic.
+- **Traffic bundles, state does not.** Above five providers, filaments braid into 12
+  sector trunks: 40 providers → 12 trunks, 120 providers → 12 trunks. `trunkFor()`
+  maps any provider back to its trunk, so focusing one still identifies its own
+  traffic. Bundling is a rendering decision only; `members` always holds every
+  provider.
+- **Semantic zoom** with three bands (far &lt; 1.15×, medium &lt; 2.1×, near) and a label
+  budget of 4 / 10 / 24. Priority: selected &gt; failed &gt; degraded/recovering &gt; active
+  &gt; standby &gt; off, with traffic share breaking ties inside a state and id breaking
+  the rest, so ordering is stable frame to frame.
+- **Overlap never deletes a node.** Exceptions that miss a label slot appear in a
+  named Incidents list; clicking a row focuses the provider. There is no
+  `+N providers` abstraction, and the build smoke asserts none was shipped.
+- **Identity** is a local monochrome mark, a display name, and a stable non-secret
+  `PVD-xxxx` (FNV-1a over the provider id alone). Duplicate display names become
+  `CUSTOM — PVD-1A2F` automatically.
+- **Icons are keys, not content.** Provider metadata selects one of eight local SVG
+  marks; an unknown or hostile value (markup, URL, data URI, traversal) resolves to
+  the generic mark plus initials. No provider-supplied markup, and no remote asset.
+- **Zoom/pan** clamped to 0.45–4× and ±2000px, with every operation repairing a
+  non-finite state, so the core cannot be lost off-screen. Wheel handling is scoped
+  to the stage so page scrolling is unaffected. Pinch, drag, click-select,
+  double-click-focus, and reset are all present, and all listeners are removed on
+  unmount (asserted).
+- **Performance:** the engine allocates filaments once and grows the pool on demand;
+  anchors are supplied as data, so a 120-provider layout performs zero DOM
+  measurements; braid strand count steps 3 → 2 → 1 as count rises; label/collision
+  resolution runs on viewport or selection change, not per frame.
+
+### Dense-state verification
+
+Measured in the integrated component by `test/flux-verify-states.test.tsx`, which
+prints this table on each run:
+
+```text
+1 provider DIRECT      nodes=  1 labels= 1 budget= 1 trunks= 1 failed= 0 incidents= 0
+5 provider COMBO       nodes=  5 labels= 5 budget= 5 trunks= 5 failed= 0 incidents= 0
+12 provider COMBO      nodes= 12 labels= 4 budget= 4 trunks= 9 failed= 0 incidents= 0
+40 provider COMBO      nodes= 40 labels= 4 budget= 4 trunks=12 failed= 0 incidents= 0
+40 COMBO / 1 FAILED    nodes= 40 labels= 4 budget= 4 trunks=12 failed= 1 incidents= 0
+40 COMBO / 14 FAILED   nodes= 40 labels= 4 budget= 4 trunks=12 failed=14 incidents=10
+120 provider COMBO     nodes=120 labels= 4 budget= 4 trunks=12 failed= 0 incidents= 0
+duplicate custom names nodes=  4 labels= 4 budget= 4 trunks= 4 failed= 1 incidents= 0
+mixed states           nodes= 20 labels= 4 budget= 4 trunks=11 failed= 1 incidents= 0
+```
+
+Every state asserts: node count equals provider count, every node carries a mark,
+labels stay within the collision budget, and every failed provider is accounted for
+either as a label or as a named incident.
+
 ### Known discrepancies from the standalone HTML
 
 Stated plainly rather than claimed equivalent — **pixel and motion equivalence has
@@ -131,15 +199,37 @@ output frame by frame:
    sidebar, mobile header, score strip, recent-requests table, token-pace chart, and
    period tabs. Only the Relay Usage Track was extracted, as instructed; the Phase 7
    dashboard remains the shell.
-3. **When a live model is supplied, the interactive HUD is disabled.** Provider
-   toggles, the count buttons, and the failover drill are simulation affordances;
-   driving them against real routing state would fake control the API does not yet
-   expose. Tempo remains interactive because it only affects animation.
+3. **When a live model is supplied, the routing HUD is disabled.** Provider toggles,
+   the count buttons, and the failover drill are simulation affordances; driving them
+   against real routing state would fake control the API does not expose. Zoom,
+   reset, and tempo stay interactive because they are view controls.
 4. **`onBeat` uses `Math.random()`**, exactly as approved, so packet timing is
    non-deterministic between runs — identical to the standalone behavior, but it
    means two side-by-side renders will never match frame for frame.
-5. **jsdom has no Canvas 2D**, so tests assert engine lifecycle, bounds, and safety
-   rather than pixel output. Visual confirmation needs a real browser.
+5. **jsdom has no Canvas 2D and performs no layout**, so tests assert engine
+   lifecycle, bounds, label budgets, and safety rather than pixel output or measured
+   text overlap. Visual confirmation needs a real browser.
+6. **Beyond five providers the chip presentation necessarily changes.** The approved
+   148px card would tile the stage at 40 nodes, so unlabelled nodes render as a
+   compact mark and expand to a card only when they hold a label. This is an
+   extension of the approved language rather than a preserved detail, and it is the
+   one place the visual result at high density has no approved reference.
+7. **`prov.p1`–`p5` classes are absent past five providers**, since positions then
+   come from the constellation rather than the approved CSS. Pinned by a test so the
+   switchover is explicit rather than incidental.
+
+### Residual limitations
+
+- Pinch zoom is implemented from raw pointer events rather than a gesture library
+  (no new dependency); it is covered by unit tests but not by a real multi-touch
+  device in this environment.
+- Trunk count is fixed at 12 sectors. It is adequate from 6 to at least 120
+  providers, but has not been tuned above that.
+- Provider ring capacity tops out at six rings (138 slots) before positions begin to
+  repeat radially at greater distance; beyond roughly 140 providers the layout would
+  need another ring tier.
+- The incident list has no severity ordering beyond the label-priority ranking, and
+  no failure-reason text is displayed yet because no API field supplies one.
 
 ## Environment facts
 

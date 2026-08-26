@@ -210,7 +210,33 @@ section("8. No remote font, script, or stylesheet dependency");
   );
 }
 
-section("9. Emitted HTML and CSS carry no secret");
+section("9. Scalable provider constellation is present");
+{
+  check("the zoomable provider field is emitted", /flux-field/.test(bundle));
+  check("the local provider mark table is emitted", /provider-mark/.test(bundle));
+  check(
+    "the safe short-id scheme is emitted",
+    /PVD-/.test(bundle),
+  );
+  check("the incident list is emitted", /incident-row/.test(bundle));
+  /*
+   * React's runtime mentions `dangerouslySetInnerHTML` in its prop dispatcher, so
+   * the narrower "is it ever passed as a prop" form is checked here — the same
+   * distinction section 4 already makes. What matters is that no icon path can
+   * become markup: marks come from a local svg table keyed by a validated string.
+   */
+  check(
+    "no provider-supplied icon source can be rendered",
+    !/dangerouslySetInnerHTML\s*:/.test(bundle) && !/createElement\(\s*[`"']img/.test(bundle),
+  );
+  // Aggregation would hide failed providers, which the requirement forbids.
+  check(
+    "no aggregate \"+N providers\" abstraction was shipped",
+    !/\+\$\{[^}]*\}\s*providers?/i.test(bundle),
+  );
+}
+
+section("10. Emitted HTML and CSS carry no secret");
 {
   const assets = collect(DIST, [".html", ".css"]);
   const text = assets.map((file) => readFileSync(file, "utf8")).join("\n");

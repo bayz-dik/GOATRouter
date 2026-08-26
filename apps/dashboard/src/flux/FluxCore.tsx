@@ -3,46 +3,64 @@ import {
   FLUX_NAMES,
   FLUX_SHARE,
   createFluxEngine,
+  type FluxAnchor,
   type FluxEngine,
   type FluxSyncSnapshot,
 } from "./engine";
+import { buildConstellation, ingressGroups, trunkFor } from "./constellation";
+import { providerIdentity, type ProviderIdentity } from "./identity";
+import { ProviderMark } from "./ProviderMark";
+import { DETAIL_NEAR, resolveLabels } from "./lod";
 import {
-  FLUX_MAX_PROVIDERS,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  clampViewport,
+  createViewport,
+  focusOn,
+  panBy,
+  resetViewport,
+  zoomAt,
+  type Viewport,
+} from "./viewport";
+import {
+  FLUX_APPROVED_PROVIDERS,
   type FluxActivityEvent,
   type FluxCoreViewModel,
+  type FluxProvider,
   type FluxProviderState,
   type FluxTempo,
 } from "./types";
 import "./flux.css";
 
 /**
- * BAYZ Relay Usage Track / Flux Core V2.
+ * BAYZ Relay Usage Track / Flux Core V2 + scalable provider constellation.
  *
- * The canvas engine owns all per-frame work and lives outside React state. React
- * owns the DOM, the controls, and the throttled labels — the engine reports a
- * snapshot roughly three times a second, never per frame.
+ * The canvas engine owns all per-frame work and lives outside React state; it
+ * reports a snapshot roughly three times a second, never per frame. React owns the
+ * DOM, the controls, the viewport, and the throttled labels.
  *
- * Every dynamic string rendered here is treated as untrusted: it goes through a
- * React text node, so there is no `innerHTML` path anywhere in this integration
- * (the standalone preview used one for its activity feed).
+ * Every dynamic string rendered here is untrusted and passes through a React text
+ * node. There is no `innerHTML` path anywhere in this integration — the standalone
+ * preview used one for its activity feed, and it is not carried over.
  */
 
-const CHIP_CLASS = ["p1", "p2", "p3", "p4", "p5"] as const;
+/** Approved position classes; applied only at the approved counts. */
+const APPROVED_CHIP_CLASS = ["p1", "p2", "p3", "p4", "p5"] as const;
+
 const TEMPO_LABEL: Record<FluxTempo, string> = {
   calm: "Calm",
   live: "Live",
   surge: "Surge",
 };
 
-function stateWord(state: FluxProviderState): string {
-  return state === "degraded"
-    ? "DEGRADED"
-    : state === "off"
-      ? "OFF"
-      : state === "wake"
-        ? "ONLINE"
-        : "ACTIVE";
-}
+const STATE_WORD: Record<FluxProviderState, string> = {
+  active: "ACTIVE",
+  degraded: "DEGRADED",
+  failed: "FAILED",
+  recovering: "RECOVERING",
+  standby: "STANDBY",
+  off: "OFF",
+};
 
 /** Clamp a share for display without trusting the supplied number. */
 function displayShare(value: number): number {
@@ -58,11 +76,28 @@ const AMBIENT: ReadonlyArray<readonly [string, string]> = [
   ["CORE", "checkpoint synced"],
 ];
 
+/**
+ * The approved demo adapter, kept isolated from any live model.
+ *
+ * Shares come from the approved constant table rather than from the live engine
+ * snapshot, so the provider set is structurally stable and cannot feed back into
+ * the animation loop.
+ */
+function simulationProviders(states: FluxProviderState[]): FluxProvider[] {
+  return FLUX_NAMES.map((name, index) => ({
+    id: `sim-${name.toLowerCase()}`,
+    displayName: name,
+    iconKey: name.toLowerCase(),
+    state: states[index] ?? "active",
+    sharePercent: FLUX_SHARE[index] ?? 0,
+  }));
+}
+
 export type FluxCoreProps = {
   /**
    * Display-safe usage data. When omitted, the approved simulation drives the
-   * view and the panel says so, rather than presenting invented telemetry as
-   * measurement.
+   * view and the panel is labelled `SIM`, rather than presenting invented
+   * telemetry as measurement.
    */
   model?: FluxCoreViewModel;
 };
@@ -70,9 +105,12 @@ export type FluxCoreProps = {
 export function FluxCore({ model }: FluxCoreProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chipRefs = useRef<Array<HTMLButtonElement | null>>([null, null, null, null, null]);
   const engineRef = useRef<FluxEngine | null>(null);
   const feedIdRef = useRef(0);
+  /** Read by the engine each frame; a ref so pan/zoom causes no re-render churn. */
+  const viewportRef = useRef<Viewport>(createViewport());
+  const dragRef = useRef<{ id: number; x: number; y: number } | null>(null);
+  const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
 
   const live = model !== undefined && model.source === "live";
 
@@ -80,7 +118,9 @@ export function FluxCore({ model }: FluxCoreProps) {
   const [tempo, setTempo] = useState<FluxTempo>("live");
   const [paused, setPaused] = useState(false);
   const [drilling, setDrilling] = useState(false);
-  const [chipStates, setChipStates] = useState<FluxProviderState[]>([
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [viewport, setViewport] = useState<Viewport>(createViewport());
+  const [simStates, setSimStates] = useState<FluxProviderState[]>([
     "active",
     "active",
     "active",
@@ -88,7 +128,7 @@ export function FluxCore({ model }: FluxCoreProps) {
     "active",
   ]);
   const [snapshot, setSnapshot] = useState<FluxSyncSnapshot>({
-    activeCount: FLUX_MAX_PROVIDERS,
+    activeCount: FLUX_APPROVED_PROVIDERS,
     routedRequests: 128,
     loadPercent: 61,
     tempo: "live",
@@ -104,6 +144,69 @@ export function FluxCore({ model }: FluxCoreProps) {
     setSimFeed((current) => [entry, ...current].slice(0, 6));
   }, []);
 
+  /* ---------- provider model ---------- */
+  /**
+   * The provider set. Deliberately independent of `snapshot`: the engine emits a
+   * fresh snapshot roughly three times a second, and feeding that back into the
+   * provider model would recompute anchors on every sync and re-enter the engine —
+   * an unbounded loop. Live shares are read separately, at render time only.
+   */
+  const providers = useMemo(
+    () => (model !== undefined ? model.providers : simulationProviders(simStates)),
+    [model, simStates],
+  );
+
+  const identities = useMemo(() => {
+    const map = new Map<string, ProviderIdentity>();
+    for (const provider of providers) {
+      map.set(provider.id, providerIdentity(provider, providers));
+    }
+    return map;
+  }, [providers]);
+
+  const nodes = useMemo(() => buildConstellation(providers), [providers]);
+  const groups = useMemo(() => ingressGroups(nodes), [nodes]);
+
+  /**
+   * Label resolution runs on viewport/selection change, not per frame — collision
+   * work is deliberately slower-cadence than the canvas physics loop.
+   */
+  const labels = useMemo(
+    () => resolveLabels(nodes, { zoom: viewport.zoom, selectedId }),
+    [nodes, selectedId, viewport.zoom],
+  );
+  const labelled = useMemo(() => new Set(labels.labelled), [labels.labelled]);
+
+  /**
+   * Share shown on a chip.
+   *
+   * Read at render time rather than folded into the provider model, so the live
+   * engine value can be displayed in simulation mode without the snapshot feeding
+   * back into anchor computation.
+   */
+  const shareFor = useCallback(
+    (index: number, fallback: number): number =>
+      live ? displayShare(fallback) : displayShare(snapshot.shares[index] ?? fallback),
+    [live, snapshot.shares],
+  );
+
+  /** Anchors feed the engine; ingress angles come from the trunk assignment. */
+  const anchors = useMemo<FluxAnchor[]>(
+    () =>
+      nodes.map((node) => {
+        const trunk = trunkFor(groups, node.id);
+        return {
+          id: node.id,
+          xPct: node.xPct,
+          yPct: node.yPct,
+          ingressAngle: trunk?.angle ?? node.angle,
+          active: node.state === "active" || node.state === "recovering",
+          weight: displayShare(node.sharePercent),
+        };
+      }),
+    [groups, nodes],
+  );
+
   /* ---------- engine lifecycle ---------- */
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -113,23 +216,21 @@ export function FluxCore({ model }: FluxCoreProps) {
     }
 
     const media =
-      typeof matchMedia === "function"
-        ? matchMedia("(prefers-reduced-motion: reduce)")
-        : null;
+      typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
     const initialReduced = media?.matches ?? false;
     setReduced(initialReduced);
 
     const engine = createFluxEngine({
       canvas,
       wrap,
-      chips: chipRefs.current.filter((el): el is HTMLButtonElement => el !== null),
+      viewport: () => viewportRef.current,
       reducedMotion: initialReduced,
       onSync: (next) => {
         setSnapshot(next);
         setDrilling(next.drilling);
       },
       onChipState: (index, state) => {
-        setChipStates((current) => {
+        setSimStates((current) => {
           if (current[index] === state) {
             return current;
           }
@@ -142,7 +243,6 @@ export function FluxCore({ model }: FluxCoreProps) {
       onDrillEnd: () => setDrilling(false),
     });
     engineRef.current = engine;
-
     engine.layout();
     engine.start();
 
@@ -202,6 +302,114 @@ export function FluxCore({ model }: FluxCoreProps) {
     };
   }, [pushFeed]);
 
+  /** Push the provider field into the engine whenever it changes. */
+  useEffect(() => {
+    engineRef.current?.setAnchors(anchors);
+  }, [anchors]);
+
+  /* ---------- viewport interaction ---------- */
+  const applyViewport = useCallback((next: Viewport) => {
+    const safe = clampViewport(next);
+    viewportRef.current = safe;
+    setViewport(safe);
+    engineRef.current?.layout();
+  }, []);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (wrap === null) {
+      return;
+    }
+
+    const localPoint = (clientX: number, clientY: number): { x: number; y: number } => {
+      const rect = wrap.getBoundingClientRect();
+      return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
+    };
+
+    const onWheel = (event: WheelEvent): void => {
+      // Only claim the gesture when it is a zoom over the stage, so ordinary page
+      // scrolling past the panel is never hijacked.
+      if (event.deltaY === 0) {
+        return;
+      }
+      event.preventDefault();
+      const point = localPoint(event.clientX, event.clientY);
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      applyViewport(zoomAt(viewportRef.current, factor, point.x, point.y));
+    };
+
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.pointerType === "touch") {
+        pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (pinchRef.current.size >= 2) {
+          dragRef.current = null;
+          return;
+        }
+      }
+      if ((event.target as HTMLElement | null)?.closest("button") !== null) {
+        // Let provider chips and HUD buttons receive their own clicks.
+        return;
+      }
+      dragRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      wrap.setPointerCapture?.(event.pointerId);
+    };
+
+    const onPointerMove = (event: PointerEvent): void => {
+      if (event.pointerType === "touch" && pinchRef.current.size >= 2) {
+        const previous = [...pinchRef.current.values()];
+        pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const next = [...pinchRef.current.values()];
+        if (previous.length >= 2 && next.length >= 2) {
+          const before = Math.hypot(
+            previous[0]!.x - previous[1]!.x,
+            previous[0]!.y - previous[1]!.y,
+          );
+          const after = Math.hypot(next[0]!.x - next[1]!.x, next[0]!.y - next[1]!.y);
+          if (before > 0 && after > 0) {
+            const mid = localPoint(
+              (next[0]!.x + next[1]!.x) / 2,
+              (next[0]!.y + next[1]!.y) / 2,
+            );
+            applyViewport(zoomAt(viewportRef.current, after / before, mid.x, mid.y));
+          }
+        }
+        return;
+      }
+      const drag = dragRef.current;
+      if (drag === null || drag.id !== event.pointerId) {
+        return;
+      }
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      dragRef.current = { id: drag.id, x: event.clientX, y: event.clientY };
+      applyViewport(panBy(viewportRef.current, dx, dy));
+    };
+
+    const onPointerUp = (event: PointerEvent): void => {
+      pinchRef.current.delete(event.pointerId);
+      if (dragRef.current?.id === event.pointerId) {
+        dragRef.current = null;
+        wrap.releasePointerCapture?.(event.pointerId);
+      }
+    };
+
+    wrap.addEventListener("wheel", onWheel, { passive: false });
+    wrap.addEventListener("pointerdown", onPointerDown);
+    wrap.addEventListener("pointermove", onPointerMove);
+    wrap.addEventListener("pointerup", onPointerUp);
+    wrap.addEventListener("pointercancel", onPointerUp);
+
+    return () => {
+      wrap.removeEventListener("wheel", onWheel);
+      wrap.removeEventListener("pointerdown", onPointerDown);
+      wrap.removeEventListener("pointermove", onPointerMove);
+      wrap.removeEventListener("pointerup", onPointerUp);
+      wrap.removeEventListener("pointercancel", onPointerUp);
+      dragRef.current = null;
+      pinchRef.current.clear();
+    };
+  }, [applyViewport]);
+
   /* ---------- controls ---------- */
   const onCount = useCallback((n: number) => {
     engineRef.current?.setActiveCount(n);
@@ -212,20 +420,35 @@ export function FluxCore({ model }: FluxCoreProps) {
     engineRef.current?.setTempo(next);
   }, []);
 
-  const onToggleChip = useCallback(
-    (index: number) => {
-      const result = engineRef.current?.toggleProvider(index);
-      if (result === "denied") {
-        const el = chipRefs.current[index];
-        if (el !== null && el !== undefined) {
-          el.classList.remove("deny");
-          void el.offsetWidth;
-          el.classList.add("deny");
-        }
+  const onSelect = useCallback(
+    (id: string, index: number) => {
+      setSelectedId((current) => (current === id ? undefined : id));
+      if (!live) {
+        engineRef.current?.toggleProvider(index);
       }
     },
-    [],
+    [live],
   );
+
+  const onFocusProvider = useCallback(
+    (id: string) => {
+      const node = nodes.find((candidate) => candidate.id === id);
+      if (node === undefined) {
+        return;
+      }
+      setSelectedId(id);
+      const wrap = wrapRef.current;
+      const size = wrap === null ? 600 : Math.min(wrap.clientWidth, wrap.clientHeight);
+      applyViewport(
+        focusOn(viewportRef.current, ((node.xPct - 50) / 100) * size * 1.35, ((node.yPct - 50) / 100) * size * 1.35),
+      );
+    },
+    [applyViewport, nodes],
+  );
+
+  const onResetView = useCallback(() => {
+    applyViewport(resetViewport());
+  }, [applyViewport]);
 
   const onPause = useCallback(() => {
     if (reduced) {
@@ -245,32 +468,15 @@ export function FluxCore({ model }: FluxCoreProps) {
   }, []);
 
   /* ---------- derived display data ---------- */
-  const providers = useMemo(() => {
-    if (model !== undefined) {
-      // Capped at the approved five positions; extra providers are not displayed.
-      return model.providers.slice(0, FLUX_MAX_PROVIDERS).map((provider, index) => ({
-        key: provider.id,
-        label: provider.label,
-        state: provider.state,
-        share: displayShare(provider.sharePercent),
-        index,
-      }));
-    }
-    return FLUX_NAMES.map((name, index) => ({
-      key: `sim-${name}`,
-      label: name,
-      state: chipStates[index] ?? "active",
-      share: snapshot.shares[index] ?? 0,
-      index,
-    }));
-  }, [chipStates, model, snapshot.shares]);
-
-  const activeCount = live
-    ? providers.filter((provider) => provider.state !== "off").length
-    : snapshot.activeCount;
+  const activeCount = providers.filter(
+    (provider) => provider.state === "active" || provider.state === "recovering",
+  ).length;
+  const failedCount = providers.filter(
+    (provider) => provider.state === "failed" || provider.state === "degraded",
+  ).length;
 
   const mode = useMemo(() => {
-    if (model?.routingMode === "failover" || (!live && drilling)) {
+    if (model?.routingMode === "failover" || (!live && drilling) || failedCount > 0) {
       return "FAILOVER SEQUENCE";
     }
     if (model?.routingMode === "direct") {
@@ -280,21 +486,36 @@ export function FluxCore({ model }: FluxCoreProps) {
       return "COMBO ROUTING";
     }
     return activeCount >= 2 ? "COMBO ROUTING" : "DIRECT ROUTE";
-  }, [activeCount, drilling, live, model?.routingMode]);
+  }, [activeCount, drilling, failedCount, live, model?.routingMode]);
 
   const routed = model?.routedRequests ?? snapshot.routedRequests;
   const load = model?.loadPercent ?? snapshot.loadPercent;
   const feed = model?.activity ?? simFeed;
-
-  const metaState = drilling ? "FAILOVER" : activeCount >= 2 ? "COMBO" : "DIRECT";
+  const metaState = failedCount > 0 || drilling ? "FAILOVER" : activeCount >= 2 ? "COMBO" : "DIRECT";
   const sourceWord = live ? "LIVE" : "SIM";
 
-  const ariaLabel = `Bayz relay visualization. ${mode}. Active providers: ${
-    providers
-      .filter((provider) => provider.state !== "off")
-      .map((provider) => provider.label)
-      .join(", ") || "none"
-  }. Tempo: ${tempo}. Routed requests: ${routed}.`;
+  /** Incidents that could not be labelled in place; never a "+N" abstraction. */
+  const incidents = useMemo(
+    () =>
+      labels.overflowIncidents
+        .map((id) => ({ id, identity: identities.get(id) }))
+        .filter((entry): entry is { id: string; identity: ProviderIdentity } =>
+          entry.identity !== undefined,
+        ),
+    [identities, labels.overflowIncidents],
+  );
+
+  const ariaLabel = `Bayz relay visualization. ${mode}. ${providers.length} provider${
+    providers.length === 1 ? "" : "s"
+  }, ${activeCount} active, ${failedCount} in incident. Tempo: ${tempo}. Routed requests: ${routed}.`;
+
+  const stageSize = 1.35;
+  /**
+   * At 1..5 providers the approved `.p1`-`.p5` CSS positions drive layout exactly,
+   * so the approved baseline is pixel-identical. The scalable field only engages
+   * once the count exceeds what the approved source demonstrates.
+   */
+  const approvedLayout = providers.length <= FLUX_APPROVED_PROVIDERS;
 
   return (
     <section className="panel flux-panel" aria-labelledby="relay-title">
@@ -302,10 +523,13 @@ export function FluxCore({ model }: FluxCoreProps) {
         <div>
           <h2 id="relay-title">Relay usage track</h2>
           <div className="panel-meta">
-            {`PROVIDER \u2192 BAYZ \u2192 MODEL / ${sourceWord} \u00b7 ${metaState} \u00b7 ${tempo.toUpperCase()}`}
+            {`PROVIDER \u2192 BAYZ \u2192 MODEL / ${sourceWord} \u00b7 ${metaState} \u00b7 ${tempo.toUpperCase()} \u00b7 ${providers.length} NODES`}
           </div>
         </div>
         <div className="head-actions">
+          <button className="button small" type="button" onClick={onResetView}>
+            Reset view
+          </button>
           <button
             className="button small"
             type="button"
@@ -341,29 +565,69 @@ export function FluxCore({ model }: FluxCoreProps) {
             </small>
           </div>
 
-          {providers.map((provider) => (
-            <button
-              key={provider.key}
-              ref={(el) => {
-                chipRefs.current[provider.index] = el;
-              }}
-              className={`provider ${CHIP_CLASS[provider.index] ?? "p1"}`}
-              type="button"
-              data-state={provider.state}
-              aria-pressed={provider.state !== "off"}
-              onClick={() => onToggleChip(provider.index)}
-              disabled={live}
-            >
-              {/* Untrusted label: rendered as a text node, never as markup. */}
-              <b>{provider.label}</b>
-              <small>
-                <i className="pdot" />
-                <span>{provider.share}%</span>
-                &nbsp;/&nbsp;
-                <span>{stateWord(provider.state)}</span>
-              </small>
-            </button>
-          ))}
+          {/*
+            Provider constellation. Every node is rendered — density reduces label
+            detail, never node count — and positioned through the shared viewport
+            transform so pan/zoom moves nodes and canvas filaments together.
+          */}
+          <div
+            className="flux-field"
+            style={{
+              transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+            }}
+          >
+            {labels.nodes.map((node, index) => {
+              const identity = identities.get(node.id);
+              const showLabel = labelled.has(node.id);
+              const isSelected = node.id === selectedId;
+              return (
+                <button
+                  key={node.id}
+                  className={`provider${approvedLayout ? ` ${APPROVED_CHIP_CLASS[index] ?? ""}` : ""}${
+                    showLabel ? " labelled" : ""
+                  }${isSelected ? " selected" : ""}`}
+                  type="button"
+                  data-state={node.state}
+                  data-provider-id={node.id}
+                  aria-pressed={isSelected}
+                  aria-label={identity?.uniqueLabel ?? node.displayName}
+                  style={
+                    approvedLayout
+                      ? undefined
+                      : {
+                          left: `calc(50% + ${((node.xPct - 50) / 100) * stageSize * 100}%)`,
+                          top: `calc(50% + ${((node.yPct - 50) / 100) * stageSize * 100}%)`,
+                        }
+                  }
+                  onClick={() => onSelect(node.id, index)}
+                  onDoubleClick={() => onFocusProvider(node.id)}
+                >
+                  <ProviderMark
+                    iconKey={identity?.iconKey ?? "generic"}
+                    initials={identity?.initials ?? "PV"}
+                  />
+                  {showLabel && (
+                    <span className="provider-label">
+                      {/* Untrusted label: a React text node, never markup. */}
+                      <b>
+                        {labels.detail === DETAIL_NEAR
+                          ? (identity?.uniqueLabel ?? node.displayName)
+                          : (identity?.compactLabel ?? node.displayName)}
+                      </b>
+                      {labels.showState && (
+                        <small>
+                          <i className="pdot" />
+                          <span>{shareFor(index, node.sharePercent)}%</span>
+                          &nbsp;/&nbsp;
+                          <span>{STATE_WORD[node.state]}</span>
+                        </small>
+                      )}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
           <div className="stage-hud">
             <div className="hud-group" role="group" aria-label="Active provider count">
@@ -380,6 +644,27 @@ export function FluxCore({ model }: FluxCoreProps) {
                   {n}
                 </button>
               ))}
+            </div>
+            <div className="hud-group" role="group" aria-label="Zoom">
+              <span className="hud-label">Zoom</span>
+              <button
+                className="hud-btn"
+                type="button"
+                aria-label="Zoom out"
+                onClick={() => applyViewport(zoomAt(viewportRef.current, 1 / 1.3, 0, 0))}
+                disabled={viewport.zoom <= ZOOM_MIN + 0.001}
+              >
+                −
+              </button>
+              <button
+                className="hud-btn"
+                type="button"
+                aria-label="Zoom in"
+                onClick={() => applyViewport(zoomAt(viewportRef.current, 1.3, 0, 0))}
+                disabled={viewport.zoom >= ZOOM_MAX - 0.001}
+              >
+                +
+              </button>
             </div>
             <div className="hud-group" role="group" aria-label="Animation tempo">
               <span className="hud-label">Tempo</span>
@@ -416,6 +701,34 @@ export function FluxCore({ model }: FluxCoreProps) {
           </div>
         </div>
       </div>
+
+      {incidents.length > 0 && (
+        <div className="flux-incidents" aria-label="Provider incidents">
+          <div className="panel-head flux-subhead">
+            <div>
+              <h3>Incidents</h3>
+              <div className="panel-meta">
+                {`${incidents.length} PROVIDER${incidents.length === 1 ? "" : "S"} NEED ATTENTION`}
+              </div>
+            </div>
+          </div>
+          {incidents.map((incident) => (
+            <button
+              key={incident.id}
+              className="incident-row"
+              type="button"
+              onClick={() => onFocusProvider(incident.id)}
+            >
+              <ProviderMark
+                iconKey={incident.identity.iconKey}
+                initials={incident.identity.initials}
+              />
+              <b>{incident.identity.uniqueLabel}</b>
+              <span>{incident.identity.shortId}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="panel-head flux-subhead">
         <div>
