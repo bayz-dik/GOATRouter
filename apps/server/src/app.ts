@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { HealthResponse } from "@bayz/contracts";
 import { installApiGuards, type RateLimitOptions } from "./auth.js";
+import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
+import { registerProviderRoutes } from "./routes/providers.js";
+import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
 
 /** 1 MiB, matching the router's own request cap. */
@@ -17,6 +20,8 @@ export type BuildAppOptions = {
   apiToken?: string;
   rateLimit?: RateLimitOptions;
   allowedHosts?: readonly string[];
+  /** When present, the managed API surface is registered. */
+  runtime?: BayzRuntime;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -47,12 +52,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         : { allowedHosts: options.allowedHosts }),
     });
   }
+  installContentTypeGuard(app);
 
   app.get("/api/health", async (): Promise<HealthResponse> => ({
     status: "ok",
     version: options.version ?? "0.1.0",
     uptimeSeconds: process.uptime(),
   }));
+
+  if (options.runtime !== undefined) {
+    const runtime = options.runtime;
+    app.get("/api/status", async () => runtime.describe());
+    registerProviderRoutes(app, runtime);
+  }
 
   if (options.registerTestRoutes) {
     app.get("/__test/error", async () => {
