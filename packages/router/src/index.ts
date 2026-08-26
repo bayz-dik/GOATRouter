@@ -49,3 +49,9 @@ export {
   type ChatResponse,
   type ChatUsage,
 } from "./response.js";
+export {
+  MAX_RESPONSE_BYTES,
+  sendChatRequest,
+  type SendChatRequestOptions,
+  type TransportProvider,
+} from "./transport.js";
