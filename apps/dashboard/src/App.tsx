@@ -1,41 +1,67 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import type { HealthResponse } from "@bayz/contracts";
 import { fetchHealth } from "./api/health";
+import { createApiClient, type ApiClient } from "./api/client";
+import { createTokenStore, type TokenStore } from "./api/token";
+import { TokenGate } from "./api/TokenGate";
+import { ChatPanel } from "./panels/ChatPanel";
+import { CoreStatus } from "./CoreStatus";
+import { FluxCoreSlot } from "./FluxCoreSlot";
+import { ProvidersPanel } from "./panels/ProvidersPanel";
+import { ProxiesPanel } from "./panels/ProxiesPanel";
+import { RoutesPanel } from "./panels/RoutesPanel";
+import { StatusPanel } from "./panels/StatusPanel";
 import "./styles.css";
+
+/** One store per browser session, held in memory only. */
+const defaultTokenStore = createTokenStore();
 
 type AppProps = {
   healthClient?: () => Promise<HealthResponse>;
+  tokenStore?: TokenStore;
+  apiClient?: ApiClient;
 };
 
-export function App({ healthClient = fetchHealth }: AppProps) {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [offline, setOffline] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void healthClient().then(
-      (value) => active && setHealth(value),
-      () => active && setOffline(true),
-    );
-    return () => { active = false; };
-  }, [healthClient]);
+export function App({
+  healthClient = fetchHealth,
+  tokenStore = defaultTokenStore,
+  apiClient,
+}: AppProps) {
+  const api = useMemo(
+    () =>
+      apiClient ??
+      createApiClient({
+        token: () => tokenStore.get(),
+        // A rejected token returns the operator to the gate instead of leaving
+        // every panel silently failing.
+        onUnauthorized: () => tokenStore.clear(),
+      }),
+    [apiClient, tokenStore],
+  );
 
   return (
     <main className="bayz-shell">
       <header className="bayz-header">
         <h1>Bayz</h1>
-        <span>Foundation / Private</span>
+        <span>Runtime / Private</span>
       </header>
-      <section className="status-panel" aria-live="polite">
-        {!health && !offline && <p>Checking Core…</p>}
-        {health && <><strong>Core online</strong><span>v{health.version}</span></>}
-        {offline && <><strong>Core offline</strong><span>Check the Bayz process and try again.</span></>}
-      </section>
-      <nav aria-label="Planned Bayz modules">
-        {[
-          "Providers", "Proxies", "Combos", "Routes", "CLI Tools", "Usage",
-        ].map((label) => <span className="planned-module" key={label}>{label} / Planned</span>)}
-      </nav>
+
+      {/*
+        Integration boundary for the approved BAYZ Flux Core V2 motion system.
+        Intentionally empty: its source is supplied separately and must not be
+        approximated here.
+      */}
+      <FluxCoreSlot />
+
+      <CoreStatus healthClient={healthClient} />
+
+      <TokenGate store={tokenStore}>
+        <StatusPanel load={() => api.getStatus()} />
+        <ProvidersPanel api={api} />
+        <ProxiesPanel api={api} />
+        <RoutesPanel api={api} />
+        <ChatPanel api={api} />
+      </TokenGate>
     </main>
   );
 }
