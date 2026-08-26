@@ -48,3 +48,11 @@ export {
   type DialTarget,
   type DialThroughProxyOptions,
 } from "./dial.js";
+export {
+  createProxyManager,
+  type CreateProxyManagerOptions,
+  type ProxyCheckResult,
+  type ProxyLogger,
+  type ProxyManager,
+  type ProxyView,
+} from "./manager.js";
