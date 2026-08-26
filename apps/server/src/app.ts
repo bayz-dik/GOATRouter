@@ -5,6 +5,7 @@ import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
 import { registerProviderRoutes } from "./routes/providers.js";
+import { registerProxyRoutes } from "./routes/proxies.js";
 import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
 
@@ -64,6 +65,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     const runtime = options.runtime;
     app.get("/api/status", async () => runtime.describe());
     registerProviderRoutes(app, runtime);
+    registerProxyRoutes(app, runtime);
   }
 
   if (options.registerTestRoutes) {
