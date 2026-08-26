@@ -4,8 +4,10 @@ import type { HealthResponse } from "@bayz/contracts";
 import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
+import { registerChatRoutes } from "./routes/chat.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProxyRoutes } from "./routes/proxies.js";
+import { registerRouteRoutes } from "./routes/routes.js";
 import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
 
@@ -66,6 +68,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     app.get("/api/status", async () => runtime.describe());
     registerProviderRoutes(app, runtime);
     registerProxyRoutes(app, runtime);
+    registerRouteRoutes(app, runtime);
+    registerChatRoutes(app, runtime);
   }
 
   if (options.registerTestRoutes) {
