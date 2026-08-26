@@ -10,11 +10,12 @@ export type Migration = {
  * Ordered, hand-rolled migrations. Versions are 1..n with no gaps.
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
- * provider registry and v3 the proxy registry; both hold routing-independent
- * metadata and deliberately no credential column. Provider keys live in `secrets`
- * under `provider:<id>:api_key` and proxy passwords under `proxy:<id>:password`.
- * There is still no route, combo, or usage table: those belong to their own
- * phases and would be speculative here.
+ * provider registry, v3 the proxy registry, and v4 the route registry. None of
+ * them holds a credential column, and `routes` deliberately has no column able to
+ * hold a prompt or a completion: the router persists neither. Provider keys live
+ * in `secrets` under `provider:<id>:api_key` and proxy passwords under
+ * `proxy:<id>:password`. There is still no combo or usage table: those belong to
+ * their own phases and would be speculative here.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -79,6 +80,28 @@ export const MIGRATIONS: readonly Migration[] = [
          created_at  TEXT    NOT NULL,
          updated_at  TEXT    NOT NULL
        )`,
+    ],
+  },
+  {
+    version: 4,
+    statements: [
+      // ON DELETE CASCADE for the provider: a route to a deleted provider is
+      // meaningless, so it goes with it rather than dangling.
+      // ON DELETE SET NULL for the proxy: removing a proxy should degrade a route
+      // to a direct connection, not silently break it.
+      `CREATE TABLE routes (
+         id          TEXT    PRIMARY KEY,
+         model       TEXT    NOT NULL,
+         provider_id TEXT    NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+         proxy_id    TEXT             REFERENCES proxies(id) ON DELETE SET NULL,
+         priority    INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 1000),
+         enabled     INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+         config_json TEXT    NOT NULL,
+         created_at  TEXT    NOT NULL,
+         updated_at  TEXT    NOT NULL
+       )`,
+      `CREATE UNIQUE INDEX routes_model_provider_idx
+         ON routes (model, provider_id)`,
     ],
   },
 ];

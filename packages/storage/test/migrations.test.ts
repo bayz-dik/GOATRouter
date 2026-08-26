@@ -56,6 +56,7 @@ test("a fresh database gains exactly the tables of the current schema", () => {
     assert.deepEqual(tableNames(db), [
       "providers",
       "proxies",
+      "routes",
       "runtime_metadata",
       "schema_migrations",
       "secrets",
@@ -185,22 +186,26 @@ test("a failing migration is atomic and leaves the version untouched", () => {
   }
 });
 
-test("no speculative route, combo, or usage schema exists", () => {
+test("no speculative combo or usage schema exists", () => {
   const db = freshDb();
   try {
     runMigrations(db);
     const names = tableNames(db);
-    // `providers` (v2) and `proxies` (v3) are intentionally absent from this
-    // list: Phase 3 and Phase 4 own them. Everything below still belongs to a
-    // later phase, so creating it now would be speculative.
+    // `providers` (v2), `proxies` (v3), and `routes` (v4) are intentionally
+    // absent from this list: Phases 3-5 own them. Everything below still belongs
+    // to a later phase, so creating it now would be speculative.
     for (const forbidden of [
       "provider",
       "proxy",
-      "routes",
+      "route",
       "routing",
       "combos",
+      "combo",
       "usage",
       "requests",
+      "prompts",
+      "completions",
+      "messages",
       "logs",
       "clients",
     ]) {
@@ -210,6 +215,162 @@ test("no speculative route, combo, or usage schema exists", () => {
         `the current schema must not create a ${forbidden} table`,
       );
     }
+  } finally {
+    db.close();
+  }
+});
+
+test("the routes table binds a model to a provider and stores no prompt", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('routes')")
+      .all()
+      .map((row) => String(row.name))
+      .sort();
+
+    assert.deepEqual(columns, [
+      "config_json",
+      "created_at",
+      "enabled",
+      "id",
+      "model",
+      "priority",
+      "provider_id",
+      "proxy_id",
+      "updated_at",
+    ]);
+    // Prompts and completions are never persisted; a column able to hold one
+    // would make that guarantee unenforceable.
+    for (const forbidden of [
+      "prompt",
+      "messages",
+      "content",
+      "body",
+      "completion",
+      "response",
+      "api_key",
+      "credential",
+      "password",
+    ]) {
+      assert.equal(
+        columns.includes(forbidden),
+        false,
+        `routes must never store ${forbidden}`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("a route cannot reference a provider that does not exist", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    assert.throws(
+      () =>
+        db
+          .prepare(
+            `INSERT INTO routes
+               (id, model, provider_id, proxy_id, priority, enabled, config_json,
+                created_at, updated_at)
+             VALUES ('r1', 'gpt-4o', 'ghost', NULL, 100, 1, '{}',
+                     '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+          )
+          .run(),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+      "the foreign key must be enforced, not advisory",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("deleting a provider cascades its routes and deleting a proxy nulls the binding", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://example.com', 1, '{}',
+               '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO proxies
+         (id, kind, host, port, username, enabled, config_json, created_at, updated_at)
+       VALUES ('x1', 'socks5', '127.0.0.1', 1080, NULL, 1, '{}',
+               '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json,
+          created_at, updated_at)
+       VALUES ('r1', 'gpt-4o', 'p1', 'x1', 100, 1, '{}',
+               '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+    ).run();
+
+    // Removing a proxy must degrade the route to direct, not break it.
+    db.prepare("DELETE FROM proxies WHERE id = 'x1'").run();
+    assert.equal(
+      db.prepare("SELECT proxy_id FROM routes WHERE id = 'r1'").get()?.proxy_id,
+      null,
+    );
+
+    // Removing a provider must take its routes with it, leaving none dangling.
+    db.prepare("DELETE FROM providers WHERE id = 'p1'").run();
+    assert.equal(
+      Number(db.prepare("SELECT COUNT(*) AS n FROM routes").get()?.n),
+      0,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("routes constrain priority, the enabled flag, and the model/provider pair", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://example.com', 1, '{}',
+               '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json,
+          created_at, updated_at)
+       VALUES (?, ?, 'p1', NULL, ?, ?, '{}', '2026-08-26T00:00:00.000Z',
+               '2026-08-26T00:00:00.000Z')`,
+    );
+
+    insert.run("ok-low", "gpt-4o", 0, 1);
+    insert.run("ok-high", "gpt-4o-mini", 1000, 0);
+
+    for (const priority of [-1, 1001]) {
+      assert.throws(
+        () => insert.run(`bad-priority-${priority}`, "m", priority, 1),
+        (error: unknown) =>
+          error instanceof StorageError && error.code === "storage_unavailable",
+        `priority ${priority} must be refused`,
+      );
+    }
+    assert.throws(
+      () => insert.run("bad-enabled", "m2", 100, 2),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("dup-pair", "gpt-4o", 100, 1),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+      "the same model must not be bound twice to one provider",
+    );
   } finally {
     db.close();
   }
