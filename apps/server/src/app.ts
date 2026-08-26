@@ -8,6 +8,7 @@ import { registerChatRoutes } from "./routes/chat.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProxyRoutes } from "./routes/proxies.js";
 import { registerRouteRoutes } from "./routes/routes.js";
+import { registerUsageRoutes } from "./routes/usage.js";
 import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
 
@@ -70,6 +71,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     registerProxyRoutes(app, runtime);
     registerRouteRoutes(app, runtime);
     registerChatRoutes(app, runtime);
+    registerUsageRoutes(app, runtime);
   }
 
   if (options.registerTestRoutes) {

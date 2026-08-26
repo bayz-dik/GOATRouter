@@ -86,7 +86,7 @@ test("the status summary reports operational facts and no key material", () => {
     runtime.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 
     const status = runtime.describe();
-    assert.equal(status.schemaVersion, 4);
+    assert.equal(status.schemaVersion, 5);
     assert.equal(status.driver, "node:sqlite");
     assert.equal(status.keyProvider, "environment");
     assert.match(String(status.keyId), /^kek_[0-9a-f]{32}$/);

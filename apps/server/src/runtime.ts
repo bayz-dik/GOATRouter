@@ -3,6 +3,11 @@ import { createProviderManager, type ProviderManager } from "@bayz/providers";
 import { createProxyManager, type ProxyManager } from "@bayz/proxy";
 import { createRouter, type Router } from "@bayz/router";
 import {
+  createUsageRepository,
+  normalizeUsageEvent,
+  type UsageRepository,
+} from "@bayz/telemetry";
+import {
   openSecretStorage,
   type BayzSecurityMode,
   type SecretStorage,
@@ -24,6 +29,7 @@ export type BayzRuntime = {
   readonly providers: ProviderManager;
   readonly proxies: ProxyManager;
   readonly router: Router;
+  readonly usage: UsageRepository;
   readonly apiToken: string;
   readonly apiTokenSource: ApiTokenSource;
   describe(): BayzRuntimeStatus;
@@ -44,6 +50,16 @@ export type CreateBayzRuntimeOptions = {
 };
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/** Parse `BAYZ_USAGE_RETENTION`; a malformed value falls back to the default. */
+function retentionFrom(env: Record<string, string | undefined>): number | undefined {
+  const raw = env.BAYZ_USAGE_RETENTION;
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 
 /**
  * Build the whole managed runtime on a single storage connection.
@@ -93,17 +109,39 @@ export function createBayzRuntime(
       storage,
       ...(options.logger === undefined ? {} : { logger: options.logger }),
     });
+
+    const retention = retentionFrom(env);
+    const usage = createUsageRepository(storage.sql, {
+      ...(retention === undefined ? {} : { requestRetention: retention }),
+    });
+
     const router = createRouter({
       storage,
       providers,
       proxies,
       ...(options.logger === undefined ? {} : { logger: options.logger }),
+      /**
+       * Telemetry is observational: a validation failure or a storage error here
+       * must never turn into a failed chat, so the sink swallows its own faults.
+       * The router additionally guards the call, so this is defence in depth.
+       */
+      recorder: (event) => {
+        try {
+          const row = normalizeUsageEvent(event);
+          if (row !== undefined) {
+            usage.record(row);
+          }
+        } catch {
+          // A telemetry write is never worth failing a request over.
+        }
+      },
     });
 
     return {
       providers,
       proxies,
       router,
+      usage,
       apiToken: resolved.token,
       apiTokenSource: resolved.source,
 

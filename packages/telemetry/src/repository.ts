@@ -88,6 +88,14 @@ export interface UsageRepository {
   providerActivity(sinceEpochMs: number): ProviderActivity[];
   requestRetention(): number;
   attemptRetention(): number;
+  /**
+   * Delete every usage row.
+   *
+   * Scoped to the two usage tables by literal name, exactly like retention, so an
+   * operator-triggered purge can never reach providers, proxies, routes, or
+   * secrets. Idempotent: calling it twice is indistinguishable from once.
+   */
+  purge(): void;
 }
 
 export type CreateUsageRepositoryOptions = {
@@ -231,6 +239,18 @@ export function createUsageRepository(
         return;
       }
 
+      /*
+       * `failover.started` is a marker, not an attempt.
+       *
+       * It names the provider that took over, but the same success also emits
+       * `provider.attempted` for that provider — storing both would double-count
+       * the attempt and inflate per-provider activity. The failover fact is not
+       * lost: the request row carries `routing_mode = 'failover'`.
+       */
+      if (row.kind === "failover.started") {
+        return;
+      }
+
       // Attempt-shaped events. `providerId` is guaranteed present by the boundary.
       if (row.providerId === undefined) {
         return;
@@ -353,6 +373,11 @@ export function createUsageRepository(
             row.avg_latency === null ? undefined : Math.round(Number(row.avg_latency)),
         };
       });
+    },
+
+    purge(): void {
+      db.prepare("DELETE FROM usage_requests").run();
+      db.prepare("DELETE FROM usage_attempts").run();
     },
 
     requestRetention: () => requestRetention,

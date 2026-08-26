@@ -257,7 +257,7 @@ test("the status endpoint reports counts and no key material", async (t) => {
   const response = await app.inject({ method: "GET", url: "/api/status", headers: AUTH });
   assert.equal(response.statusCode, 200);
   const body = response.json();
-  assert.equal(body.schemaVersion, 4);
+  assert.equal(body.schemaVersion, 5);
   assert.deepEqual(body.counts, { providers: 1, proxies: 0, routes: 1 });
   assert.equal(response.body.includes("sk-status-endpoint-secret"), false);
   assert.equal(response.body.includes(KEY), false);
