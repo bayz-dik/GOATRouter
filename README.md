@@ -368,6 +368,60 @@ bytes and the captured log output.
 `GET /v1/models` lists models from enabled routes only, and omits wildcard
 patterns — `gpt-4*` is route configuration, not a model a client could request.
 
+## Operator dashboard
+
+Phase 7 wires the existing dashboard shell to the Phase 6 API. It serves from the
+same origin as the Core, so no CORS relaxation is involved.
+
+- Panels: runtime status, providers, proxies, routes, and a one-shot test chat.
+- Verify the built artifact: `node scripts/dashboard-smoke.mjs`
+
+### The token is not remembered
+
+On load the dashboard asks for the API token and holds it in **memory only**. It is
+never written to `localStorage`, `sessionStorage`, a cookie, `window.name`, or the
+URL, and it is never logged. A reload means entering it again.
+
+That is a real inconvenience, accepted on purpose: any of those storage locations
+is readable by a script that achieves XSS on this origin, which would turn a
+transient injection into permanent API access. A "Lock session" button clears the
+token immediately, and a `401` from any request clears it and returns to the entry
+form so a rotated token cannot leave panels silently failing.
+
+Both a source scan and a scan of the **built bundle** enforce this, so the
+guarantee holds for the artifact a browser actually runs, not just for the source.
+
+### Nothing secret is rendered
+
+Credential and password fields are write-only: the value is sent, then cleared from
+component state in the same tick, so it is never re-rendered. Listings show
+`Credential stored` / `Password stored` as indicators only. If a future or
+compromised Core returned a credential field, the panels would still not display it
+— they read only the fields they know about, which a test verifies by feeding them a
+response containing extra secret-shaped keys.
+
+All values from the API, from upstream providers, and from model discovery are
+rendered as React text. There is no `dangerouslySetInnerHTML`, no `innerHTML`
+assignment, no `insertAdjacentHTML`, and no `eval` anywhere in the dashboard
+source; tests assert a hostile display name, host, model id, completion, and
+routing header all render as inert text.
+
+### The test chat keeps nothing
+
+The transcript lives in component state for the current view and is gone on
+navigation or reload. Nothing is written to browser storage and nothing is sent back
+to the Core for persistence — the router refuses to store prompts, and the
+dashboard does not undo that from the other side. There is no streaming control,
+because the API rejects `stream`.
+
+### Flux Core V2
+
+`apps/dashboard/src/FluxCoreSlot.tsx` is an intentionally empty mount point for the
+separately approved BAYZ Flux Core V2 motion system. Its source is supplied
+separately and is **LOCKED**: nothing in this repository recreates, approximates, or
+stands in for it. The build smoke script asserts the slot exists and that no
+animation primitive was invented to fill it.
+
 ## Deferred verification
 
 The existing private BAYZ Sites/UI review surface is not present in this

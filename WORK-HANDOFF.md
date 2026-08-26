@@ -8,6 +8,7 @@
 - Phase 4 Proxy Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 5 Router: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 6 Local HTTP API: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Phase 7 Operator Dashboard: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
@@ -15,12 +16,14 @@
   - `docs/superpowers/plans/2026-08-26-bayz-router-proxy-manager.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-router.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-http-api.md`
+  - `docs/superpowers/plans/2026-08-26-bayz-router-dashboard.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-proxy-manager-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-router-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-http-api-design.md`
+  - `docs/superpowers/specs/2026-08-26-bayz-router-dashboard-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
@@ -31,7 +34,8 @@
 - `@bayz/proxy`: 105 tests pass.
 - `@bayz/router`: 122 tests pass.
 - `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/contracts`: 3, `@bayz/security`: 6, `@bayz/dashboard`: 2.
+- `@bayz/dashboard`: 100 tests pass across 9 files.
+- `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
   reopen in a separate child process.
@@ -40,34 +44,39 @@
 - `node scripts/proxy-smoke.mjs`: 39/39 against a real database plus real SOCKS5
   and HTTP `CONNECT` servers, completing real tunneled HTTP requests.
 - `node scripts/router-smoke.mjs`: 46/46 against a real database, four real
-  origins, and a real `CONNECT` proxy — proving a direct chat, a proxied chat,
-  failover, `auth_failed` stopping the walk, and prompt/completion/credential
-  absence from disk and logs.
-- `node scripts/api-smoke.mjs`: 62/62 against a **real listener** on a real port
-  driven by real `fetch` — proving unauthenticated `/api/health`, 401 on every
-  other endpoint, a full provider→proxy→route→chat path, a proxied chat that
-  really tunnels, streaming refusal, rate limiting, `Host`/`Origin` refusal, and
-  absence of every secret from all response bodies, the database, and the logs.
-- Live boot on `127.0.0.1:20997`: logged `schemaVersion:4`, served
-  `/api/health` as exactly `{status, version, uptimeSeconds}`, answered
-  `/api/status` with `401` unauthenticated and `200` with the printed token, and
-  the root key never appeared in the log.
+  origins, and a real `CONNECT` proxy.
+- `node scripts/api-smoke.mjs`: 62/62 against a **real listener** driven by real
+  `fetch`.
+- `node scripts/dashboard-smoke.mjs`: 24/24 against the **built bundle** — no
+  `localStorage`/`sessionStorage`/cookie/`indexedDB`/`window.name` write, no
+  `dangerouslySetInnerHTML` prop, no `eval`/`new Function`/`document.write`, no
+  credential getter, no 64-hex or `sk-`/`Bearer` literal, token input declared
+  `type="password"` with `autoComplete="off"`, Flux Core slot present and empty.
+- Live boot on `127.0.0.1:20997`: `schemaVersion:4`, `/api/health` unauthenticated
+  and byte-identical, `/api/status` 401 → 200 with the printed token, root key
+  absent from the log.
 - Secret scan over tracked non-test source for `sk-*`, `hunter2`, `PROMPT-`,
-  `API-SMOKE`, `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
+  `API-SMOKE`, `BEGIN … PRIVATE KEY`, `AIza…`, and any 64-hex literal: no matches.
 - Getter scan for `getCredential`/`getPassword`/`reveal*`/`export*` across all
   `src`: no matches. `withCredential` exists only in
-  `packages/providers/src/manager.ts` and is consumed only by
+  `packages/providers/src/manager.ts`, consumed only by
   `packages/router/src/router.ts`.
+- Dashboard persistence scan (`localStorage.`/`sessionStorage.`/`document.cookie`)
+  over `apps/dashboard/src`: no code matches; the only textual hits are the two
+  comments explaining why persistence is refused.
+- Unsafe-DOM scan over `apps/dashboard/src`: no matches.
 - `node:sqlite` imported in exactly one file, enforced by a source-scan test.
-- `apps/dashboard` last touched in Phase 1 (`b78aef2`); zero Flux Core or
-  `BAYZ-responsive-master.html` files are tracked, so the LOCKED motion system was
-  not modified.
+- The only tracked file matching `flux` is `apps/dashboard/src/FluxCoreSlot.tsx`,
+  an empty mount point. **No Flux Core animation was created, modified, or
+  approximated.**
 
 ## Environment facts
 
 - Node `v24.19.0`, `linux arm64`. `node:sqlite` present, SQLite `3.53.3`, no
   ExperimentalWarning.
-- Zero new dependencies added in Phases 2–6 — runtime or dev.
+- Zero new dependencies added in Phases 2–7 — runtime or dev. `apps/dashboard`
+  dependencies remain exactly `@bayz/contracts`, `react`, `react-dom`, asserted by
+  a test.
 - scrypt measured on this device: N=2^14 49 ms/16 MiB, 2^15 95 ms/32 MiB,
   **2^16 194 ms/64 MiB (selected)**, 2^17 393 ms/128 MiB.
 
@@ -278,6 +287,55 @@ the adversarial test verifies by enumerating Fastify's own route table.
    is still covered by Phase 2 regression tests that pin the storage-init contract,
    and deleting it would remove that coverage for no benefit.
 
+## Phase 7 architecture as built
+
+```text
+App                           apps/dashboard/src/App.tsx
+  ├─ FluxCoreSlot             EMPTY mount point for approved Flux Core V2
+  ├─ CoreStatus               unauthenticated /api/health liveness
+  └─ TokenGate                in-memory token; children hidden until unlocked
+       ├─ StatusPanel         /api/status
+       ├─ ProvidersPanel      CRUD + write-only credential + discover
+       ├─ ProxiesPanel        CRUD + write-only password + check
+       ├─ RoutesPanel         CRUD + priority + proxy binding
+       └─ ChatPanel           one-shot chat, in-memory transcript only
+createApiClient               bearer injection, credentials:"omit", ApiError
+```
+
+## Phase 7 deviations from the plan text
+
+1. **`CoreStatus` split out of `App`.** The plan implied panels inside the shell
+   without saying where liveness lives. It is now outside the token gate, because an
+   operator must be able to distinguish "the Core is down" from "I have not unlocked
+   the session yet" — `/api/health` needs no token, so gating it would have hidden
+   useful information.
+2. **Testing Library cleanup was missing.** Vitest is not run with
+   `globals: true`, so the automatic `afterEach(cleanup)` was never registered and
+   DOM leaked between tests, which surfaced as duplicate-role query failures. Fixed
+   in `test/setup.ts`. This was a pre-existing gap that only became visible once
+   more than one component test existed.
+3. **`@testing-library/user-event` is not installed**, so panel interaction uses
+   `fireEvent`. Adding the package would have been a new dependency; `fireEvent` is
+   sufficient for these assertions.
+4. **The source scan strips comments and string literals** before applying its
+   rules. Without that, documenting *why* we refuse to use `localStorage` would fail
+   the test that forbids `localStorage` — which would push the reasoning out of the
+   source. The scan therefore checks code, and the comments remain.
+5. **The bundle scan cannot forbid bare `dangerouslySetInnerHTML` or
+   `.innerHTML =`.** React's own runtime contains both, so those two rules are
+   enforced against `apps/dashboard/src` in the adversarial test, where React is not
+   in scope; the bundle scan asserts the narrower `dangerouslySetInnerHTML:` prop
+   form plus `eval`/`new Function`/`document.write`. Stated plainly because a reader
+   would otherwise expect the bundle scan to be the stronger of the two.
+6. **`useAsync` and `PanelError` were extracted** into `panels/shared.tsx` rather
+   than repeated five times. Still no state library: it is roughly forty lines and
+   the panels share no cache that would justify a dependency.
+7. **Flux Core V2 is an empty slot.** `FluxCoreSlot.tsx` renders one empty `div`
+   with `data-bayz-flux-core-slot`. No animation primitive appears anywhere, and both
+   a test and the build smoke assert that. The approved source is supplied
+   separately; approximating it from memory would have produced a different
+   animation wearing its name.
+
 ## Deliberately NOT implemented, and not faked
 
 - **OS keychain custody** — `OsKeystoreKeyProvider` exists as an interface with
@@ -312,8 +370,28 @@ the adversarial test verifies by enumerating Fastify's own route table.
   asserts the tables are absent and no route exposes them.
 - **Streaming over HTTP** — `POST /v1/chat/completions` with `stream` returns
   `400 streaming_unsupported`. Not faked, not silently ignored.
-- **Dashboard controls for any of this** — none. The dashboard is still the Phase 1
-  static shell; it has no API client and no credential UI.
+- **Dashboard controls for any of this** — added in Phase 7. Providers, proxies,
+  routes, and a test chat are all manageable from the shell.
+- **Flux Core V2 visual implementation** — deliberately NOT built. The slot is
+  empty and awaits the approved source.
+
+## Phase 7 residual risk
+
+Protected: the API token is held in memory only, proven by a source scan *and* a
+scan of the built bundle; no credential, password, or token is ever rendered, and
+panels read only known fields so a compromised Core cannot get a secret onto the
+screen; every API/upstream/model/route string renders as React text with no
+`dangerouslySetInnerHTML`, `innerHTML`, `insertAdjacentHTML`, or `eval` anywhere in
+the source; no prompt or completion is persisted, and the transcript dies with the
+view; the dashboard is same-origin so the Phase 6 `Origin` check applies without any
+CORS relaxation; zero new dependencies.
+
+Not protected: XSS on this origin during an unlocked session can still act as the
+operator for the lifetime of that session and can read the in-memory token. Memory
+storage bounds the damage to a session rather than eliminating it. There is also no
+Content-Security-Policy header yet — the Core serves the dashboard without one,
+which is the obvious next hardening step and is not claimed to be done. The token is
+still a single shared credential with no scopes or expiry.
 
 ## Phase 6 residual risk
 
@@ -402,27 +480,33 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 - Merging the approved workspace fields into the real Next.js root
   `package.json` without discarding its existing scripts/dependencies.
 
-`apps/dashboard` is the runtime foundation shell only. It is **not** a redesign
-and does **not** replace `BAYZ-responsive-master.html` as the locked visual
-source of truth. Phases 2–6 made no dashboard change whatsoever
-(`git log -- apps/dashboard` still ends at the Phase 1 commit `b78aef2`). The
-Flux Core motion system remains LOCKED and untouched; no Flux source file is
-tracked in this workspace.
+`apps/dashboard` is the runtime foundation shell plus the Phase 7 operator panels.
+It is **not** a redesign and does **not** replace `BAYZ-responsive-master.html` as
+the locked visual source of truth.
+
+The **BAYZ Flux Core V2 motion system remains LOCKED and unimplemented here.**
+`apps/dashboard/src/FluxCoreSlot.tsx` is an empty `div` carrying
+`data-bayz-flux-core-slot`, and it is the only tracked file matching `flux`. No
+animation primitive (`requestAnimationFrame`, canvas, WebGL, keyframes) appears
+anywhere in the dashboard; a test and the build smoke both assert this. To
+integrate, render the approved component inside that element — nothing else needs to
+change.
 
 ## Resume steps once the real BAYZ repo/UI is available
 
 1. Copy the Sites/UI source and the real root `package.json` into this workspace.
 2. Merge the workspace fields (`workspaces`, `runtime:*` scripts) into the real
    root `package.json` instead of overwriting it.
-3. Move the README runtime, storage, provider, proxy, router, and API sections into
-   the real README.
+3. Move the README runtime, storage, provider, proxy, router, API, and dashboard
+   sections into the real README.
 4. Run the root Sites build and confirm it still exits 0.
-5. Re-run `npm run runtime:verify` and all five smoke scripts.
+5. Re-run `npm run runtime:verify` and all six smoke scripts.
 
-## Next phase
+## Next steps
 
-Phase 7 is the dashboard API client and operator UI: wire the existing shell to the
-Phase 6 endpoints so providers, proxies, and routes can be managed without curl.
-The hard constraints are already set — the token must never be stored where a
-script can read it back, credential fields must be write-only in the UI too, and
-the Flux Core motion system stays LOCKED.
+1. **Flux Core V2 integration** — render the separately approved source inside
+   `FluxCoreSlot`. Awaiting that source; do not reconstruct it.
+2. **Content-Security-Policy** — the Core serves the dashboard with no CSP header.
+   Adding a strict one would meaningfully narrow the XSS window that the in-memory
+   token only bounds.
+3. **Combos and usage** — still unimplemented, with no schema, per the phase plans.
