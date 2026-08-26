@@ -36,3 +36,14 @@ export {
   type FetchJsonCappedOptions,
   type Fetcher,
 } from "./http.js";
+export {
+  collectModelIds,
+  discoveryUrl,
+  isUsableModelId,
+  requireCredential,
+  type DiscoveryTarget,
+} from "./model-list.js";
+export {
+  discoverOpenAiModels,
+  type DiscoverOpenAiOptions,
+} from "./discovery-openai.js";
