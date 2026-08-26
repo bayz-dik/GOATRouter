@@ -31,3 +31,21 @@ export {
   type UpdateRouteInput,
 } from "./repository.js";
 export { resolveCandidates, selectRoute } from "./selection.js";
+export {
+  MAX_CONTENT_CHARS,
+  MAX_MESSAGES,
+  MAX_REQUEST_BYTES,
+  MAX_STOP_LENGTH,
+  MAX_STOP_SEQUENCES,
+  MAX_TOKENS_MAX,
+  parseChatRequest,
+  type ChatMessage,
+  type ChatRequest,
+  type ChatRole,
+} from "./request.js";
+export {
+  MAX_CONTENT_BYTES,
+  parseChatResponse,
+  type ChatResponse,
+  type ChatUsage,
+} from "./response.js";
