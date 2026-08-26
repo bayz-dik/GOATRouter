@@ -55,6 +55,7 @@ test("a fresh database gains exactly the tables of the current schema", () => {
     runMigrations(db);
     assert.deepEqual(tableNames(db), [
       "providers",
+      "proxies",
       "runtime_metadata",
       "schema_migrations",
       "secrets",
@@ -184,17 +185,16 @@ test("a failing migration is atomic and leaves the version untouched", () => {
   }
 });
 
-test("no speculative proxy, route, combo, or usage schema exists", () => {
+test("no speculative route, combo, or usage schema exists", () => {
   const db = freshDb();
   try {
     runMigrations(db);
     const names = tableNames(db);
-    // `providers` is intentionally absent from this list from schema v2 onward:
-    // Phase 3 owns it. Everything below still belongs to a later phase, so
-    // creating it now would be speculative.
+    // `providers` (v2) and `proxies` (v3) are intentionally absent from this
+    // list: Phase 3 and Phase 4 own them. Everything below still belongs to a
+    // later phase, so creating it now would be speculative.
     for (const forbidden of [
       "provider",
-      "proxies",
       "proxy",
       "routes",
       "routing",
@@ -210,6 +210,91 @@ test("no speculative proxy, route, combo, or usage schema exists", () => {
         `the current schema must not create a ${forbidden} table`,
       );
     }
+  } finally {
+    db.close();
+  }
+});
+
+test("the proxies table holds endpoint metadata and no password", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('proxies')")
+      .all()
+      .map((row) => String(row.name))
+      .sort();
+
+    assert.deepEqual(columns, [
+      "config_json",
+      "created_at",
+      "enabled",
+      "host",
+      "id",
+      "kind",
+      "port",
+      "updated_at",
+      "username",
+    ]);
+    // A password column here would bypass envelope encryption entirely. The
+    // username is not a secret: SOCKS5 sends it before any credential exchange.
+    for (const forbidden of [
+      "password",
+      "passwd",
+      "secret",
+      "token",
+      "credential",
+      "authorization",
+      "api_key",
+    ]) {
+      assert.equal(
+        columns.includes(forbidden),
+        false,
+        `proxies must never store ${forbidden}`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("proxies constrain the kind, the port range, and the enabled flag", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const insert = db.prepare(
+      `INSERT INTO proxies
+         (id, kind, host, port, username, enabled, config_json, created_at, updated_at)
+       VALUES (?, ?, '127.0.0.1', ?, NULL, ?, '{}', '2026-08-26T00:00:00.000Z',
+               '2026-08-26T00:00:00.000Z')`,
+    );
+    insert.run("ok-socks5", "socks5", 1080, 1);
+    insert.run("ok-http", "http", 8080, 0);
+
+    assert.throws(
+      () => insert.run("bad-kind", "socks4", 1080, 1),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    for (const port of [0, 65536, -1]) {
+      assert.throws(
+        () => insert.run(`bad-port-${port}`, "socks5", port, 1),
+        (error: unknown) =>
+          error instanceof StorageError && error.code === "storage_unavailable",
+        `port ${port} must be refused`,
+      );
+    }
+    assert.throws(
+      () => insert.run("bad-enabled", "socks5", 1080, 2),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("ok-http", "http", 8080, 0),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+      "proxy ids must be unique",
+    );
   } finally {
     db.close();
   }

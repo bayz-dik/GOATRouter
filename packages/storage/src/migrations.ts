@@ -10,10 +10,11 @@ export type Migration = {
  * Ordered, hand-rolled migrations. Versions are 1..n with no gaps.
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
- * provider registry, which holds routing-independent metadata and deliberately
- * no credential column: provider keys live in `secrets` under the scoped name
- * `provider:<id>:api_key`. There is still no proxy, route, combo, or usage
- * table: those belong to their own phases and would be speculative here.
+ * provider registry and v3 the proxy registry; both hold routing-independent
+ * metadata and deliberately no credential column. Provider keys live in `secrets`
+ * under `provider:<id>:api_key` and proxy passwords under `proxy:<id>:password`.
+ * There is still no route, combo, or usage table: those belong to their own
+ * phases and would be speculative here.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -58,6 +59,25 @@ export const MIGRATIONS: readonly Migration[] = [
          config_json  TEXT    NOT NULL,
          created_at   TEXT    NOT NULL,
          updated_at   TEXT    NOT NULL
+       )`,
+    ],
+  },
+  {
+    version: 3,
+    statements: [
+      // `username` is cleartext on purpose: it is not a secret, and the SOCKS5
+      // greeting has to name it before any credential is exchanged. The password
+      // lives only in `secrets`, under `proxy:<id>:password`.
+      `CREATE TABLE proxies (
+         id          TEXT    PRIMARY KEY,
+         kind        TEXT    NOT NULL CHECK (kind IN ('socks5', 'http')),
+         host        TEXT    NOT NULL,
+         port        INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+         username    TEXT,
+         enabled     INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+         config_json TEXT    NOT NULL,
+         created_at  TEXT    NOT NULL,
+         updated_at  TEXT    NOT NULL
        )`,
     ],
   },

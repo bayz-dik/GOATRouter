@@ -19,3 +19,12 @@ export {
   parseProxyConfig,
   type ProxyConfig,
 } from "./config.js";
+export {
+  createProxyRepository,
+  parseProxyUsername,
+  type CreateProxyInput,
+  type CreateProxyRepositoryOptions,
+  type ProxyRecord,
+  type ProxyRepository,
+  type UpdateProxyInput,
+} from "./repository.js";
