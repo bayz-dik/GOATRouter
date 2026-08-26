@@ -28,3 +28,9 @@ export {
   type ProxyRepository,
   type UpdateProxyInput,
 } from "./repository.js";
+export { HandshakeReader } from "./handshake-reader.js";
+export {
+  socks5Connect,
+  type Socks5ConnectOptions,
+  type Socks5Target,
+} from "./socks5.js";
