@@ -39,3 +39,12 @@ export {
   type HttpConnectOptions,
   type HttpConnectTarget,
 } from "./http-connect.js";
+export {
+  createProxyAgent,
+  dialThroughProxy,
+  type ConnectFn,
+  type CreateProxyAgentOptions,
+  type DialProxy,
+  type DialTarget,
+  type DialThroughProxyOptions,
+} from "./dial.js";
