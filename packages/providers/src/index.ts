@@ -47,3 +47,7 @@ export {
   discoverOpenAiModels,
   type DiscoverOpenAiOptions,
 } from "./discovery-openai.js";
+export {
+  discoverGeminiModels,
+  type DiscoverGeminiOptions,
+} from "./discovery-gemini.js";
