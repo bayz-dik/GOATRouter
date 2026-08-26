@@ -5,38 +5,49 @@
 - Foundation Plan (Phase 1): **COMPLETE**, 8 commits, `runtime:verify` green.
 - Phase 2 Security + SQLite Storage: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 3 Provider Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Phase 4 Proxy Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-provider-manager.md`
+  - `docs/superpowers/plans/2026-08-26-bayz-router-proxy-manager.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
+  - `docs/superpowers/specs/2026-08-26-bayz-router-proxy-manager-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
 ## Verified totals
 
-- `@bayz/storage`: 151 tests pass (schema is now v2).
+- `@bayz/storage`: 153 tests pass (schema is now v3).
 - `@bayz/providers`: 105 tests pass.
+- `@bayz/proxy`: 105 tests pass.
 - `@bayz/server`: 14 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/contracts`: 3, `@bayz/security`: 6, `@bayz/dashboard`: 2.
 - `npm run runtime:verify` exits 0; every build exits 0.
-- `node scripts/storage-smoke.mjs`: 42/42 checks pass against a real database,
-  including a reopen in a separate child process.
-- `node scripts/provider-smoke.mjs`: 36/36 checks pass against a real database,
-  a real loopback HTTP upstream, real `fetch`, and a separate-process reopen.
-- Live boot on `127.0.0.1:20994` (20128 and 20993 were occupied by unrelated
+- `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
+  reopen in a separate child process.
+- `node scripts/provider-smoke.mjs`: 36/36 against a real database, a real
+  loopback HTTP upstream, real `fetch`, and a separate-process reopen.
+- `node scripts/proxy-smoke.mjs`: 39/39 against a real database plus real SOCKS5
+  and HTTP `CONNECT` servers, completing real tunneled HTTP requests to a real
+  loopback origin, with a separate-process reopen.
+- Live boot on `127.0.0.1:20996` (20128 and 20993 are occupied by unrelated
   processes in this environment): logged
-  `{schemaVersion:2, journalMode:"wal", driver:"node:sqlite", keyProvider:"environment", keyId:"kek_…"}`,
+  `{schemaVersion:3, journalMode:"wal", driver:"node:sqlite", keyProvider:"environment", keyId:"kek_…"}`,
   served `/api/health` as exactly `{status, version, uptimeSeconds}`, wrote
   `bayz.db` to disk. No key material appeared anywhere in the log.
+- Secret scan over tracked non-test source for `sk-live`, `hunter2`,
+  `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
+- `node:sqlite` still imported in exactly one file, enforced by the Phase 2
+  source-scan test.
 
 ## Environment facts
 
 - Node `v24.19.0`, `linux arm64`. `node:sqlite` present, SQLite `3.53.3`, no
   ExperimentalWarning.
-- Zero new dependencies added in Phase 2 or Phase 3 — runtime or dev.
+- Zero new dependencies added in Phase 2, 3, or 4 — runtime or dev.
 - scrypt measured on this device: N=2^14 49 ms/16 MiB, 2^15 95 ms/32 MiB,
   **2^16 194 ms/64 MiB (selected)**, 2^17 393 ms/128 MiB.
 
@@ -118,6 +129,46 @@ file, and the source-scan test that enforces it is unchanged.
    column set and asserts no credential-like column exists; the bans on
    `proxies`, `routes`, `combos`, and `usage` are untouched.
 
+## Phase 4 architecture as built
+
+```text
+ProxyManager                  packages/proxy/src/manager.ts
+  ├─ ProxyRepository          registry rows, all values validated pre-SQL
+  ├─ scopedSecretStorage      password custody at proxy:<id>:password
+  └─ dialThroughProxy         kind dispatch → socks5Connect | httpConnect
+                              ↓ bounded HandshakeReader, socket destroyed on failure
+                              createProxyAgent → node:http / node:https
+```
+
+`HandshakeReader` is the security-relevant core: it reads exactly the bytes each
+protocol stage requires and pushes leftovers back with `socket.unshift`, so a
+proxy that coalesces its reply with the tunneled payload cannot leak handshake
+bytes into the stream and a truncated reply cannot hang the client.
+
+## Phase 4 deviations from the plan text
+
+1. **`fetch` is not proxied, and this is stated rather than worked around.**
+   Node's `fetch` is undici-backed with no stable public connector hook. Phase 4
+   therefore ships a `node:http`/`node:https` agent — proven end-to-end against a
+   real proxy and a real origin — and documents that provider discovery still goes
+   out directly. Faking it with a global patch would have produced a proxy that
+   silently stops working on a Node upgrade.
+2. **`net.Server` has no `closeAllConnections`.** Every loopback test server
+   tracks accepted sockets and destroys them before `close()`, or the suite hangs
+   forever on a peer the test already abandoned. Discovered by an actual hang, not
+   anticipated.
+3. **Host validation trims before rejecting.** A trailing `\r\n` is whitespace and
+   is trimmed; an *embedded* CRLF is rejected. Both behaviours are pinned by
+   tests, because "reject anything containing CR" would refuse harmless pasted
+   input while "strip all control characters" would silently accept an injection
+   attempt.
+4. **A password requires a username.** Neither RFC 1929 nor Basic proxy auth can
+   send a password alone, so storing one would be dead, misleading state; the
+   manager refuses it.
+5. **`socks5Connect` refuses a server-selected method that was never offered.**
+   Not in the plan, but accepting one would mean speaking a protocol variant that
+   was never negotiated.
+
 ## Deliberately NOT implemented, and not faked
 
 - **OS keychain custody** — `OsKeystoreKeyProvider` exists as an interface with
@@ -137,8 +188,26 @@ file, and the source-scan test that enforces it is unchanged.
   verified here.
 - **Provider HTTP surface** — the Provider Manager is a library API. There is no
   route, no CLI, and no dashboard control for creating providers or storing keys.
-- **Proxy / route / combo / usage schema** — a test asserts these tables do *not*
-  exist, so speculative schema cannot creep in.
+- **Proxied `fetch`** — see Phase 4 deviation 1. `node:http`/`node:https` through
+  `agentFor()` is real and proven; global `fetch` is still direct.
+- **SOCKS4/4a, proxy chaining, PAC files, UDP ASSOCIATE/BIND, TLS-to-proxy** —
+  none implemented. Only SOCKS5 `CONNECT` and HTTP `CONNECT` exist.
+- **Route / combo / usage schema** — a test asserts these tables do *not* exist,
+  so speculative schema cannot creep in.
+
+## Phase 4 residual risk
+
+Protected: a stolen `bayz.db` yields no proxy password, one proxy's password
+cannot be reached through another, a tampered password fails closed instead of
+reading as absent, a hostile proxy cannot exhaust memory or hang the client
+through the handshake, CRLF and URL smuggling into a `CONNECT` request line or a
+SOCKS5 domain field are impossible, and a proxy that declines authentication never
+receives the password.
+
+Not protected: Basic proxy auth over a plaintext `http` proxy is observable on the
+path — base64 is encoding, not encryption. There is also no egress allowlist, so an
+operator who registers a proxy pointing at an internal address will reach it; that
+is a deliberate admin capability, not an SSRF guard.
 
 ## Phase 3 residual risk
 
@@ -179,21 +248,22 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 
 `apps/dashboard` is the runtime foundation shell only. It is **not** a redesign
 and does **not** replace `BAYZ-responsive-master.html` as the locked visual
-source of truth. Phase 2 and Phase 3 made no dashboard change whatsoever.
+source of truth. Phases 2, 3, and 4 made no dashboard change whatsoever
+(`git log -- apps/dashboard` still ends at the Phase 1 commit).
 
 ## Resume steps once the real BAYZ repo/UI is available
 
 1. Copy the Sites/UI source and the real root `package.json` into this workspace.
 2. Merge the workspace fields (`workspaces`, `runtime:*` scripts) into the real
    root `package.json` instead of overwriting it.
-3. Move the README runtime, storage, and provider sections into the real README.
+3. Move the README runtime, storage, provider, and proxy sections into the real
+   README.
 4. Run the root Sites build and confirm it still exits 0.
-5. Re-run `npm run runtime:verify`, `node scripts/storage-smoke.mjs`, and
-   `node scripts/provider-smoke.mjs`.
+5. Re-run `npm run runtime:verify` and all three smoke scripts.
 
 ## Next phase
 
-Phase 4 is Proxy Manager: SOCKS5 and HTTP proxy support hand-rolled on
-`node:net`/`node:tls`, with no shell, no spawn, and no native dependency. It
-consumes the same scoped credential custody for proxy passwords and must not
-learn how encryption works.
+Phase 5 is the Router: model routing across registered providers, using the proxy
+agent where a provider names one. It consumes the Provider and Proxy managers and
+must not learn how encryption works. The `fetch` limitation from Phase 4 is the
+first thing it has to resolve, because the router owns the request path.

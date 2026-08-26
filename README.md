@@ -22,9 +22,9 @@ the explicit remote-access setting are configured.
 
 Phase 2 adds a local SQLite store and an encrypted-at-rest secret primitive in
 `packages/storage`. It stores encrypted secrets, schema version, the active key
-fingerprint, and (from Phase 3) the provider registry. There is no proxy, route,
-combo, or usage schema yet, and no HTTP route or dashboard control touches
-storage.
+fingerprint, the provider registry (Phase 3), and the proxy registry (Phase 4).
+There is no route, combo, or usage schema yet, and no HTTP route or dashboard
+control touches storage.
 
 - Database: `<BAYZ_DATA_DIR>/bayz.db` (default `~/.bayz/bayz.db`)
 - Driver: Node's built-in `node:sqlite`, behind a swappable adapter. No native
@@ -142,6 +142,70 @@ unintelligible payload as `discovery_failed`.
 `codex-oauth` providers can be registered, but `setCredential` and
 `discoverModels` refuse with `unsupported_operation`. The OAuth flow needs an
 external account and is not implemented; nothing here pretends otherwise.
+
+## Proxies
+
+Phase 4 adds `packages/proxy`: a proxy registry, encrypted per-proxy password
+custody, a hand-rolled SOCKS5 client, an HTTP `CONNECT` client, and a
+reachability check. All of it runs on `node:net`, with no shell, no `spawn`, and
+no native dependency. There is still no routing and no HTTP route or dashboard
+control — the manager is a library API today.
+
+- Kinds: `socks5` (RFC 1928, with RFC 1929 username/password) and `http`
+  (`CONNECT` with Basic auth)
+- Registry table: `proxies` (id, kind, host, port, username, enabled, config).
+  It has **no** password column; passwords live only in the encrypted `secrets`
+  table under the scoped name `proxy:<id>:password`. The username is stored in
+  cleartext because it is not a secret — SOCKS5 must name it before any
+  credential is exchanged.
+- Verify proxies against real SOCKS5 and CONNECT servers:
+  `node scripts/proxy-smoke.mjs`
+
+### What is actually proxied
+
+`proxyManager.agentFor(id)` returns a `node:http`/`node:https` agent, so requests
+made with those modules really do traverse the proxy — the smoke script proves it
+end-to-end against a live local origin.
+
+Node's global `fetch` is **not** proxied. It is undici-backed and exposes no
+stable public way to supply a custom connector, so provider discovery still goes
+out directly. This is a real limitation, not an oversight, and it will be closed
+when the router owns its own request path.
+
+### Password handling
+
+`ProxyManager` can set, test, and delete a password. It deliberately cannot
+return one: there is no `getPassword`, and a test scans the package source to keep
+it that way. A password leaves the process only inside the RFC 1929
+sub-negotiation or a `Proxy-Authorization` header. A password cannot be stored for
+a proxy that has no username, because neither protocol could ever send it.
+
+A tampered password raises an error rather than reporting "no password set".
+Deleting a proxy deletes its password in the same call.
+
+Basic proxy auth is base64, which is encoding and not encryption. Against a
+plaintext `http` proxy the password is observable by anyone on the path. Bayz does
+not claim otherwise; use a proxy you control or a SOCKS5 endpoint on loopback.
+
+### Handshakes treat the proxy as hostile
+
+Every handshake read asks for the exact number of bytes the protocol requires. No
+allocation is driven by a length the proxy has not justified, a truncated reply
+fails immediately instead of hanging, a header block over 16 KiB is refused, and
+the whole exchange is bounded by `connectTimeoutMs` (500–60000 ms). Proxy hosts
+and target hosts must be bare hostnames or IP literals, so CRLF or URL smuggling
+into a `CONNECT` request line or a SOCKS5 domain field is impossible by
+construction.
+
+Failures map to fixed codes — `auth_failed`, `forbidden`, `unreachable`,
+`refused`, `timeout`, `protocol_error`, `proxy_error` — and no proxy response body
+or header ever appears in an error message or log line.
+
+### Deferred honestly
+
+No SOCKS4/4a, no proxy chaining, no PAC files, no UDP `ASSOCIATE` or `BIND`, and
+no TLS connection to the proxy itself (`https://` proxy endpoints). Only
+`CONNECT` is implemented, which is what an LLM API call needs.
 
 ## Deferred verification
 
