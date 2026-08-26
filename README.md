@@ -415,7 +415,6 @@ dashboard does not undo that from the other side. There is no streaming control,
 because the API rejects `stream`.
 
 ### Flux Core V2 and the provider constellation
-
 `apps/dashboard/src/flux/` holds the approved BAYZ Flux Core V2 relay usage track,
 mounted through `apps/dashboard/src/FluxCoreSlot.tsx`. The canvas engine
 (`flux/engine.ts`) is a port of the approved standalone source: same geometry,
@@ -497,9 +496,123 @@ steps down as provider count rises so dense fields cost less per frame, not more
 `flux/types.ts` is the display-safe boundary: provider id, display name, icon key,
 state, share, route participation, load, latency, incident reason, plus global
 routing mode, request count, and period. It cannot carry a credential, proxy
-password, API token, or Authorization header. Until real usage telemetry is wired,
-Flux Core runs the approved simulation adapter and labels itself `SIM`; a live model
-labels itself `LIVE` and disables the simulation-only routing controls.
+password, API token, or Authorization header. `buildLiveViewModel` produces a
+`source: "live"` model from real telemetry; `buildDemoViewModel` is the only
+producer of `source: "simulation"`, and the two never merge — an empty live field
+stays empty rather than being backfilled with demo values.
+
+## Usage telemetry
+
+Phase 8 records what the router did, as **metadata only**. No prompt, completion,
+message, system prompt, tool argument, request body, response body, Authorization
+header, credential, proxy password, or upstream error body is stored anywhere — not
+truncated, not hashed, not sampled.
+
+### The closed field set
+
+A stored row is built by copying named scalar fields onto a fresh object. Nothing is
+filtered out, because nothing is copied in unless it is named:
+
+```text
+requestId  occurredAt  routeId  providerId  proxyId  model  routingMode
+outcome    failureCategory  latencyMs  attempts
+promptTokens  completionTokens  cachedTokens
+```
+
+That is the difference between a boundary and a denylist. A denylist needs updating
+every time an upstream type gains a field, and forgetting once leaks a prompt. Tests
+assert the row's key set matches exactly, and that an event carrying thirty hostile
+keys (`prompt`, `messages`, `completion`, `body`, `authorization`, `apiKey`,
+`cookie`, `upstreamError`, `stack`, …) produces a clean row.
+
+`failureCategory` is a closed enum of sixteen values, enforced both at the boundary
+and by a SQLite `CHECK` constraint. Arbitrary upstream error text has no column it
+could occupy: `"rate_limited from sk-…"` normalizes to `unknown_error`.
+
+### Unknown is not zero
+
+A token count the provider did not report is `undefined` in the boundary, `NULL` in
+storage, and `null` in the API. A genuine zero is `0` everywhere. These are
+different facts and merging them would falsify every aggregate built on top, so
+tests pin both.
+
+Cost is reported as `costAvailable: false` with `costReason: "no_pricing_data"`.
+Bayz has no pricing table and no billing API; an estimate would be a fabricated
+number wearing a real label.
+
+### Events
+
+Five kinds, each tied to a real router observation point:
+
+```text
+provider.attempted   provider.failed   failover.started
+request.completed    request.failed
+```
+
+`request.started` and `route.selected` are deliberately absent — the router has no
+observation point that distinguishes them. `combo.member.*` is `provider.*` under a
+different name. A 40-provider Combo emits one attempt event per provider, so
+membership and failover handoff are observable per provider by safe id.
+
+`failover.started` is a marker, not an attempt: it names the promoted provider but
+is not stored as a second attempt row, because the same success also emits
+`provider.attempted`. The failover fact lives in the request row's
+`routing_mode = 'failover'`.
+
+Telemetry is observational. A recorder that throws, or storage that fails, never
+breaks a chat request — proven by a test whose recorder throws on every call.
+
+### Retention
+
+Count-based, default 5,000 requests and 20,000 attempts, configurable through
+`BAYZ_USAGE_RETENTION`. Pruning runs on write and deletes only rows outside the
+newest N **within the two usage tables**. Count rather than age because a count
+bounds disk deterministically.
+
+A malformed retention value cannot disable retention: it falls back to the
+documented default. Tests seed a provider, proxy, route, and secret, drive 500
+events through a repository configured to keep 10, and assert all four domain rows
+survive.
+
+### Endpoints
+
+```text
+GET    /api/usage/summary?period=today|24h|7d|30d
+GET    /api/usage/requests?limit=1..200
+GET    /api/usage/providers?period=…
+DELETE /api/usage/requests          purge, idempotent, usage-only
+```
+
+All authenticated. `/api/health` is unchanged. An unrecognized `period` or `limit`
+is a `400`, never a silent default. There is no endpoint that returns request
+content, at any path shape.
+
+## Content-Security-Policy
+
+The Core serves a strict local-first policy on every response, including 401, 403,
+404, and 500:
+
+```text
+default-src 'none'; script-src 'self'; style-src 'self';
+img-src 'self' data:; font-src 'self'; connect-src 'self';
+manifest-src 'self'; object-src 'none'; frame-src 'none';
+worker-src 'none'; base-uri 'none'; form-action 'none';
+frame-ancestors 'none'
+```
+
+No `unsafe-inline`, no `unsafe-eval`, no remote origin. The policy is a constant
+with no configuration knob — deliberately, because a "relax CSP" option is what gets
+reached for the first time something breaks.
+
+Flux Core needed no changes to comply. React's `style` prop sets DOM properties,
+which CSP does not govern; only a literal `style="…"` attribute in served HTML or an
+injected `<style>` element would need `'unsafe-inline'`, and the built dashboard has
+neither. The dashboard smoke script verifies that against the emitted artifact
+rather than trusting the reasoning.
+
+Companion headers: `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP and CORP
+`same-origin`, and a `Permissions-Policy` denying eight device sensors.
+`x-powered-by` and `server` are both absent.
 
 ## Deferred verification
 

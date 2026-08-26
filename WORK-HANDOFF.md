@@ -9,6 +9,8 @@
 - Phase 5 Router: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 6 Local HTTP API: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 7 Operator Dashboard: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Flux Core V2 + scalable provider constellation: **INTEGRATED**, visually LOCKED.
+- Phase 8 Usage Telemetry: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
@@ -17,6 +19,7 @@
   - `docs/superpowers/plans/2026-08-26-bayz-router-router.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-http-api.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-dashboard.md`
+  - `docs/superpowers/plans/2026-08-26-bayz-router-usage-telemetry.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
@@ -24,19 +27,21 @@
   - `docs/superpowers/specs/2026-08-26-bayz-router-router-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-http-api-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-dashboard-design.md`
+  - `docs/superpowers/specs/2026-08-26-bayz-router-usage-telemetry-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
 ## Verified totals
 
-- `@bayz/storage`: 157 tests pass (schema is v4).
+- `@bayz/telemetry`: 55 tests pass.
+- `@bayz/storage`: 160 tests pass (schema is v5).
 - `@bayz/providers`: 111 tests pass.
 - `@bayz/proxy`: 105 tests pass.
-- `@bayz/router`: 122 tests pass.
-- `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/dashboard`: 213 tests pass across 16 files.
+- `@bayz/router`: 140 tests pass.
+- `@bayz/server`: 142 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/dashboard`: 253 tests pass across 17 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
-- `npm run runtime:verify` exits 0; all eight builds exit 0.
+- `npm run runtime:verify` exits 0; all nine builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
   reopen in a separate child process.
 - `node scripts/provider-smoke.mjs`: 36/36 against a real database, a real
@@ -47,7 +52,12 @@
   origins, and a real `CONNECT` proxy.
 - `node scripts/api-smoke.mjs`: 62/62 against a **real listener** driven by real
   `fetch`.
-- `node scripts/dashboard-smoke.mjs`: 41/41 against the **built bundle** — no
+- `node scripts/usage-smoke.mjs`: **119/119** against a real listener, seven real
+  loopback origins, and a real `CONNECT` proxy — a full success/failure/failover/
+  Combo/proxy/unknown-token/zero-token/malformed-usage/hostile-error sweep, then a
+  six-sentinel leak drill across the database, WAL, SHM, stdout, stderr, structured
+  logs, and every usage/management API response.
+- `node scripts/dashboard-smoke.mjs`: 48/48 against the **built bundle** — no
   `localStorage`/`sessionStorage`/cookie/`indexedDB`/`window.name` write, no
   `dangerouslySetInnerHTML` prop, no `eval`/`new Function`/`document.write`, no
   credential getter, no 64-hex or `sk-`/`Bearer` literal, token input declared
@@ -684,6 +694,90 @@ what was changed for production, and the known discrepancies.
    sections into the real README.
 4. Run the root Sites build and confirm it still exits 0.
 5. Re-run `npm run runtime:verify` and all six smoke scripts.
+
+## Phase 8 architecture as built
+
+```text
+Router  --emit(metadata)-->  normalizeUsageEvent  -->  UsageRepository
+                             (closed field set)        (usage_requests,
+                                                        usage_attempts,
+                                                        count retention)
+                                                              |
+apps/server/src/routes/usage.ts  <-- authenticated Usage API --+
+                                                              |
+apps/dashboard/src/flux/adapter.ts  --> FluxCoreViewModel(source:"live")
+```
+
+Migration v5 adds the only new tables. Neither has a column able to hold content;
+`failure_category` is enum-constrained in SQL as a backstop behind the boundary.
+
+### Measured Phase 8 results
+
+- Real end-to-end path proven by `scripts/usage-smoke.mjs`: authenticated API →
+  router → real origin → telemetry → SQLite → Usage API → live Flux Core model.
+- Sentinel leak drill, six sentinels (prompt, completion, provider credential, proxy
+  password, Bayz API token, upstream error body): **zero** occurrences in `bayz.db`,
+  `-wal`, `-shm`, stdout, stderr, structured logs, stored rows, and every
+  usage/management API response. Metadata (`model-proxied`) *is* present in the byte
+  scan, proving the scan reads real content.
+- Retention: 500 events into a 10-row bound yields exactly 10 rows; a provider,
+  proxy, route, and secret seeded alongside all survive. A malformed retention value
+  cannot disable retention.
+- Token honesty: unknown → `null`, genuine zero → `0`, malformed upstream usage
+  (`prompt_tokens: -12`, `completion_tokens: "lots"`) → `null`. Verified end to end
+  through three separate origins.
+- Cost: `costAvailable: false`, `costReason: "no_pricing_data"`. No figure anywhere.
+- CSP verified on a **real served response** at `127.0.0.1:21003`, not just as a
+  constant.
+- Flux Core live data verified for 1, 5, 12, 40, 40-with-failure, and 120 providers,
+  plus duplicate custom names — no truncation, no fixed-five regression.
+
+## Phase 8 deviations from the plan text
+
+1. **Five event kinds, not eleven.** `request.started` and `route.selected` have no
+   distinct observation point in the verified Phase 5 router, and
+   `combo.member.started`/`combo.member.completed` are `provider.attempted`/
+   `provider.failed` renamed. Emitting the others would have meant inventing
+   observation points to serve telemetry rather than routing. Per-provider Combo
+   membership and failover handoff are both fully observable with the five.
+2. **`failover.started` is a marker, not a stored attempt.** My first implementation
+   stored it in `usage_attempts`, which double-counted: a successful failover emits
+   both it and `provider.attempted` for the promoted provider, inflating per-provider
+   activity to 2 attempts for 1 network call. Found by a failing API test.
+3. **No event queue.** The DoS risk of an unbounded queue was removed rather than
+   bounded: a usage row is a dozen integers and slugs, and an async queue would add
+   shutdown data loss for no measurable gain.
+4. **`MIN_RETENTION` is 1, not 10.** My first value silently rejected a test's
+   `requestRetention: 5` and fell back to the 5,000 default, so retention appeared
+   not to prune at all. Three tests failed for what looked like a pruning bug but was
+   config validation.
+5. **Share totals drift above 100 at high provider counts.** 120 equal providers each
+   round 0.83% to 1%, summing to 120. That is honest arithmetic — each share is the
+   provider's real attempt fraction — so the assertion scales with count rather than
+   normalizing shares and misreporting each one.
+6. **The chat response legitimately contains the completion.** The smoke script's
+   response scan is scoped to usage and management endpoints; scanning the chat
+   response would have flagged the product working. Stated explicitly because a
+   reader would otherwise expect the scan to cover every response.
+
+## Phase 8 residual risks
+
+- **`incidentReason` has no populating API field yet.** The boundary and the adapter
+  both carry it, and a test proves it renders inertly, but no Bayz endpoint supplies
+  a failure reason string today, so in practice it stays empty.
+- **Retention is count-based only.** There is no age-based expiry, so a low-traffic
+  install keeps old rows indefinitely (bounded in size, unbounded in age). An
+  operator wanting time-based deletion has only the purge endpoint.
+- **The `failure_category` enum is duplicated** in `@bayz/telemetry` and in
+  `apps/dashboard/src/flux/failure-categories.ts`. Deliberate — the dashboard must
+  not depend on a server package — but the two lists can drift. Drift surfaces as a
+  category rendering `unknown_error`, not as a leak.
+- **CSP is served but not enforced by a browser in this environment.** The header is
+  verified on a real response and the built artifact is verified to need no
+  exception; actual browser enforcement is unverified here.
+- **Telemetry failure is silent by design.** A recorder throwing or storage failing
+  drops the row rather than failing the chat. That is correct for routing
+  correctness, but it means telemetry gaps are not surfaced to the operator.
 
 ## Next steps
 
