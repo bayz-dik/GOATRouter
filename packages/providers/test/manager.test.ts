@@ -333,3 +333,122 @@ test("close releases the underlying storage", () => {
   ctx.manager.close();
   assert.throws(() => ctx.manager.listProviders());
 });
+
+test("withCredential lends the plaintext for the duration of one call", () => {
+  const ctx = context();
+  try {
+    ctx.manager.createProvider(LOCAL);
+    ctx.manager.setCredential("local", "sk-scoped-use");
+
+    let seen: string | undefined;
+    const returned = ctx.manager.withCredential("local", (credential) => {
+      seen = credential;
+      return credential.length;
+    });
+
+    assert.equal(seen, "sk-scoped-use");
+    assert.equal(returned, "sk-scoped-use".length, "the callback result is returned");
+  } finally {
+    ctx.close();
+  }
+});
+
+test("withCredential is scoped use, not a getter in disguise", () => {
+  const ctx = context();
+  try {
+    ctx.manager.createProvider(LOCAL);
+    ctx.manager.setCredential("local", "sk-not-a-getter");
+
+    // Returning the credential from the callback is the caller's own doing; the
+    // manager itself still exposes no accessor, which is what the source scan
+    // pins. This test documents the boundary rather than blessing exfiltration.
+    assert.equal(
+      Object.keys(ctx.manager).includes("getCredential"),
+      false,
+    );
+    assert.equal(typeof (ctx.manager as never as Record<string, unknown>).getCredential, "undefined");
+  } finally {
+    ctx.close();
+  }
+});
+
+test("withCredential refuses when no credential is stored", () => {
+  const ctx = context();
+  try {
+    ctx.manager.createProvider(LOCAL);
+    let called = false;
+    assert.throws(
+      () =>
+        ctx.manager.withCredential("local", () => {
+          called = true;
+          return 1;
+        }),
+      (error: unknown) =>
+        error instanceof ProviderError && error.code === "credential_missing",
+    );
+    assert.equal(called, false, "the callback must not run without a credential");
+  } finally {
+    ctx.close();
+  }
+});
+
+test("withCredential reports an unknown provider and a tampered credential honestly", () => {
+  const ctx = context();
+  try {
+    assert.throws(
+      () => ctx.manager.withCredential("ghost", () => 1),
+      (error: unknown) =>
+        error instanceof ProviderError && error.code === "provider_not_found",
+    );
+
+    ctx.manager.createProvider(LOCAL);
+    ctx.manager.setCredential("local", "sk-will-be-corrupted");
+    ctx.storage.corruptForTest("provider:local:api_key", "ciphertext");
+    assert.throws(
+      () => ctx.manager.withCredential("local", () => 1),
+      (error: unknown) =>
+        error instanceof Error && "code" in error && error.code === "secret_corrupt",
+      "corruption must not be reported as a missing credential",
+    );
+  } finally {
+    ctx.close();
+  }
+});
+
+test("withCredential propagates a callback failure without swallowing it", () => {
+  const ctx = context();
+  try {
+    ctx.manager.createProvider(LOCAL);
+    ctx.manager.setCredential("local", "sk-callback-throws");
+    assert.throws(
+      () =>
+        ctx.manager.withCredential("local", () => {
+          throw new Error("callback exploded");
+        }),
+      /callback exploded/,
+    );
+  } finally {
+    ctx.close();
+  }
+});
+
+test("codex-oauth refuses scoped credential use as well", () => {
+  const ctx = context();
+  try {
+    ctx.manager.createProvider({
+      id: "codex",
+      kind: "codex-oauth",
+      displayName: "Codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+    });
+    assert.throws(
+      () => ctx.manager.withCredential("codex", () => 1),
+      (error: unknown) =>
+        error instanceof ProviderError &&
+        (error.code === "unsupported_operation" ||
+          error.code === "credential_missing"),
+    );
+  } finally {
+    ctx.close();
+  }
+});

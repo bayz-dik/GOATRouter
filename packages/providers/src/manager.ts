@@ -58,6 +58,15 @@ export interface ProviderManager {
   setCredential(id: string, credential: string): void;
   hasCredential(id: string): boolean;
   deleteCredential(id: string): boolean;
+  /**
+   * Lend the stored credential to `use` for the duration of one call.
+   *
+   * This is scoped use, not a getter: the manager never hands a credential back
+   * to a caller as a return value, so the source-scan test that forbids a
+   * credential accessor still holds. The router needs the plaintext to build one
+   * upstream request header and has no reason to hold it afterwards.
+   */
+  withCredential<T>(id: string, use: (credential: string) => T): T;
   discoverModels(id: string): Promise<string[]>;
   close(): void;
 }
@@ -167,6 +176,20 @@ export function createProviderManager(
         log(redactSecrets({ event: "provider_credential_deleted", id: record.id }));
       }
       return removed;
+    },
+
+    withCredential<T>(id: string, use: (credential: string) => T): T {
+      const record = repository.require(id);
+      if (record.kind === "codex-oauth") {
+        throw new ProviderError("unsupported_operation", "codex-credential-use");
+      }
+      const credential = readCredential(record.id);
+      if (credential === undefined) {
+        // The callback never runs without a credential, so a caller cannot
+        // accidentally send an unauthenticated request believing it was signed.
+        throw new ProviderError("credential_missing", "with-credential");
+      }
+      return use(credential);
     },
 
     async discoverModels(id: string): Promise<string[]> {

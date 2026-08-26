@@ -55,3 +55,10 @@ export {
   type SendChatRequestOptions,
   type TransportProvider,
 } from "./transport.js";
+export {
+  createRouter,
+  type ChatResult,
+  type CreateRouterOptions,
+  type Router,
+  type RouterLogger,
+} from "./router.js";
