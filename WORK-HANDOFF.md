@@ -34,7 +34,7 @@
 - `@bayz/proxy`: 105 tests pass.
 - `@bayz/router`: 122 tests pass.
 - `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/dashboard`: 100 tests pass across 9 files.
+- `@bayz/dashboard`: 128 tests pass across 10 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
@@ -47,14 +47,18 @@
   origins, and a real `CONNECT` proxy.
 - `node scripts/api-smoke.mjs`: 62/62 against a **real listener** driven by real
   `fetch`.
-- `node scripts/dashboard-smoke.mjs`: 24/24 against the **built bundle** — no
+- `node scripts/dashboard-smoke.mjs`: 35/35 against the **built bundle** — no
   `localStorage`/`sessionStorage`/cookie/`indexedDB`/`window.name` write, no
   `dangerouslySetInnerHTML` prop, no `eval`/`new Function`/`document.write`, no
   credential getter, no 64-hex or `sk-`/`Bearer` literal, token input declared
-  `type="password"` with `autoComplete="off"`, Flux Core slot present and empty.
-- Live boot on `127.0.0.1:20997`: `schemaVersion:4`, `/api/health` unauthenticated
-  and byte-identical, `/api/status` 401 → 200 with the printed token, root key
-  absent from the log.
+  `type="password"` with `autoComplete="off"`, approved Flux Core mounted, and no
+  remote font/script/stylesheet or loadable remote origin.
+- Live boot on `127.0.0.1:20998` with `BAYZ_DASHBOARD_ROOT` pointed at the built
+  dashboard: `schemaVersion:4`, `/api/health` unauthenticated and byte-identical,
+  `/api/status` 401 unauthenticated, dashboard shell served, and the served bundle
+  contains `data-bayz-flux-core-slot`, `relay-wrap`, `flux-vignette`,
+  `requestAnimationFrame`, `OPENROUTER`, and `Surge`. Served CSS contains zero
+  `@import` and zero `googleapis`. Root key absent from the log.
 - Secret scan over tracked non-test source for `sk-*`, `hunter2`, `PROMPT-`,
   `API-SMOKE`, `BEGIN … PRIVATE KEY`, `AIza…`, and any 64-hex literal: no matches.
 - Getter scan for `getCredential`/`getPassword`/`reveal*`/`export*` across all
@@ -66,9 +70,76 @@
   comments explaining why persistence is refused.
 - Unsafe-DOM scan over `apps/dashboard/src`: no matches.
 - `node:sqlite` imported in exactly one file, enforced by a source-scan test.
-- The only tracked file matching `flux` is `apps/dashboard/src/FluxCoreSlot.tsx`,
-  an empty mount point. **No Flux Core animation was created, modified, or
-  approximated.**
+- The only tracked files matching `flux` are `apps/dashboard/src/FluxCoreSlot.tsx`
+  and `apps/dashboard/src/flux/*`, which hold the **approved Flux Core V2 source**
+  integrated from `/mnt/sdcard/Download/animasi/animasi usage.html` (47,833 bytes).
+  Nothing was recreated from memory.
+
+## Flux Core V2 integration
+
+Source of truth: `/mnt/sdcard/Download/animasi/animasi usage.html`, 47,833 bytes,
+`<title>BAYZ — Relay Track / Flux Core v2</title>`. The 0-byte
+`/mnt/sdcard/Download/animasi usage.html` stub was **not** used.
+
+```text
+apps/dashboard/src/FluxCoreSlot.tsx   mount point, still data-bayz-flux-core-slot
+apps/dashboard/src/flux/types.ts      display-safe view model (no secret fields)
+apps/dashboard/src/flux/engine.ts     ported canvas engine, no DOM ownership
+apps/dashboard/src/flux/FluxCore.tsx  React shell, controls, throttled labels
+apps/dashboard/src/flux/flux.css      ported styles, scoped, no remote font
+```
+
+### Preserved from the approved source
+
+Geometry and topology (720/280-point Fibonacci shells, 110-point deterministic
+nucleus with the same LCG seed 42), provider positions (`p1`–`p5` at the same
+percentages, including the mobile overrides), packet physics and beat clock
+(`1.45`s, the same acceleration curve), wave/dent/flash pool sizes (8/6/6) and
+firing amplitudes, bezier filament bends and braided strand counts, adaptive
+quality thresholds (`ema>27` heat, `ema<15` cold, `q` 0–2 with the same point
+reductions), Calm/Live/Surge constants (`sp/en/den` unchanged), DPR cap of 2,
+monochrome additive `lighter` compositing on `#040404`, the quantized alpha cache,
+core copy, legend, HUD layout, and the full failover-drill timing sequence
+(900 / 4300 / 7600 ms).
+
+### Production changes
+
+1. **Google Fonts `@import` removed.** Local stacks lead with `Archivo`,
+   `Archivo Black`, `IBM Plex Mono` so an operator with those faces installed sees
+   the approved typography exactly; otherwise the nearest local grotesque/monospace
+   is used. No network dependency, no CSP `font-src` exception.
+2. **`innerHTML` removed.** The standalone activity feed used
+   `row.innerHTML = '...' + name + ...`. Every dynamic string now renders as a React
+   text node. Provider, model, route, and event strings are untrusted.
+3. **Engine no longer touches the document.** It receives the canvas, wrapper, and
+   chip elements, and reports state through callbacks. That is what makes React
+   cleanup possible and keeps per-frame work out of React.
+4. **CSS scoped to `.flux-panel`.** The standalone file styled `html`, `body`, and
+   bare `button`; mounting it unscoped would have restyled the whole dashboard.
+5. **Display-safe boundary added** (`flux/types.ts`). Until real telemetry exists,
+   the approved simulation drives the view and the panel is labelled `SIM`.
+
+### Known discrepancies from the standalone HTML
+
+Stated plainly rather than claimed equivalent — **pixel and motion equivalence has
+not been verified**, because this environment has no browser to compare rendered
+output frame by frame:
+
+1. **Typography may differ** wherever Archivo / Archivo Black / IBM Plex Mono are
+   not installed locally. This is the deliberate cost of removing the remote font.
+2. **The surrounding page is not ported.** The standalone file also contains a
+   sidebar, mobile header, score strip, recent-requests table, token-pace chart, and
+   period tabs. Only the Relay Usage Track was extracted, as instructed; the Phase 7
+   dashboard remains the shell.
+3. **When a live model is supplied, the interactive HUD is disabled.** Provider
+   toggles, the count buttons, and the failover drill are simulation affordances;
+   driving them against real routing state would fake control the API does not yet
+   expose. Tempo remains interactive because it only affects animation.
+4. **`onBeat` uses `Math.random()`**, exactly as approved, so packet timing is
+   non-deterministic between runs — identical to the standalone behavior, but it
+   means two side-by-side renders will never match frame for frame.
+5. **jsdom has no Canvas 2D**, so tests assert engine lifecycle, bounds, and safety
+   rather than pixel output. Visual confirmation needs a real browser.
 
 ## Environment facts
 
@@ -484,13 +555,11 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 It is **not** a redesign and does **not** replace `BAYZ-responsive-master.html` as
 the locked visual source of truth.
 
-The **BAYZ Flux Core V2 motion system remains LOCKED and unimplemented here.**
-`apps/dashboard/src/FluxCoreSlot.tsx` is an empty `div` carrying
-`data-bayz-flux-core-slot`, and it is the only tracked file matching `flux`. No
-animation primitive (`requestAnimationFrame`, canvas, WebGL, keyframes) appears
-anywhere in the dashboard; a test and the build smoke both assert this. To
-integrate, render the approved component inside that element — nothing else needs to
-change.
+The **BAYZ Flux Core V2 motion system is now integrated** from the approved
+47,833-byte source. `apps/dashboard/src/flux/` holds the port and
+`apps/dashboard/src/FluxCoreSlot.tsx` mounts it; `data-bayz-flux-core-slot` remains
+the anchor. See the Flux Core V2 integration section above for what was preserved,
+what was changed for production, and the known discrepancies.
 
 ## Resume steps once the real BAYZ repo/UI is available
 
@@ -504,9 +573,12 @@ change.
 
 ## Next steps
 
-1. **Flux Core V2 integration** — render the separately approved source inside
-   `FluxCoreSlot`. Awaiting that source; do not reconstruct it.
-2. **Content-Security-Policy** — the Core serves the dashboard with no CSP header.
-   Adding a strict one would meaningfully narrow the XSS window that the in-memory
-   token only bounds.
-3. **Combos and usage** — still unimplemented, with no schema, per the phase plans.
+1. **Verify Flux Core in a real browser.** Motion and typography equivalence with
+   the approved standalone file is *unverified* — this environment has no browser.
+   Compare side by side before treating the port as visually final.
+2. **Wire real usage telemetry** into `flux/types.ts`. Until then the panel runs the
+   approved simulation and labels itself `SIM`.
+3. **Content-Security-Policy** — the Core serves the dashboard with no CSP header.
+   Flux Core is already CSP-compatible (no remote font, no `eval`, no injected
+   code), so a strict policy can now be added without exceptions.
+4. **Combos and usage** — still unimplemented, with no schema, per the phase plans.

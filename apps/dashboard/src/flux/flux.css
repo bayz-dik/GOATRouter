@@ -1,0 +1,531 @@
+/*
+ * BAYZ Relay Usage Track / Flux Core V2 — styles.
+ *
+ * Ported from the approved standalone source. Two production changes, both
+ * required by BAYZ constraints and neither altering the approved appearance
+ * beyond the substituted font stack:
+ *
+ *   1. The remote Google Fonts @import is REMOVED. BAYZ is local-first and a
+ *      strict CSP must not need a font-src exception. Archivo / Archivo Black /
+ *      IBM Plex Mono are replaced with local stacks that preserve the intended
+ *      character: a grotesque sans for body, a heavy grotesque for display, and a
+ *      monospace for data. See --flux-font-* below.
+ *   2. Selectors are scoped to the Flux Core panel rather than styling `html`,
+ *      `body`, or bare `button`, so mounting the visualization cannot restyle the
+ *      rest of the dashboard.
+ *
+ * Everything else — geometry, spacing, provider positions, breakpoints, keyframes,
+ * timings, and the monochrome palette — is unchanged from the approved file.
+ */
+
+.flux-panel {
+  /*
+   * Local font stacks. `Archivo` and `IBM Plex Mono` are still named first so an
+   * operator who has them installed sees the exact approved faces; the fallbacks
+   * are the closest widely available grotesques and monospaces.
+   */
+  --flux-font-body: Archivo, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --flux-font-display: "Archivo Black", Archivo, "Helvetica Neue", Impact, Haettenschweiler,
+    "Arial Narrow Bold", sans-serif;
+  --flux-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --black: #050505;
+  --near: #171717;
+  --dark: #2a2a2a;
+  --mid: #707070;
+  --soft: #b8b8b8;
+  --line: #d7d7d7;
+  --field: #f1f1f1;
+  --white: #fff;
+
+  font-family: var(--flux-font-body);
+  border: 1px solid var(--black);
+  background: var(--white);
+  color: var(--black);
+}
+
+.flux-panel * {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+.flux-panel button {
+  font: inherit;
+  cursor: pointer;
+}
+.flux-panel :focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.flux-panel .panel-head {
+  min-height: 52px;
+  border-bottom: 1px solid var(--black);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.flux-panel .panel-head h2 {
+  margin: 0;
+  font-family: var(--flux-font-display);
+  font-size: 18px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+.flux-panel .panel-head h3 {
+  margin: 0;
+  font-family: var(--flux-font-display);
+  font-size: 15px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+}
+.flux-panel .flux-subhead {
+  border-top: 1px solid var(--black);
+}
+.flux-panel .panel-meta {
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--mid);
+}
+.flux-panel .head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.flux-panel .button {
+  min-height: 44px;
+  border: 1px solid var(--black);
+  background: var(--white);
+  color: var(--black);
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  transition: background-color 140ms, color 140ms, transform 100ms;
+}
+.flux-panel .button:hover:not(:disabled) {
+  background: var(--black);
+  color: var(--white);
+}
+.flux-panel .button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.flux-panel .button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.flux-panel .button.small {
+  min-height: 36px;
+  padding: 0 11px;
+  font-size: 10px;
+}
+
+/* ================= relay stage ================= */
+.flux-panel .stage-zone {
+  position: relative;
+}
+.flux-panel .relay-wrap {
+  position: relative;
+  height: 500px;
+  background: #040404;
+  overflow: hidden;
+  isolation: isolate;
+}
+.flux-panel .flux-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  display: block;
+}
+.flux-panel .flux-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  box-shadow: inset 0 0 130px #000;
+}
+
+.flux-panel .core-copy {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 0 16px #000, 0 0 38px #000;
+}
+.flux-panel .core-copy strong {
+  display: block;
+  font-family: var(--flux-font-display);
+  font-size: clamp(30px, 8vw, 54px);
+  letter-spacing: -0.06em;
+  line-height: 0.88;
+}
+.flux-panel .core-copy span {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #d9d9d9;
+}
+.flux-panel .core-copy em {
+  display: block;
+  width: 76px;
+  height: 2px;
+  background: #fff;
+  margin: 10px auto 0;
+}
+.flux-panel .core-copy small {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--flux-font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.16em;
+  color: #8f8f8f;
+}
+
+.flux-panel .provider {
+  position: absolute;
+  z-index: 7;
+  transform: translate(-50%, -50%);
+  width: 148px;
+  min-height: 52px;
+  background: #050505;
+  color: #fff;
+  border: 1px solid #fff;
+  padding: 9px 11px;
+  text-align: left;
+  transition: opacity 200ms, border-color 200ms, transform 160ms;
+}
+.flux-panel .provider:hover {
+  transform: translate(-50%, -50%) translateY(-2px);
+}
+.flux-panel .provider b {
+  display: block;
+  font-family: var(--flux-font-mono);
+  font-size: 10px;
+  line-height: 1.15;
+  word-break: break-all;
+}
+.flux-panel .provider small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  font-family: var(--flux-font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.09em;
+  color: #949494;
+}
+.flux-panel .pdot {
+  width: 6px;
+  height: 6px;
+  background: #fff;
+  box-shadow: 0 0 9px #fff;
+  flex: none;
+  animation: fluxDotPulse 1.7s ease-in-out infinite;
+}
+@keyframes fluxDotPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.flux-panel .provider[data-state="off"] {
+  opacity: 0.3;
+  border-color: #4a4a4a;
+}
+.flux-panel .provider[data-state="off"] .pdot {
+  display: none;
+}
+.flux-panel .provider[data-state="degraded"] {
+  opacity: 0.78;
+  border-color: #8a8a8a;
+}
+.flux-panel .provider[data-state="degraded"] .pdot {
+  background: transparent;
+  border: 1px solid #fff;
+  box-shadow: none;
+  animation: none;
+}
+.flux-panel .provider[data-state="wake"] {
+  animation: fluxWakePulse 0.85s ease-out 2;
+}
+@keyframes fluxWakePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 9px rgba(255, 255, 255, 0);
+  }
+}
+.flux-panel .provider.deny {
+  animation: fluxDeny 0.3s ease;
+}
+@keyframes fluxDeny {
+  0%,
+  100% {
+    transform: translate(-50%, -50%);
+  }
+  30% {
+    transform: translate(calc(-50% - 4px), -50%);
+  }
+  70% {
+    transform: translate(calc(-50% + 4px), -50%);
+  }
+}
+
+.flux-panel .p1 {
+  left: 17%;
+  top: 18%;
+}
+.flux-panel .p2 {
+  left: 83%;
+  top: 18%;
+}
+.flux-panel .p3 {
+  left: 11%;
+  top: 52%;
+}
+.flux-panel .p4 {
+  left: 89%;
+  top: 52%;
+}
+.flux-panel .p5 {
+  left: 50%;
+  top: 87%;
+}
+
+.flux-panel .stage-hud {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 8;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+  flex-wrap: wrap;
+}
+.flux-panel .hud-group {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  border: 1px solid #fff;
+  background: #050505;
+  color: #fff;
+}
+.flux-panel .hud-label {
+  padding: 0 10px;
+  font-family: var(--flux-font-mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8f8f8f;
+}
+.flux-panel .hud-btn {
+  min-width: 38px;
+  height: 38px;
+  border: 0;
+  border-left: 1px solid #fff;
+  background: #050505;
+  color: #fff;
+  font-family: var(--flux-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  transition: background-color 120ms, color 120ms;
+}
+.flux-panel .hud-btn:hover:not(:disabled) {
+  background: #222;
+}
+.flux-panel .hud-btn.active {
+  background: #fff;
+  color: #050505;
+}
+.flux-panel .hud-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.flux-panel .legend {
+  border-top: 1px solid var(--black);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+.flux-panel .legend div {
+  padding: 10px;
+  border-right: 1px solid var(--black);
+  font-size: 10px;
+}
+.flux-panel .legend div:last-child {
+  border-right: 0;
+}
+.flux-panel .legend b {
+  display: block;
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  margin-bottom: 3px;
+}
+.flux-panel .state-square {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  background: var(--black);
+  margin-right: 6px;
+}
+
+.flux-panel .live-activity {
+  display: grid;
+}
+.flux-panel .live-row {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 9px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 0 12px;
+  font-size: 10px;
+}
+.flux-panel .live-row:last-child {
+  border-bottom: 0;
+}
+.flux-panel .live-dot {
+  width: 7px;
+  height: 7px;
+  background: #050505;
+}
+.flux-panel .live-row b {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.flux-panel .live-row span {
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  color: var(--mid);
+}
+.flux-panel .load-meter {
+  padding: 14px 12px;
+  border-top: 1px solid var(--line);
+}
+.flux-panel .load-meter header {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  margin-bottom: 8px;
+}
+.flux-panel .load-track {
+  height: 8px;
+  border: 1px solid #050505;
+  background: #fff;
+  overflow: hidden;
+}
+.flux-panel .load-fill {
+  height: 100%;
+  background: #050505;
+  transition: width 300ms;
+}
+
+/* ================= responsive ================= */
+@media (min-width: 640px) {
+  .flux-panel .relay-wrap {
+    height: 520px;
+  }
+}
+@media (min-width: 1024px) {
+  .flux-panel .relay-wrap {
+    height: 560px;
+  }
+  .flux-panel .panel-head h2 {
+    font-size: 21px;
+  }
+}
+@media (min-width: 1800px) {
+  .flux-panel .relay-wrap {
+    height: 640px;
+  }
+  .flux-panel .panel-head h2 {
+    font-size: 26px;
+  }
+}
+@media (max-width: 639px) {
+  .flux-panel .provider {
+    width: 106px;
+    padding: 8px 9px;
+  }
+  .flux-panel .provider b {
+    font-size: 8px;
+  }
+  .flux-panel .provider small {
+    font-size: 6.5px;
+    letter-spacing: 0.05em;
+  }
+  .flux-panel .p1 {
+    left: 21%;
+    top: 13%;
+  }
+  .flux-panel .p2 {
+    left: 79%;
+    top: 13%;
+  }
+  .flux-panel .p3 {
+    left: 10%;
+    top: 47%;
+  }
+  .flux-panel .p4 {
+    left: 90%;
+    top: 47%;
+  }
+  .flux-panel .p5 {
+    left: 50%;
+    top: 81%;
+  }
+  .flux-panel .stage-hud {
+    position: static;
+    margin-top: 10px;
+    justify-content: center;
+  }
+  .flux-panel .hud-label {
+    display: none;
+  }
+  .flux-panel .hud-group:first-child .hud-btn {
+    border-left: 0;
+  }
+  .flux-panel .core-copy strong {
+    font-size: clamp(26px, 9vw, 40px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flux-panel .pdot {
+    animation: none;
+  }
+  .flux-panel .provider,
+  .flux-panel .button,
+  .flux-panel .hud-btn {
+    transition: none;
+  }
+  .flux-panel .provider[data-state="wake"] {
+    animation: none;
+  }
+  .flux-panel .provider.deny {
+    animation: none;
+  }
+}

@@ -416,11 +416,39 @@ because the API rejects `stream`.
 
 ### Flux Core V2
 
-`apps/dashboard/src/FluxCoreSlot.tsx` is an intentionally empty mount point for the
-separately approved BAYZ Flux Core V2 motion system. Its source is supplied
-separately and is **LOCKED**: nothing in this repository recreates, approximates, or
-stands in for it. The build smoke script asserts the slot exists and that no
-animation primitive was invented to fill it.
+`apps/dashboard/src/flux/` holds the approved BAYZ Flux Core V2 relay usage track,
+mounted through `apps/dashboard/src/FluxCoreSlot.tsx`. The canvas engine
+(`flux/engine.ts`) is a port of the approved standalone source: same geometry,
+point-cloud topology, braided provider traffic, packet impact behavior, provider
+positions, adaptive-quality thresholds, and Calm / Live / Surge semantics.
+
+Three production changes were required, none of them a visual preference:
+
+- **No remote font.** The standalone file imported Google Fonts. That import is
+  removed; `Archivo` / `Archivo Black` / `IBM Plex Mono` are still requested first
+  so an operator who has them installed sees the exact approved faces, with local
+  grotesque and monospace fallbacks behind them. BAYZ stays local-first and a strict
+  CSP needs no `font-src` exception.
+- **No `innerHTML`.** The standalone activity feed built rows with `innerHTML`.
+  Every dynamic string — provider label, model, route, event text — now renders as a
+  React text node. Provider and model strings from the API are treated as untrusted.
+- **CSP-compatible.** No remote font, no remote script, no `eval`, no `Function`
+  constructor, no inline event handler, no injected executable code.
+
+The engine owns all per-frame work and reports a snapshot roughly three times a
+second, so there are no per-frame React updates. Bounded pools (8 waves, 6 dents,
+6 flashes, 3 packets per filament), DPR capped at 2, adaptive quality, visibility
+pause, and `prefers-reduced-motion` all carry over. React cleanup releases the
+animation frame, `ResizeObserver`, `matchMedia` listener, visibility listener,
+ambient interval, and every failover-drill timer, so a remount cannot duplicate a
+loop.
+
+`flux/types.ts` is the display-safe input boundary. It accepts provider id, label,
+state, share, routing mode, routed request count, load percent, and activity
+events. It cannot carry a credential, proxy password, API token, or Authorization
+header, because no such field exists on it and no API returns one. Until real usage
+telemetry is wired, Flux Core runs the approved simulation and labels itself `SIM`
+on screen rather than presenting invented numbers as measurements.
 
 ## Deferred verification
 

@@ -1,14 +1,26 @@
+import { FluxCore } from "./flux/FluxCore";
+import type { FluxCoreViewModel } from "./flux/types";
+
+export type FluxCoreSlotProps = {
+  /**
+   * Display-safe usage view model. When omitted, Flux Core runs the approved
+   * simulation and labels itself `SIM` on screen rather than presenting invented
+   * numbers as measured telemetry.
+   */
+  model?: FluxCoreViewModel;
+};
+
 /**
- * Integration boundary for the approved BAYZ Flux Core V2 motion system.
+ * Mount point for the approved BAYZ Flux Core V2 motion system.
  *
- * This is intentionally an empty, non-visual mount point. The Flux Core source is
- * supplied separately and is LOCKED: recreating, approximating, or standing in for
- * it from memory would produce a different animation wearing its name, which is
- * worse than an empty slot.
- *
- * To integrate, render the approved component inside this element. Nothing else in
- * the dashboard needs to change.
+ * The wrapper is kept as the integration boundary — `data-bayz-flux-core-slot`
+ * remains the anchor the rest of the dashboard and its tests rely on — while the
+ * approved visualization now renders inside it.
  */
-export function FluxCoreSlot() {
-  return <div className="bayz-flux-core-slot" data-bayz-flux-core-slot="" aria-hidden="true" />;
+export function FluxCoreSlot({ model }: FluxCoreSlotProps) {
+  return (
+    <div className="bayz-flux-core-slot" data-bayz-flux-core-slot="">
+      <FluxCore {...(model === undefined ? {} : { model })} />
+    </div>
+  );
 }

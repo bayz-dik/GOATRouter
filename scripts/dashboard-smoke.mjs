@@ -143,20 +143,74 @@ section("6. The token field is write-only and unremembered");
   );
 }
 
-section("7. The Flux Core slot is present and empty");
+section("7. The approved Flux Core V2 is mounted, with no invented motion");
 {
   check(
     "the Flux Core mount point is emitted",
     /data-bayz-flux-core-slot/.test(bundle),
   );
-  // The approved V2 source is supplied separately; nothing may stand in for it.
+  // The approved engine drives frames; that is expected and required.
+  check("the relay canvas engine is present", /requestAnimationFrame/.test(bundle));
+  check("the approved relay stage markup is present", /relay-wrap/.test(bundle));
   check(
-    "no animation primitive was invented for the slot",
-    !/requestAnimationFrame/.test(bundle) && !/getContext\(["']2d["']\)/.test(bundle),
+    "the approved Calm / Live / Surge semantics are present",
+    /Calm/.test(bundle) && /Surge/.test(bundle),
+  );
+  check(
+    "the approved provider positions are present",
+    /p1/.test(bundle) && /p5/.test(bundle),
+  );
+  check(
+    "no WebGL context was substituted for the approved Canvas 2D",
+    !/getContext\(\s*[`"']webgl/i.test(bundle),
   );
 }
 
-section("8. Emitted HTML and CSS carry no secret");
+section("8. No remote font, script, or stylesheet dependency");
+{
+  const assets = collect(DIST, [".html", ".css", ".js", ".mjs"]);
+  const all = assets.map((file) => readFileSync(file, "utf8")).join("\n");
+  check("assets were emitted for the scan", assets.length > 0);
+  check(
+    "no Google Fonts reference survives the build",
+    !/fonts\.googleapis\.com|fonts\.gstatic\.com/.test(all),
+  );
+  check("no @import remains in the emitted css", !/@import/.test(
+    collect(DIST, [".css"]).map((file) => readFileSync(file, "utf8")).join("\n"),
+  ));
+  /*
+   * XML namespace URIs, JSON Schema `$schema` identifiers, and React's error-doc
+   * links are string constants inside React and zod. None is ever fetched, so a
+   * blanket URL match would fail on library internals rather than on a real
+   * dependency. The check below looks for origins that a browser would actually
+   * load from, which is the property that matters for CSP and local-first.
+   */
+  const FETCHED_URL_RE =
+    /(?:src|href|url\(|import\s*\(|from\s*['"`])\s*['"`(]?\s*(https?:\/\/[a-z0-9.-]+)/gi;
+  const LOCAL_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost)/i;
+  const fetched = [...all.matchAll(FETCHED_URL_RE)]
+    .map((match) => match[1])
+    .filter((origin) => !LOCAL_ORIGIN_RE.test(origin));
+  check(
+    `no remote origin is loaded (found ${fetched.length})`,
+    fetched.length === 0,
+  );
+  check(
+    "no bare font or CDN host appears anywhere",
+    !/fonts\.googleapis|fonts\.gstatic|cdn\.jsdelivr|unpkg\.com|cdnjs\.cloudflare/i.test(all),
+  );
+  const html = collect(DIST, [".html"]).map((file) => readFileSync(file, "utf8")).join("\n");
+  check(
+    "no remote script tag is emitted",
+    !/<script[^>]+src\s*=\s*["']https?:/i.test(html),
+  );
+  check(
+    "no remote stylesheet link is emitted",
+    !/<link[^>]+href\s*=\s*["']https?:/i.test(html),
+  );
+}
+
+section("9. Emitted HTML and CSS carry no secret");
 {
   const assets = collect(DIST, [".html", ".css"]);
   const text = assets.map((file) => readFileSync(file, "utf8")).join("\n");

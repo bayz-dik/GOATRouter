@@ -155,11 +155,53 @@ describe("dashboard source guarantees", () => {
     ]);
   });
 
-  it("leaves the Flux Core slot empty rather than approximating it", () => {
+  it("renders the approved Flux Core through its slot without inventing motion", () => {
     const slot = sourceFiles().find((source) => source.name.endsWith("FluxCoreSlot.tsx"));
     expect(slot).toBeDefined();
-    // No animation primitives may appear: the approved source is supplied later.
-    expect(slot!.text).not.toMatch(/requestAnimationFrame|canvas|WebGL|@keyframes/i);
+    // The slot delegates to the approved component and defines no animation of its
+    // own; the engine is the single place motion lives.
+    expect(slot!.text).toMatch(/FluxCore/);
+    expect(codeOnly(slot!.text)).not.toMatch(/requestAnimationFrame|WebGL|@keyframes/i);
+
+    // Exactly one module may drive frames, so a second animation loop cannot be
+    // introduced alongside the approved one.
+    const drivers = sourceFiles().filter((source) =>
+      /requestAnimationFrame/.test(codeOnly(source.text)),
+    );
+    expect(drivers.map((source) => source.name).sort()).toEqual([
+      "flux/FluxCore.tsx",
+      "flux/engine.ts",
+    ]);
+  });
+
+  it("uses no remote font, script, or stylesheet anywhere in the dashboard", () => {
+    for (const source of sourceFiles()) {
+      const text = source.text;
+      expect(text, `${source.name} must not import Google Fonts`).not.toMatch(
+        /fonts\.googleapis\.com|fonts\.gstatic\.com/,
+      );
+      expect(text, `${source.name} must not reference a CDN`).not.toMatch(
+        /cdn\.jsdelivr|unpkg\.com|cdnjs\.cloudflare/i,
+      );
+      // Only a loadable URL is a dependency; a URL inside a comment is prose.
+      expect(
+        codeOnly(text),
+        `${source.name} must not load a remote origin`,
+      ).not.toMatch(/(?:src|href|url\(|from\s*['"`])\s*['"`(]?\s*https?:\/\//i);
+    }
+  });
+
+  it("keeps the Flux Core css free of remote imports", () => {
+    // Comments are stripped for the same reason as in the source scan: the file
+    // documents that the Google Fonts @import was removed, and that explanation
+    // must not trip the rule that enforces its removal.
+    const css = readFileSync(join(SRC_ROOT, "flux", "flux.css"), "utf8").replace(
+      /\/\*[\s\S]*?\*\//g,
+      " ",
+    );
+    expect(css).not.toMatch(/@import/);
+    expect(css).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
+    expect(css).not.toMatch(/url\(\s*['"]?https?:/i);
   });
 });
 
@@ -348,7 +390,7 @@ describe("dashboard runtime guarantees", () => {
     expect((window as unknown as Record<string, unknown>).__xssApp).toBeUndefined();
   });
 
-  it("provides the Flux Core mount point without any animation of its own", async () => {
+  it("mounts the approved Flux Core inside its slot", async () => {
     const store = createTokenStore();
     store.set(TOKEN);
     const { container } = render(
@@ -362,7 +404,11 @@ describe("dashboard runtime guarantees", () => {
     await screen.findByText("P1");
     const slot = container.querySelector("[data-bayz-flux-core-slot]");
     expect(slot).not.toBeNull();
-    expect(slot!.childElementCount).toBe(0);
-    expect(container.querySelector("canvas")).toBeNull();
+    // This assertion previously required an EMPTY slot, which was the correct pin
+    // while the approved Flux Core V2 source was unavailable. That pin expired on
+    // integration: the slot must now contain the approved canvas visualization.
+    expect(slot!.childElementCount).toBeGreaterThan(0);
+    expect(slot!.querySelector("canvas")).not.toBeNull();
+    expect(slot!.querySelector(".relay-wrap")).not.toBeNull();
   });
 });
