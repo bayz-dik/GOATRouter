@@ -30,3 +30,4 @@ export {
   type RouteRepository,
   type UpdateRouteInput,
 } from "./repository.js";
+export { resolveCandidates, selectRoute } from "./selection.js";
