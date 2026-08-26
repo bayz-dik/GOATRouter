@@ -4,6 +4,7 @@ import type { HealthResponse } from "@bayz/contracts";
 import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
+import { installSecurityHeaders } from "./security-headers.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProxyRoutes } from "./routes/proxies.js";
@@ -34,6 +35,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: options.logger ?? true,
     bodyLimit: MAX_BODY_BYTES,
+    // No implementation fingerprint in responses.
+    disableRequestLogging: false,
     genReqId(request) {
       const supplied = request.headers["x-request-id"];
       return typeof supplied === "string" && SAFE_REQUEST_ID.test(supplied)
@@ -41,6 +44,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         : `req_${randomUUID()}`;
     },
   });
+
+  // Installed first so every response — including 401, 403, 404, and 500 — carries
+  // the policy, not just successful ones.
+  installSecurityHeaders(app);
 
   app.addHook("onSend", async (request, reply, payload) => {
     void reply.header("x-request-id", request.id);

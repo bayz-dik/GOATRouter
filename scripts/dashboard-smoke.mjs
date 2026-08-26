@@ -236,7 +236,33 @@ section("9. Scalable provider constellation is present");
   );
 }
 
-section("10. Emitted HTML and CSS carry no secret");
+section("10. The built dashboard is compatible with a strict CSP");
+{
+  const html = collect(DIST, [".html"]).map((file) => readFileSync(file, "utf8")).join("\n");
+
+  /*
+   * `style-src 'self'` forbids a literal style attribute and an inline <style>
+   * element. React's `style` prop is a DOM property assignment and is unaffected,
+   * which is exactly why this asserts on the emitted HTML rather than the source.
+   */
+  check("no inline style attribute in emitted html", !/\sstyle\s*=\s*["']/.test(html));
+  check("no inline <style> element in emitted html", !/<style[\s>]/i.test(html));
+  check(
+    "no inline script element in emitted html",
+    !/<script(?![^>]*\ssrc\s*=)[^>]*>[^<]/i.test(html),
+  );
+  check("no inline event handler in emitted html", !/\son[a-z]+\s*=\s*["']/i.test(html));
+  check("no javascript: url in emitted html", !/javascript:/i.test(html));
+  // `script-src 'self'` means every script must be an external same-origin file.
+  const scriptTags = html.match(/<script[^>]*>/gi) ?? [];
+  check(
+    `every script tag has a src (${scriptTags.length} found)`,
+    scriptTags.every((tag) => /\ssrc\s*=\s*["']\//.test(tag)),
+  );
+  check("no eval or Function constructor in the bundle", !/\beval\s*\(|new\s+Function\s*\(/.test(bundle));
+}
+
+section("11. Emitted HTML and CSS carry no secret");
 {
   const assets = collect(DIST, [".html", ".css"]);
   const text = assets.map((file) => readFileSync(file, "utf8")).join("\n");
