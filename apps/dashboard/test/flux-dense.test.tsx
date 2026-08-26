@@ -231,7 +231,8 @@ describe("custom providers with duplicate names", () => {
     expect(customs).toHaveLength(3);
     expect(new Set(customs).size).toBe(3);
     for (const name of customs) {
-      expect(name).toMatch(/^CUSTOM — PVD-[0-9A-F]{4}$/);
+      // The accessible name is identity first, then state and participation.
+      expect(name).toMatch(/^CUSTOM — PVD-[0-9A-F]{4} — /);
     }
   });
 
@@ -240,7 +241,9 @@ describe("custom providers with duplicate names", () => {
     const names = Array.from(container.querySelectorAll(".provider")).map((el) =>
       el.getAttribute("aria-label"),
     );
-    expect(names).toContain("GEMINI");
+    expect(names.some((name) => name?.startsWith("GEMINI — "))).toBe(true);
+    // Unambiguous names carry no PVD suffix.
+    expect(names.some((name) => name?.startsWith("GEMINI — PVD-"))).toBe(false);
   });
 });
 

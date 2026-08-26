@@ -7,7 +7,12 @@ import {
   type FluxEngine,
   type FluxSyncSnapshot,
 } from "./engine";
-import { buildConstellation, ingressGroups, trunkFor } from "./constellation";
+import {
+  buildConstellation,
+  ingressGroups,
+  trunkFor,
+  type ConstellationNode,
+} from "./constellation";
 import { providerIdentity, type ProviderIdentity } from "./identity";
 import { ProviderMark } from "./ProviderMark";
 import { DETAIL_NEAR, resolveLabels } from "./lod";
@@ -28,6 +33,7 @@ import {
   type FluxCoreViewModel,
   type FluxProvider,
   type FluxProviderState,
+  type FluxRouteParticipation,
   type FluxTempo,
 } from "./types";
 import "./flux.css";
@@ -51,6 +57,14 @@ const TEMPO_LABEL: Record<FluxTempo, string> = {
   calm: "Calm",
   live: "Live",
   surge: "Surge",
+};
+
+/** Spoken form of route participation, used in accessible names. */
+const ROUTE_WORD: Record<FluxRouteParticipation, string> = {
+  primary: "primary route",
+  combo: "combo member",
+  reserve: "reserve",
+  none: "no active traffic",
 };
 
 const STATE_WORD: Record<FluxProviderState, string> = {
@@ -494,16 +508,26 @@ export function FluxCore({ model }: FluxCoreProps) {
   const metaState = failedCount > 0 || drilling ? "FAILOVER" : activeCount >= 2 ? "COMBO" : "DIRECT";
   const sourceWord = live ? "LIVE" : "SIM";
 
-  /** Incidents that could not be labelled in place; never a "+N" abstraction. */
-  const incidents = useMemo(
-    () =>
-      labels.overflowIncidents
-        .map((id) => ({ id, identity: identities.get(id) }))
-        .filter((entry): entry is { id: string; identity: ProviderIdentity } =>
-          entry.identity !== undefined,
-        ),
-    [identities, labels.overflowIncidents],
-  );
+  /**
+   * Incidents that could not be labelled in place, plus any provider carrying a
+   * failure reason. Never a "+N" abstraction: each row names its provider and can
+   * focus it in the constellation.
+   */
+  const incidents = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const ids = new Set(labels.overflowIncidents);
+    for (const node of nodes) {
+      if (node.incidentReason !== undefined) {
+        ids.add(node.id);
+      }
+    }
+    return [...ids]
+      .map((id) => ({ id, identity: identities.get(id), node: byId.get(id) }))
+      .filter(
+        (entry): entry is { id: string; identity: ProviderIdentity; node: ConstellationNode } =>
+          entry.identity !== undefined && entry.node !== undefined,
+      );
+  }, [identities, labels.overflowIncidents, nodes]);
 
   const ariaLabel = `Bayz relay visualization. ${mode}. ${providers.length} provider${
     providers.length === 1 ? "" : "s"
@@ -523,7 +547,9 @@ export function FluxCore({ model }: FluxCoreProps) {
         <div>
           <h2 id="relay-title">Relay usage track</h2>
           <div className="panel-meta">
-            {`PROVIDER \u2192 BAYZ \u2192 MODEL / ${sourceWord} \u00b7 ${metaState} \u00b7 ${tempo.toUpperCase()} \u00b7 ${providers.length} NODES`}
+            {`PROVIDER \u2192 BAYZ \u2192 MODEL / ${sourceWord} \u00b7 ${metaState} \u00b7 ${tempo.toUpperCase()} \u00b7 ${providers.length} NODES${
+              model?.period === undefined ? "" : ` \u00b7 ${model.period}`
+            }`}
           </div>
         </div>
         <div className="head-actions">
@@ -585,12 +611,15 @@ export function FluxCore({ model }: FluxCoreProps) {
                   key={node.id}
                   className={`provider${approvedLayout ? ` ${APPROVED_CHIP_CLASS[index] ?? ""}` : ""}${
                     showLabel ? " labelled" : ""
-                  }${isSelected ? " selected" : ""}`}
+                  }${isSelected ? " selected" : ""} route-${node.routeParticipation}`}
                   type="button"
                   data-state={node.state}
+                  data-route={node.routeParticipation}
                   data-provider-id={node.id}
                   aria-pressed={isSelected}
-                  aria-label={identity?.uniqueLabel ?? node.displayName}
+                  aria-label={`${identity?.uniqueLabel ?? node.displayName} — ${
+                    STATE_WORD[node.state]
+                  }, ${ROUTE_WORD[node.routeParticipation]}`}
                   style={
                     approvedLayout
                       ? undefined
@@ -620,6 +649,12 @@ export function FluxCore({ model }: FluxCoreProps) {
                           <span>{shareFor(index, node.sharePercent)}%</span>
                           &nbsp;/&nbsp;
                           <span>{STATE_WORD[node.state]}</span>
+                          {node.latencyMs !== undefined && (
+                            <>
+                              &nbsp;/&nbsp;
+                              <span>{node.latencyMs} ms</span>
+                            </>
+                          )}
                         </small>
                       )}
                     </span>
@@ -723,7 +758,13 @@ export function FluxCore({ model }: FluxCoreProps) {
                 iconKey={incident.identity.iconKey}
                 initials={incident.identity.initials}
               />
-              <b>{incident.identity.uniqueLabel}</b>
+              <span className="incident-body">
+                <b>{incident.identity.uniqueLabel}</b>
+                {/* Untrusted operator-facing text; React escapes it. */}
+                {incident.node.incidentReason !== undefined && (
+                  <span className="incident-detail">{incident.node.incidentReason}</span>
+                )}
+              </span>
               <span>{incident.identity.shortId}</span>
             </button>
           ))}

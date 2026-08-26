@@ -699,3 +699,62 @@
     will-change: auto;
   }
 }
+
+/* ================= route participation prominence ================= */
+/*
+ * Direct / Combo / Failover semantics expressed monochromatically: a primary route
+ * gets the brightest border and a subtle outward glow, combo members sit at normal
+ * weight, reserves recede, and a node with no traffic recedes furthest while
+ * remaining fully inspectable.
+ */
+.flux-panel .provider.route-primary {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.flux-panel .provider.route-primary .pdot {
+  box-shadow: 0 0 12px #fff;
+}
+.flux-panel .provider.route-combo {
+  border-color: #dcdcdc;
+}
+.flux-panel .provider.route-reserve {
+  border-color: #7d7d7d;
+  opacity: 0.72;
+}
+.flux-panel .provider.route-reserve .pdot {
+  background: transparent;
+  border: 1px solid #9a9a9a;
+  box-shadow: none;
+  animation: none;
+}
+.flux-panel .provider.route-none {
+  border-color: #4f4f4f;
+  opacity: 0.5;
+}
+.flux-panel .provider.route-none .pdot {
+  display: none;
+}
+/* Selection always wins over participation, so the focused node stays findable. */
+.flux-panel .provider.selected {
+  border-color: #fff;
+  opacity: 1;
+}
+
+/* ================= incident detail ================= */
+.flux-panel .incident-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.flux-panel .incident-detail {
+  font-family: var(--flux-font-mono);
+  font-size: 9px;
+  color: var(--mid);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flux-panel .provider.route-primary {
+    box-shadow: none;
+  }
+}

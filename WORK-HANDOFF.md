@@ -34,7 +34,7 @@
 - `@bayz/proxy`: 105 tests pass.
 - `@bayz/router`: 122 tests pass.
 - `@bayz/server`: 111 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/dashboard`: 200 tests pass across 15 files.
+- `@bayz/dashboard`: 213 tests pass across 16 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
@@ -55,12 +55,13 @@
   remote font/script/stylesheet or loadable remote origin, and the scalable
   constellation (`flux-field`, `provider-mark`, `PVD-`, `incident-row`) present
   with no `+N providers` aggregation.
-- Live boot on `127.0.0.1:20999` with `BAYZ_DASHBOARD_ROOT` on the built dashboard:
+- Live boot on `127.0.0.1:21001` with `BAYZ_DASHBOARD_ROOT` on the built dashboard:
   `schemaVersion:4`, `/api/health` unauthenticated and byte-identical,
   `/api/status` 401 unauthenticated, shell served, and the served bundle contains
   `data-bayz-flux-core-slot`, `relay-wrap`, `flux-field`, `provider-mark`, `PVD-`,
-  `incident-row`, `requestAnimationFrame`, and `Surge`. Served CSS contains zero
-  `@import` and zero `googleapis`. Root key absent from the log.
+  `incident-row`, `incident-detail`, `route-`, `requestAnimationFrame`, and
+  `Surge`. Served CSS contains `route-primary` and zero `@import`/`googleapis`.
+  Root key absent from the log.
 - Secret scan over tracked non-test source for `sk-*`, `hunter2`, `PROMPT-`,
   `API-SMOKE`, `BEGIN … PRIVATE KEY`, `AIza…`, and any 64-hex literal: no matches.
 - Getter scan for `getCredential`/`getPassword`/`reveal*`/`export*` across all
@@ -166,6 +167,27 @@ was left alone.
   measurements; braid strand count steps 3 → 2 → 1 as count rises; label/collision
   resolution runs on viewport or selection change, not per frame.
 
+### The display-safe boundary is fully consumed
+
+Every field the boundary declares reaches the screen — a declared-but-unused field
+would be a hollow contract, so each is pinned by a test in
+`test/flux-boundary.test.tsx`:
+
+- `routeParticipation` → `data-route` attribute, a `route-*` prominence class, and
+  the accessible name. Primary routes get the brightest border and an outward glow,
+  combo members normal weight, reserves recede, `none` recedes furthest while
+  staying inspectable. Selection always overrides participation.
+- `latencyMs` → shown as `143 ms` on a labelled chip; a non-finite value is dropped
+  rather than rendered as `NaN`.
+- `incidentReason` → shown in the incident row beneath the provider name, as inert
+  text. A provider carrying a reason appears in the incident list even when it holds
+  a label slot.
+- `period` → appended to the panel meta line.
+- `loadPercent`, `routedRequests`, `routingMode` → core stat line, load meter, and
+  mode word.
+
+Disabled (`off`) nodes stay present, focusable, and clearly traffic-free.
+
 ### Dense-state verification
 
 Measured in the integrated component by `test/flux-verify-states.test.tsx`, which
@@ -228,8 +250,10 @@ output frame by frame:
 - Provider ring capacity tops out at six rings (138 slots) before positions begin to
   repeat radially at greater distance; beyond roughly 140 providers the layout would
   need another ring tier.
-- The incident list has no severity ordering beyond the label-priority ranking, and
-  no failure-reason text is displayed yet because no API field supplies one.
+- The incident list orders by the label-priority ranking only; there is no separate
+  severity model. Failure reasons are displayed when the model supplies
+  `incidentReason`, but no Bayz API field populates it yet, so in practice it stays
+  empty until routing telemetry exists.
 
 ## Environment facts
 

@@ -1,4 +1,9 @@
-import { FLUX_APPROVED_PROVIDERS, type FluxProvider, type FluxProviderState } from "./types";
+import {
+  FLUX_APPROVED_PROVIDERS,
+  type FluxProvider,
+  type FluxProviderState,
+  type FluxRouteParticipation,
+} from "./types";
 
 /**
  * Provider constellation layout.
@@ -31,6 +36,12 @@ export type ConstellationNode = {
   displayName: string;
   state: FluxProviderState;
   sharePercent: number;
+  /** Route participation, carried through so prominence can be styled. */
+  routeParticipation: FluxRouteParticipation;
+  /** Measured latency in ms, when the model supplied a usable number. */
+  latencyMs: number | undefined;
+  /** Operator-facing failure reason, when supplied. Untrusted text. */
+  incidentReason: string | undefined;
   /** World coordinates in percent, where the core sits at (50, 50). */
   xPct: number;
   yPct: number;
@@ -98,6 +109,19 @@ export function buildConstellation(
       displayName: provider.displayName,
       state: provider.state,
       sharePercent: provider.sharePercent,
+      // Defaulted rather than required: a model that omits participation still
+      // renders, and an absent latency is absent rather than zero.
+      routeParticipation:
+        provider.routeParticipation ??
+        (provider.state === "active" || provider.state === "recovering" ? "combo" : "none"),
+      latencyMs:
+        typeof provider.latencyMs === "number" && Number.isFinite(provider.latencyMs)
+          ? Math.max(0, Math.round(provider.latencyMs))
+          : undefined,
+      incidentReason:
+        typeof provider.incidentReason === "string" && provider.incidentReason.length > 0
+          ? provider.incidentReason
+          : undefined,
       xPct,
       yPct,
       ring,
