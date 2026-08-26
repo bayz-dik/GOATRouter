@@ -1,0 +1,145 @@
+# Phase 9J — Cross-Platform / Packaging / Upgrade
+
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
+
+**Spec:** `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md` §14
+
+**Depends on:** nothing structurally; runs in parallel and gates 9K
+
+**Goal:** A real installable artifact, a real upgrade path from every prior schema version, and an honest cross-platform matrix.
+
+**Locks:** Zero native runtime dependencies. No shell assumption that breaks Windows. A platform is `PASS` only with a transcript from that platform. Termux/Android ARM64 is the only platform testable here; every other row is `UNVERIFIED` until a real machine or CI runner produces evidence.
+
+**Measured device reality:** Termux/Android ARM64, Node v24.19.0, npm 11.17.0. The only `.node` binaries in the tree are `lightningcss-linux-arm64-gnu` and `@rolldown/binding-linux-arm64-gnu`, both reached only through `vite` as a **dev** dependency of `@bayz/dashboard`. The five runtime dependencies are `fastify`, `@fastify/static`, `react`, `react-dom`, `zod`.
+
+---
+
+### Task 1 — Platform matrix document
+
+**Create:** `docs/superpowers/2026-08-27-bayz-platform-matrix.md`
+**Test:** `tests/platform-matrix.test.mjs`
+
+**Rows:** Linux x64, Linux ARM64, Termux/Android ARM64, Windows x64, Windows ARM64, macOS x64, macOS ARM64
+**Columns:** install, first boot, schema create, chat, stream, proxy, dashboard serve, restart, upgrade from v1, data dir permissions, uninstall
+
+- [ ] RED `tests/platform-matrix.test.mjs`: the matrix exists; all seven platform rows are present; every cell is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; no cell is empty or a placeholder; every `PASS` carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; the header names the device that produced the Termux row; a `PASS` on a platform with no transcript for that platform fails the test.
+- [ ] Verify RED.
+- [ ] GREEN: initialise every cell `UNVERIFIED` with a legend, then fill the Termux row from the later tasks' evidence.
+- [ ] Verify: `node --test tests/platform-matrix.test.mjs` exits 0.
+- [ ] Commit — `docs: add the Bayz platform support matrix`
+
+### Task 2 — Runtime dependency closure guard
+
+**Create:** `scripts/dependency-closure.mjs`
+**Test:** `tests/dependency-closure.test.mjs`
+
+**Measured baseline.** `package-lock.json` is `lockfileVersion: 3` with 270 entries. Walking the transitive `dependencies` and `optionalDependencies` of all nine workspace packages yields a **runtime closure of 93 entries — 7 `@bayz/*` workspace links plus 86 external packages**. Not one of those 86 declares `os`, `cpu`, `hasInstallScript`, or ships a `.node` binary. The two packages in the tree with install scripts (`esbuild`, `fsevents`) and all 53 with `os`/`cpu` restrictions are reached **only** through `vite`, which is a dev dependency.
+
+The distinction that matters: "five runtime dependencies" is the count of *directly declared* external dependencies (`fastify`, `@fastify/static`, `react`, `react-dom`, `zod`). The count of packages that actually ship is 86. Both numbers are true and the guard checks both, because a guard that only pinned the five would not notice `fastify` pulling in a native transitive dependency on its next minor release.
+
+- [ ] RED `tests/dependency-closure.test.mjs`: the script computes the **runtime** closure from `package-lock.json` — the transitive `dependencies` and `optionalDependencies` of every `@bayz/*` workspace package, excluding `devDependencies` — and asserts it contains no package shipping a `.node` binary, no `install`/`postinstall`/`preinstall` script (`hasInstallScript`), and no `gypfile`; the five *direct* external dependencies are pinned by name so a sixth requires a deliberate edit to this test; the closure size is pinned as an exact number so a transitive addition is visible in the diff rather than silent.
+- [ ] RED same file: the closure guard fails if a runtime package declares `"os"` or `"cpu"` restrictions, since that is how a platform quietly becomes unsupported. The 53 `os`/`cpu`-restricted and 2 install-scripted packages currently in the tree are asserted to be **dev-only**, reachable through `vite` and never at runtime, which the test documents as acceptable and Termux-irrelevant because `vite` never runs in production.
+- [ ] RED same file: the workspace-link resolution is asserted correct — the walker must follow npm's nested `node_modules` lookup rules, because a naive flat lookup would silently miss the four nested entries (`ajv/node_modules/fast-uri`, `light-my-request/node_modules/process-warning`, `path-scurry/node_modules/lru-cache`, `thread-stream/node_modules/real-require`) and under-report the closure.
+- [ ] Verify RED.
+- [ ] GREEN `scripts/dependency-closure.mjs`, reading only the lockfile, no new dependency.
+- [ ] Verify: `node scripts/dependency-closure.mjs` exits 0 and prints the closure size; `node --test tests/dependency-closure.test.mjs` exits 0.
+- [ ] Commit — `test: guard the Bayz native-free runtime dependency closure`
+
+### Task 3 — Cross-platform path, permission, and shell hygiene
+
+**Create:** `scripts/portability-scan.mjs`, `apps/server/src/data-dir.ts`
+**Modify:** `apps/server/src/config.ts`
+**Test:** `tests/portability.test.mjs`, `apps/server/test/data-dir.test.ts`
+
+**Measured current behaviour:** `apps/server/src/config.ts:27` resolves the data directory as `${homedir()}/.bayz`, with `BAYZ_DATA_DIR` as an override. That is a single hardcoded POSIX-flavoured path, not a platform resolver — it happens to work on Windows (`homedir()` returns the profile directory) but ignores `%LOCALAPPDATA%` and `$XDG_DATA_HOME`.
+
+**Compatibility decision, made explicitly rather than discovered later.** Changing the default would orphan every existing install's database, and an operator whose providers silently vanished after an upgrade would rightly call that data loss. So: `~/.bayz` **remains the default on every platform**. The resolver adds platform-appropriate paths only as a *fallback chain read in order* — an existing `~/.bayz` always wins, and a platform path is used only when no `~/.bayz` exists. The resolver logs which path it chose (metadata only) so the operator can see it, and `docs/install.md` documents the chain.
+
+- [ ] RED `apps/server/test/data-dir.test.ts`: `resolveDataDir` takes an injected platform, home directory, and environment — never reading the real ones — so all branches are testable; `BAYZ_DATA_DIR` wins over everything; an existing `~/.bayz` wins over any platform default (**backward-compatibility guard, the most important assertion in this task**); with no existing `~/.bayz`, Windows yields `%LOCALAPPDATA%/bayz`, macOS yields `~/Library/Application Support/bayz`, and other platforms yield `$XDG_DATA_HOME/bayz` or `~/.local/share/bayz`; a relative `BAYZ_DATA_DIR` is resolved to absolute; an empty-string `BAYZ_DATA_DIR` is refused rather than treated as absent.
+- [ ] RED `tests/portability.test.mjs`: a source scan over every `src` and `scripts` file finds no hardcoded `/tmp`, no hardcoded `/home`, no `C:\\`, and no `homedir()` call outside `data-dir.ts` — the data directory must come from one resolver, and the scan is what keeps a second one from appearing.
+- [ ] RED same file: no script a **user** runs invokes a shell builtin, a bare `sh`, `bash`, `chmod`, `rm -rf`, or a `&&` chain inside a single `exec` string; `execFile` with an argument array is required. `npm` lifecycle scripts are checked too, since `npm run` on Windows uses `cmd.exe` — note that the existing `runtime:build` chains with `&&`, which `cmd.exe` supports, and the test pins that as acceptable while forbidding POSIX-only constructs such as `$(...)`, backticks, `||`, single-quoted arguments, and `2>&1` redirection.
+- [ ] RED same file: the permission story is **verified, not re-implemented**. `packages/storage/src/paths.ts` already creates the directory `0o700` and chmods `bayz.db`, `-wal`, and `-shm` to `0o600`, and already treats a `chmod` failure as tolerable because Android and FAT-derived mounts cannot represent POSIX modes. On this device a probe confirmed the root filesystem **does** honour `0o700`, so the Termux row can legitimately reach `PASS` here — but the test asserts the *observed* mode rather than the intended one, and records `UNVERIFIED: filesystem does not honour POSIX modes` with the mode it actually saw if a future target differs. On Windows the test asserts the code takes the same tolerated path and records the cell `UNVERIFIED` rather than claiming parity. A best-effort mode reported as a guarantee would be the exact kind of overclaim this phase forbids.
+- [ ] Verify RED.
+- [ ] GREEN: extract the resolver into `apps/server/src/data-dir.ts` and have `loadRuntimeConfig` call it, preserving the `~/.bayz` default exactly.
+- [ ] Verify: `node --test tests/portability.test.mjs` exits 0; `npm run test --workspace @bayz/server` exits 0 with the existing config tests unmodified; `node scripts/api-smoke.mjs` still 62/62.
+- [ ] Commit — `feat: single-source the Bayz data directory with portable permissions`
+
+### Task 4 — Packaging artifact
+
+**Create:** `scripts/pack.mjs`, `packaging/README.md`
+**Modify:** root `package.json` (`release:pack` script), `apps/server/package.json` (`files`, `bin`), every `packages/*/package.json` and `apps/*/package.json` (`license`)
+**Test:** `tests/pack.test.mjs`
+
+**Measured baseline, and the real problem this task must solve.** A `npm pack --workspace @bayz/server --dry-run` on the current tree produces a 39.6 kB tarball of **33 files including every `test/*.ts` file**, because `apps/server/package.json` has no `files` field. Worse, all nine workspace packages are `private: true` with no `license` field, and `@bayz/server` depends on `@bayz/storage`, `@bayz/router`, and the rest at version `0.1.0` — versions that exist only as workspace links. **A naive per-package `npm pack` therefore produces a tarball that cannot install anywhere**, because those dependencies resolve against no registry.
+
+**Packaging decision, stated before any code is written.** BAYZ ships as a **single self-contained artifact**, not nine published packages. `scripts/pack.mjs` builds one tarball whose `package.json` declares only the five real external runtime dependencies (`fastify`, `@fastify/static`, `react`, `react-dom`, `zod`) and whose `@bayz/*` code is included as bundled compiled output with the internal imports resolved. The alternative — publishing nine interdependent packages — would require a registry, version coordination, and abandoning `private: true`, none of which Phase 9 wants and one of which (publishing) is explicitly out of scope while the GitHub prohibition stands.
+
+- [ ] RED `tests/pack.test.mjs`: the tarball's `package.json` declares exactly the five external runtime dependencies and **no** `@bayz/*` dependency — a `file:` or unresolvable-version dependency in a release artifact is asserted absent, because that is the defect the measured baseline actually has; installing the tarball into a clean prefix with no registry access for `@bayz/*` succeeds (this is Task 5's install smoke, referenced here as the acceptance criterion).
+- [ ] RED same file: the tarball contents are exactly the intended set — compiled `dist` output for every `@bayz/*` package, the built dashboard bundle, `package.json`, `README.md`, and the licence file — and **exclude** every `test/` file (the 33-file baseline is the regression this pins), every `scripts/*-smoke.mjs`, every fuzz corpus file, `docs/`, `.git`, any `*.db`, any `*.env`, any `*.ts` source, and any `tsconfig.json`; the tarball is under a documented size bound; the `bin` entry resolves and `--version` prints the version without touching the filesystem or opening a database.
+- [ ] RED same file: a **secret scan over the tarball bytes** finds no `sk-`, no `Bearer `, no 64-hex literal, no `BEGIN PRIVATE KEY`, and none of the Phase 8 sentinels. A release artifact leaking a test fixture credential would be the worst possible outcome, so this is asserted on the extracted bytes rather than on the file list — and the measured baseline, which ships every test file, is exactly how such a leak would happen.
+- [ ] RED same file: a `license` field is present in the artifact `package.json` and matches the repository licence file added by 9K Task 3. `private: true` stays on the workspace packages, since nothing is being published.
+- [ ] Verify RED.
+- [ ] GREEN `scripts/pack.mjs`, exiting non-zero on any violation.
+- [ ] Verify: `node scripts/pack.mjs` exits 0; `node --test tests/pack.test.mjs` exits 0; `npm run runtime:verify` still exits 0.
+- [ ] Commit — `feat: add the Bayz release packaging script`
+
+### Task 5 — Install, first boot, and uninstall
+
+**Create:** `scripts/install-smoke.mjs`, `docs/install.md`
+**Test:** covered by the script's own exit code
+
+- [ ] Install the packed tarball into a **clean temporary prefix** with `npm install <tarball>`, using a temp `npm` cache and prefix so the developer's global environment is untouched, then run the installed binary — not the workspace source. This distinction matters: a workspace-only test proves nothing about the artifact, and the measured baseline artifact would have failed to install at all.
+- [ ] Prove the install resolves with **no access to any `@bayz/*` package** — point `npm` at a registry that would 404 for a scoped `@bayz` name, so a regression back to workspace-linked dependencies fails loudly here rather than in a user's terminal.
+- [ ] Prove on first boot: the data directory is created at the resolved default with mode `0o700`; the database is created at schema head; a token is required and a generated one is refused for a non-loopback bind per 9F; `/api/health` answers; the dashboard bundle is served from the packaged files with no remote origin; a real chat through a real loopback origin succeeds.
+- [ ] Prove restart: stop, restart, and assert the database reopens, identities and providers survive, and no lock or `-wal` residue blocks startup.
+- [ ] Prove uninstall semantics: removing the package leaves the data directory intact (data is the operator's, never silently deleted) and `docs/install.md` states exactly which path to delete to remove data, with the warning that deletion is irreversible because the DEKs go with it.
+- [ ] The script prints numbered checks so the matrix can cite `smoke:install#N` and exits non-zero on any failure.
+- [ ] Verify: `node scripts/install-smoke.mjs` exits 0; fill the Termux row's install/first-boot/restart/uninstall cells from its check numbers.
+- [ ] Commit — `test: add the Bayz install and first-boot smoke`
+
+### Task 6 — Upgrade path from every prior schema version
+
+**Create:** `scripts/upgrade-smoke.mjs`
+**Test:** `packages/storage/test/upgrade-ladder.test.ts`
+
+- [ ] RED `upgrade-ladder.test.ts`: for **every** version v1 through the Phase 9 head (v8 after 9D, or v7 if 9D's kind migration lands differently — the test reads the head from the migration table rather than hardcoding it), build a database at that version populated with real rows — secrets, providers, proxies, routes, telemetry, and where applicable identities — then open it with the current code and assert: every migration applies in order, `user_version` reaches head, every pre-existing secret still decrypts, every provider/proxy/route row survives with its values intact, and no row is silently dropped.
+- [ ] RED same file: **a downgrade is refused, not attempted** — a database at a version *above* head fails closed with a distinct code; a database with a gap in `schema_migrations` fails closed; the migration hash chain from 9F Task 5 validates after every upgrade; a mid-migration crash (simulated by throwing inside one migration) leaves the database at its **pre-migration** version with no partial DDL, proving atomicity.
+- [ ] RED same file: corrupted-config recovery — a database whose provider config JSON is unparseable yields `invalid_provider_config` for that row and **still allows the rest of the system to start**, so one bad row is not a bricked install; the recovery path is documented in `docs/install.md`.
+- [ ] Verify RED.
+- [ ] GREEN as needed.
+- [ ] `scripts/upgrade-smoke.mjs`: perform the same ladder against a real installed artifact, with a real chat succeeding after each upgrade step, and a `PRAGMA integrity_check` of `ok` after each.
+- [ ] Verify: `npm run test --workspace @bayz/storage` exits 0; `node scripts/upgrade-smoke.mjs` exits 0.
+- [ ] Commit — `test: prove the Bayz upgrade ladder from every prior schema`
+
+### Task 7 — CI workflow for the untestable platforms
+
+**Create:** `.github/workflows/platform-matrix.yml` (committed, **not** pushed), `docs/superpowers/2026-08-27-bayz-ci-notes.md`
+
+- [ ] The workflow defines a matrix over `ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `macos-latest`, and `macos-13`, each running `npm ci`, `npm run runtime:verify`, `node scripts/dependency-closure.mjs`, `node scripts/pack.mjs`, `node scripts/install-smoke.mjs`, and `node scripts/upgrade-smoke.mjs`, uploading each transcript as an artifact.
+- [ ] The workflow contains no secret, no registry token, no deployment step, and no push trigger to any remote — **this file is written and committed locally only.** Phase 9 prohibits adding or pushing to the GitHub remote, and a workflow file is inert until pushed.
+- [ ] `docs/superpowers/2026-08-27-bayz-ci-notes.md` states plainly that Windows ARM64 and Termux/Android have **no hosted runner**, so those rows can only be filled by a real device, and that Termux is filled here while Windows ARM64 stays `UNVERIFIED`.
+- [ ] A test asserts the workflow file exists, parses as YAML-ish text with the expected job names, and contains none of `secrets.`, `NPM_TOKEN`, `git push`, or `publish`.
+- [ ] Verify: `node --test tests/platform-matrix.test.mjs` still exits 0 (the workflow's existence does not upgrade any cell).
+- [ ] Commit — `ci: add the Bayz platform matrix workflow, unpushed`
+
+### Task 8 — Platform gate
+
+**Create:** `scripts/platform-gate.mjs`
+
+- [ ] The gate reads the platform matrix. `--report` always exits 0 and prints the current state. `--enforce` exits non-zero if any cell is `FAIL`, or if the **primary platform** (Termux/Android ARM64, the device this release is qualified on) has any `UNVERIFIED` mandatory cell. Non-primary platforms being `UNVERIFIED` prints a prominent notice and does not block, because blocking on a machine that does not exist would make the gate a lie rather than a control.
+- [ ] The gate prints the exact list of platforms a user must not be told are supported. This list feeds the README support section.
+- [ ] Verify: `node scripts/platform-gate.mjs --report` exits 0; `--enforce` reflects the true current state; `npm run runtime:verify` exits 0; `git diff --check` clean.
+- [ ] Commit — `test: add the Bayz platform gate`
+
+## Completion checklist
+
+- [ ] Runtime closure proven native-free and install-script-free: 5 direct external dependencies, 86 external packages total, closure size pinned.
+- [ ] Data directory single-sourced in `data-dir.ts`, `~/.bayz` default preserved for backward compatibility, `0o700`/`0o600` on POSIX, Windows permissions honestly `UNVERIFIED`.
+- [ ] No user-run script depends on a POSIX shell.
+- [ ] Tarball is a single self-contained artifact with only the five external runtime dependencies; no `@bayz/*` or `file:` dependency survives into it.
+- [ ] Tarball contents pinned, no `test/` or `*.ts` file, and secret-scanned on extracted bytes.
+- [ ] Install, first boot, restart, and uninstall proven against the **installed artifact**, not the workspace.
+- [ ] Upgrade ladder from v1 to head with data intact; downgrade refused; mid-migration crash atomic.
+- [ ] One bad config row does not brick startup.
+- [ ] CI workflow committed locally, contains no secret and no push.
+- [ ] Every non-Termux platform row is `UNVERIFIED`, never `PASS` without a transcript.

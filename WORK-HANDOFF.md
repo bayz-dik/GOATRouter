@@ -11,6 +11,11 @@
 - Phase 7 Operator Dashboard: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Flux Core V2 + scalable provider constellation: **INTEGRATED**, visually LOCKED.
 - Phase 8 Usage Telemetry: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Phase 9 GOAT Release: **PLANNING COMPLETE, NOT IMPLEMENTED.** One spec plus
+  twelve subprogram plans, 608 checkbox steps across 86 tasks. Zero source files
+  changed. A previous session was killed by SIGKILL after writing 9A–9H; this
+  session recovered that work untouched, wrote 9I–9L, and self-reviewed all
+  thirteen documents against the real repository.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
@@ -20,6 +25,19 @@
   - `docs/superpowers/plans/2026-08-26-bayz-router-http-api.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-dashboard.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-usage-telemetry.md`
+- Phase 9 plans (approved, **unexecuted**):
+  - `docs/superpowers/plans/2026-08-27-phase9a-universal-client-gateway.md`
+  - `docs/superpowers/plans/2026-08-27-phase9b-streaming-and-tools.md`
+  - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md`
+  - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md`
+  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`
+  - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md`
+  - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
+  - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
+  - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
+  - `docs/superpowers/plans/2026-08-27-phase9j-cross-platform-packaging.md`
+  - `docs/superpowers/plans/2026-08-27-phase9k-supply-chain-release-integrity.md`
+  - `docs/superpowers/plans/2026-08-27-phase9l-feature-completeness-gate.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
@@ -28,6 +46,7 @@
   - `docs/superpowers/specs/2026-08-26-bayz-router-http-api-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-dashboard-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-usage-telemetry-design.md`
+  - `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
@@ -779,14 +798,138 @@ Migration v5 adds the only new tables. Neither has a column able to hold content
   drops the row rather than failing the chat. That is correct for routing
   correctness, but it means telemetry gaps are not surfaced to the operator.
 
+## Phase 9 GOAT — planning state
+
+Planning only. **No source file was created or modified.** One spec, twelve
+subprogram plans, 86 tasks, 608 checkbox steps, all under `docs/superpowers/`.
+
+- Spec: `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md`
+- Plans: `2026-08-27-phase9{a..l}-*.md`
+
+### Recovery from the SIGKILL
+
+A prior session wrote the spec and plans 9A–9H, then was killed by signal 9 before
+committing. Those nine files were recovered **untracked and unmodified** — `git
+status` showed a clean tree with exactly nine untracked files, so nothing was
+half-written and nothing needed rebuilding. This session wrote 9I–9L, then
+self-reviewed all thirteen documents against the actual repository rather than
+against the plan text, which is where the corrections below came from.
+
+### Subprogram map
+
+```text
+9A Universal Client Gateway ......... packages/gateway (new)
+9B Streaming + Tool Calling ........ packages/router, apps/server
+9C Client Identity / Scoped Keys ... packages/identity (new), apps/server
+9D Custom Provider Completeness .... packages/providers
+9E Multi-Proxy Easy UX ............. packages/proxy, packages/router, apps/*
+9F Fortress Security Expansion ..... packages/storage, packages/security, apps/server
+9G Agent / Tool Injection Security . packages/gateway, packages/capability (new)
+9H Client Compatibility Matrix ..... scripts/, docs/
+9I Fuzz / Chaos / Load / Soak ...... scripts/fuzz/, chaos/load/soak smokes
+9J Cross-Platform / Packaging ...... scripts/, packaging/
+9K Supply Chain / Release Integrity  scripts/, sbom/
+9L Feature Completeness Gate ....... docs/, scripts/release-gate.mjs
+```
+
+### Corrections the self-review produced
+
+Each of these was a defect in the plan text, found by measuring the repository:
+
+1. **Migration numbering could collide.** 9C, 9D, and 9E each add a migration and
+   9D/9E run in parallel, so v6/v7/v8 could not be assigned statically. The spec now
+   carries a numbering ledger with a renumbering rule, and no test hardcodes a head
+   version — every migration test reads the head from the migration table.
+2. **`runtime:build` order was specified three times inconsistently.** The spec now
+   fixes the full twelve-target topological order in one place; the three plans
+   reference it instead of each inventing an insertion point.
+3. **9F was labelled fully parallel and is not.** Its posture ladder, root-key
+   rotation route, and request signing need 9C's scope vocabulary to express
+   `admin`-gating. Its plan now splits: Tasks 1, 3, 4, 5, 8 are parallel; Tasks 2, 6,
+   7 depend on 9C Task 1.
+4. **9I was ordered after 9H only.** Load measurement must observe 9F's concurrency
+   cap and chaos must exercise 9G's dispatch, so the graph now shows both.
+5. **The Continue client is not installed.** The prior text recorded it as present
+   and testable. `command -v continue` hits the **shell builtin**; there is no
+   binary and no `~/.continue`. Corrected in the spec and in 9H. `opencode` is
+   genuinely present at `/usr/local/bin/opencode`; `antigravity`, `hermes`, `cline`,
+   and `aider` are absent.
+6. **The packaging plan would have produced an artifact that cannot install.** A
+   measured `npm pack --dry-run` on `@bayz/server` ships 33 files **including all 14
+   `test/*.ts` files**, and every workspace package is `private: true` with no
+   `license` and inter-package dependencies at `0.1.0` that resolve only through
+   workspace links. 9J Task 4 now specifies a single self-contained artifact
+   declaring only the five external dependencies, and its install smoke proves the
+   install works with `@bayz/*` unresolvable from any registry.
+7. **The dependency-closure guard had the wrong shape.** Measured: the runtime
+   closure is **93 entries — 7 workspace links plus 86 external packages** — out of
+   270 lockfile entries, with zero `.node` binaries, zero install scripts, and zero
+   `os`/`cpu` restrictions. The 53 platform-restricted and 2 install-scripted
+   packages are dev-only, via `vite`. "Five runtime dependencies" is the count of
+   *directly declared* ones; both numbers are now stated, and the walker is required
+   to follow npm's nested lookup rules or it would miss four nested entries.
+8. **The anti-fabrication test would have failed against its own specs.** A naive
+   ban on `zeroize`/`reproducible build` trips on the twelve existing lines that
+   *refuse* those guarantees. The rule is now negation-aware and is validated against
+   the real twelve-line corpus, not an invented example. The performance-figure rule
+   also had to exempt configured bounds (`64 KiB`, `250 ms`) from measured results
+   (`p95`, `throughput`), or every plan document would have failed it.
+9. **The data-directory task would have caused data loss.** `config.ts:27` resolves
+   `~/.bayz`. Switching to `%LOCALAPPDATA%`/XDG defaults would orphan every existing
+   install's database. 9J Task 3 now keeps `~/.bayz` as the default on every
+   platform and adds platform paths only as a fallback when it does not exist.
+10. **Permissions were to be re-implemented rather than verified.**
+    `packages/storage/src/paths.ts` already does `0o700`/`0o600` best-effort with a
+    documented Android/FAT tolerance. A probe confirmed this filesystem honours
+    `0o700`, so the task now asserts the *observed* mode.
+11. **The evidence regex was specified four times.** 9H, 9I, 9J, and 9K each carried
+    an identical inline copy. 9L Task 1 now builds `scripts/evidence.mjs` and
+    explicitly refactors all four to import it.
+12. **The aggregate gate would have taken hours.** Dynamic `scripts/*-smoke.mjs`
+    discovery picks up soak (10 min default, 2 h long mode). 9L Task 3 now classifies
+    every script `fast` or `long`, runs fast by default, and requires `--full` for
+    the long set — printing plainly when load/soak were not re-measured.
+13. **Scope enforcement cited "eight management routes".** Measured: 26
+    authenticated routes (8 providers, 8 proxies, 5 routes, 4 usage, plus
+    `/api/status`), with `/api/health` anonymous. Also, `GET
+    /api/providers/:id/credential` does not exist — `PUT` and `DELETE` do — so the
+    `404`-not-`403` assertion needed the method-mismatch reasoning made explicit.
+14. **No licence exists.** No `LICENSE` file, no `license` field anywhere. Harmless
+    while everything is `private: true`, fatal for a distributable tarball. 9K Task 3
+    now blocks on a user decision rather than picking one.
+
+### Open decisions requiring a user answer
+
+1. **Licence identifier** for the `LICENSE` file and the nine `license` fields.
+   Until answered, the supply-chain gate reports `UNKNOWN` and blocks release.
+2. **Signing key custody** — whether releases are signed and with whose key. An
+   unsigned local build is normal and reports `UNVERIFIED: unsigned build`.
+
+### Locks carried into Phase 9
+
+Flux Core V2 visually LOCKED (SHA-pinned by 9L Task 5) · no client product name in
+any runtime path · no credential read path · no content persistence · GitHub push
+prohibited, remote not added, asserted by a test.
+
+### Honest boundaries the program will not cross
+
+No mid-stream failover · no memory wiping in JavaScript · no secure disk overwrite
+(erasure is cryptographic) · no rollback prevention without trusted monotonic
+storage · no OS keystore on Termux/Android · no elimination of DNS rebinding · no
+reproducible-build claim · no prompt-injection filtering as a boundary · no `PASS`
+for a platform or client that cannot run here. Six of seven platforms and two of
+three Core clients are `UNVERIFIED` on this device by measurement, not by choice.
+
 ## Next steps
 
-1. **Verify Flux Core in a real browser.** Motion and typography equivalence with
+1. **Answer the two open decisions** above — licence identifier and signing key
+   custody. 9K Task 3 blocks on the first.
+2. **Execute Phase 9 in dependency order**: 9C → 9A → 9B → 9G, with 9D, 9E, and
+   9F's independent tasks in parallel, then 9H, then 9I, then 9J → 9K, then 9L last.
+   9F Tasks 2, 6, and 7 wait on 9C Task 1.
+3. **Verify Flux Core in a real browser.** Motion and typography equivalence with
    the approved standalone file is *unverified* — this environment has no browser.
    Compare side by side before treating the port as visually final.
-2. **Wire real usage telemetry** into `flux/types.ts`. Until then the panel runs the
-   approved simulation and labels itself `SIM`.
-3. **Content-Security-Policy** — the Core serves the dashboard with no CSP header.
-   Flux Core is already CSP-compatible (no remote font, no `eval`, no injected
-   code), so a strict policy can now be added without exceptions.
-4. **Combos and usage** — still unimplemented, with no schema, per the phase plans.
+4. **Do not push to GitHub.** A push requires implementation complete, the feature
+   gate green, the security gate green, a clean tree, a verified release candidate,
+   and an explicit user instruction.
