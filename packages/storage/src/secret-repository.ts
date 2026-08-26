@@ -77,6 +77,15 @@ export interface SecretStorage extends SecureSecretRepository {
   readonly keyProvider: KeyProviderKind;
   readonly keyId: string;
   readonly appliedMigrations: number;
+  /**
+   * The shared connection, for domain tables that are not secrets.
+   *
+   * Phase 3 owns the `providers` registry and needs the same connection so a
+   * provider row and its credential live in one database with one set of
+   * pragmas. It is the `SqlDatabase` interface, not a concrete driver, so the
+   * single-import rule for `node:sqlite` is unaffected.
+   */
+  readonly sql: SqlDatabase;
   activeKeyId(): string | undefined;
   /** Envelope introspection for diagnostics and tests; returns no plaintext. */
   inspect(name: string): SecretEnvelopeView;
@@ -188,6 +197,7 @@ export function openSecretStorage(
       appliedMigrations: database.appliedMigrations,
       keyProvider: provider.kind,
       keyId,
+      sql: db,
 
       activeKeyId(): string | undefined {
         return readMetadata(db, ACTIVE_KEY_ID);

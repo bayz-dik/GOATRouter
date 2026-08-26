@@ -51,3 +51,10 @@ export {
   discoverGeminiModels,
   type DiscoverGeminiOptions,
 } from "./discovery-gemini.js";
+export {
+  createProviderManager,
+  type CreateProviderManagerOptions,
+  type ProviderLogger,
+  type ProviderManager,
+  type ProviderView,
+} from "./manager.js";

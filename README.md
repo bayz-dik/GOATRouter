@@ -21,9 +21,10 @@ the explicit remote-access setting are configured.
 ## Secure local storage
 
 Phase 2 adds a local SQLite store and an encrypted-at-rest secret primitive in
-`packages/storage`. It stores encrypted secrets, schema version, and the active
-key fingerprint — nothing else. There is no provider, proxy, route, combo, or
-usage schema yet, and no HTTP route or dashboard control touches storage.
+`packages/storage`. It stores encrypted secrets, schema version, the active key
+fingerprint, and (from Phase 3) the provider registry. There is no proxy, route,
+combo, or usage schema yet, and no HTTP route or dashboard control touches
+storage.
 
 - Database: `<BAYZ_DATA_DIR>/bayz.db` (default `~/.bayz/bayz.db`)
 - Driver: Node's built-in `node:sqlite`, behind a swappable adapter. No native
@@ -82,6 +83,65 @@ Not implemented yet, and deliberately not faked: OS keychain custody (DPAPI,
 macOS Keychain, Linux Secret Service, Android Keystore) exists as an interface
 that reports itself unavailable; Argon2id awaits a binding that does not break
 the Termux baseline; full anti-rollback needs OS-backed monotonic storage.
+
+## Providers
+
+Phase 3 adds `packages/providers`: a provider registry, per-provider credential
+custody, and model discovery. There is still no routing, no proxy support, no
+combos, and no HTTP route or dashboard control for any of it — the manager is a
+library API today.
+
+- Kinds: `openai-compatible`, `openrouter`, `gemini`, `codex-oauth`
+- Registry table: `providers` (id, kind, display name, base URL, enabled, config).
+  It has **no** credential column; keys live only in the encrypted `secrets`
+  table under the scoped name `provider:<id>:api_key`.
+- Verify providers against a real database and a real HTTP upstream:
+  `node scripts/provider-smoke.mjs`
+
+### Credential handling
+
+`ProviderManager` can set, test, and delete a credential. It deliberately cannot
+return one: there is no `getCredential`, and a test scans the package source to
+keep it that way. A stored key leaves the process only inside an upstream request
+header — `Authorization: Bearer …` for the OpenAI-compatible family, or
+`x-goog-api-key` for Gemini. It is never placed in a URL, where it would land in
+proxy logs and error text.
+
+A tampered credential raises an error rather than reporting "no credential set",
+so corruption can never be mistaken for an unconfigured provider. Deleting a
+provider deletes its credential in the same call.
+
+### Configuration is strict
+
+A provider accepts exactly three config keys: `timeoutMs` (1000–120000),
+`discoveryPath` (an absolute path, no query, no traversal), and `modelLimit`
+(1–500). Unknown keys are rejected rather than ignored, which is what makes
+header smuggling impossible to express — there is no key that can carry an
+`Authorization` value.
+
+Base URLs must be absolute `http`/`https`. Userinfo (`https://user:pass@host`)
+is rejected, and any query string or fragment is stripped before storage, so a
+credential cannot be smuggled into the endpoint itself.
+
+### Discovery treats upstreams as hostile
+
+A model list from a remote provider is attacker-controlled data. Every response
+is size-capped (64 KiB by default) while streaming, decoded as strict UTF-8,
+parsed once, and required to match a known envelope. Model ids must be
+conservative slugs; a malformed entry is skipped rather than allowed to poison or
+block the rest of the list. Results are deduplicated and capped at 500 ids
+regardless of configuration. Upstream response bodies never appear in an error
+message or log line.
+
+`401`/`403` surface as `auth_failed`, `429` as `rate_limited`, other failures as
+`upstream_error`, timeouts and network failures as `unreachable`, and an
+unintelligible payload as `discovery_failed`.
+
+### Deferred honestly
+
+`codex-oauth` providers can be registered, but `setCredential` and
+`discoverModels` refuse with `unsupported_operation`. The OAuth flow needs an
+external account and is not implemented; nothing here pretends otherwise.
 
 ## Deferred verification
 
