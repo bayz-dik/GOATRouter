@@ -10,12 +10,13 @@ export type Migration = {
  * Ordered, hand-rolled migrations. Versions are 1..n with no gaps.
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
- * provider registry, v3 the proxy registry, and v4 the route registry. None of
- * them holds a credential column, and `routes` deliberately has no column able to
- * hold a prompt or a completion: the router persists neither. Provider keys live
- * in `secrets` under `provider:<id>:api_key` and proxy passwords under
- * `proxy:<id>:password`. There is still no combo or usage table: those belong to
- * their own phases and would be speculative here.
+ * provider registry, v3 the proxy registry, v4 the route registry, and v5 usage
+ * telemetry. None of them holds a credential column, and neither `routes` nor the
+ * usage tables have any column able to hold a prompt, a completion, a request or
+ * response body, or an arbitrary upstream error string. Provider keys live in
+ * `secrets` under `provider:<id>:api_key` and proxy passwords under
+ * `proxy:<id>:password`. There is still no combo table: that belongs to its own
+ * phase and would be speculative here.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -102,6 +103,62 @@ export const MIGRATIONS: readonly Migration[] = [
        )`,
       `CREATE UNIQUE INDEX routes_model_provider_idx
          ON routes (model, provider_id)`,
+    ],
+  },
+  {
+    version: 5,
+    statements: [
+      /*
+       * Usage telemetry: metadata only.
+       *
+       * There is deliberately no TEXT column able to hold a prompt, a completion, a
+       * message, a request or response body, an Authorization header, or an
+       * arbitrary upstream error string. `failure_category` is enum-constrained so
+       * error text cannot be smuggled through it, which is a schema-level backstop
+       * behind the telemetry boundary that already refuses it.
+       *
+       * No foreign key to `providers`/`routes`/`proxies`: a usage row is a
+       * historical fact and must survive the deletion of what it refers to.
+       */
+      `CREATE TABLE usage_requests (
+         request_id        TEXT    PRIMARY KEY,
+         occurred_at       TEXT    NOT NULL,
+         route_id          TEXT,
+         provider_id       TEXT,
+         proxy_id          TEXT,
+         model             TEXT    NOT NULL,
+         routing_mode      TEXT    NOT NULL CHECK (routing_mode IN ('direct','combo','failover')),
+         outcome           TEXT    NOT NULL CHECK (outcome IN ('ok','failed')),
+         failure_category  TEXT    CHECK (failure_category IS NULL OR failure_category IN (
+                             'auth_failed','rate_limited','unreachable','timeout',
+                             'upstream_error','invalid_response','response_too_large',
+                             'credential_missing','no_route','all_routes_failed',
+                             'unsupported_operation','proxy_error','forbidden','refused',
+                             'protocol_error','unknown_error')),
+         latency_ms        INTEGER NOT NULL CHECK (latency_ms >= 0),
+         attempts          INTEGER NOT NULL CHECK (attempts >= 0),
+         prompt_tokens     INTEGER CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0),
+         completion_tokens INTEGER CHECK (completion_tokens IS NULL OR completion_tokens >= 0),
+         cached_tokens     INTEGER CHECK (cached_tokens IS NULL OR cached_tokens >= 0)
+       )`,
+      `CREATE INDEX usage_requests_occurred_idx ON usage_requests (occurred_at)`,
+      `CREATE TABLE usage_attempts (
+         id               INTEGER PRIMARY KEY AUTOINCREMENT,
+         request_id       TEXT    NOT NULL,
+         occurred_at      TEXT    NOT NULL,
+         route_id         TEXT,
+         provider_id      TEXT    NOT NULL,
+         outcome          TEXT    NOT NULL CHECK (outcome IN ('ok','failed')),
+         failure_category TEXT    CHECK (failure_category IS NULL OR failure_category IN (
+                            'auth_failed','rate_limited','unreachable','timeout',
+                            'upstream_error','invalid_response','response_too_large',
+                            'credential_missing','no_route','all_routes_failed',
+                            'unsupported_operation','proxy_error','forbidden','refused',
+                            'protocol_error','unknown_error')),
+         latency_ms       INTEGER NOT NULL CHECK (latency_ms >= 0)
+       )`,
+      `CREATE INDEX usage_attempts_occurred_idx ON usage_attempts (occurred_at)`,
+      `CREATE INDEX usage_attempts_provider_idx ON usage_attempts (provider_id)`,
     ],
   },
 ];

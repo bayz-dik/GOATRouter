@@ -60,6 +60,8 @@ test("a fresh database gains exactly the tables of the current schema", () => {
       "runtime_metadata",
       "schema_migrations",
       "secrets",
+      "usage_attempts",
+      "usage_requests",
     ]);
   } finally {
     db.close();
@@ -186,14 +188,130 @@ test("a failing migration is atomic and leaves the version untouched", () => {
   }
 });
 
-test("no speculative combo or usage schema exists", () => {
+test("the usage tables store metadata only and cannot hold content", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    for (const table of ["usage_requests", "usage_attempts"]) {
+      const columns = db
+        .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+        .all()
+        .map((row) => String(row.name).toLowerCase());
+      assert.ok(columns.length > 0, `${table} must exist`);
+      // A column able to hold content would make the metadata-only guarantee
+      // unenforceable at the schema level.
+      for (const forbidden of [
+        "prompt",
+        "completion",
+        "content",
+        "message",
+        "messages",
+        "body",
+        "request_body",
+        "response_body",
+        "system_prompt",
+        "tool_arguments",
+        "authorization",
+        "credential",
+        "api_key",
+        "password",
+        "token",
+        "secret",
+        "cookie",
+        "error_body",
+        "error_message",
+      ]) {
+        assert.equal(
+          columns.includes(forbidden),
+          false,
+          `${table} must not have a ${forbidden} column`,
+        );
+      }
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("usage_requests pins its exact metadata column set", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('usage_requests')")
+      .all()
+      .map((row) => String(row.name))
+      .sort();
+    assert.deepEqual(columns, [
+      "attempts",
+      "cached_tokens",
+      "completion_tokens",
+      "failure_category",
+      "latency_ms",
+      "model",
+      "occurred_at",
+      "outcome",
+      "prompt_tokens",
+      "provider_id",
+      "proxy_id",
+      "request_id",
+      "route_id",
+      "routing_mode",
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test("usage rows constrain outcome, routing mode, and non-negative numbers", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const insert = db.prepare(
+      `INSERT INTO usage_requests
+         (request_id, occurred_at, route_id, provider_id, proxy_id, model, routing_mode,
+          outcome, failure_category, latency_ms, attempts, prompt_tokens,
+          completion_tokens, cached_tokens)
+       VALUES (?, '2026-08-26T00:00:00.000Z', 'r1', 'p1', NULL, 'gpt-4o', ?, ?, NULL, ?, 1,
+               NULL, NULL, NULL)`,
+    );
+    insert.run("ok-1", "combo", "ok", 10);
+
+    assert.throws(
+      () => insert.run("bad-mode", "sideways", "ok", 10),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("bad-outcome", "combo", "maybe", 10),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("bad-latency", "combo", "ok", -1),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+    );
+    assert.throws(
+      () => insert.run("ok-1", "combo", "ok", 10),
+      (error: unknown) =>
+        error instanceof StorageError && error.code === "storage_unavailable",
+      "request ids must be unique",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("no speculative combo schema exists", () => {
   const db = freshDb();
   try {
     runMigrations(db);
     const names = tableNames(db);
-    // `providers` (v2), `proxies` (v3), and `routes` (v4) are intentionally
-    // absent from this list: Phases 3-5 own them. Everything below still belongs
-    // to a later phase, so creating it now would be speculative.
+    // `providers` (v2), `proxies` (v3), `routes` (v4), and the usage tables (v5)
+    // are intentionally absent from this list: Phases 3-8 own them. Everything
+    // below still belongs to a later phase, or would be a content store, so
+    // creating it now would be speculative or unsafe.
     for (const forbidden of [
       "provider",
       "proxy",
