@@ -1,5 +1,6 @@
 import type { Agent as HttpAgent } from "node:http";
 import type { Agent as HttpsAgent } from "node:https";
+import { randomUUID } from "node:crypto";
 import { redactSecrets } from "@bayz/security";
 import {
   type ProviderManager,
@@ -42,11 +43,27 @@ export type ChatResult = ChatResponse & {
 
 export type RouterLogger = (payload: Record<string, unknown>) => void;
 
+/**
+ * Observational telemetry sink.
+ *
+ * Receives display-safe metadata only. It is deliberately typed as an opaque
+ * record: the router assembles named scalar fields and the telemetry boundary
+ * validates them, so no request or response object is ever handed over.
+ */
+export type RouterRecorder = (event: Record<string, unknown>) => void;
+
+export type ChatOptions = {
+  /** Correlation id. Replaced when it is not a safe slug. */
+  requestId?: string;
+};
+
 export type CreateRouterOptions = {
   storage: SecretStorage;
   providers: ProviderManager;
   proxies: ProxyManager;
   logger?: RouterLogger;
+  /** When present, routing facts are reported here as metadata. */
+  recorder?: RouterRecorder;
   now?: () => string;
 };
 
@@ -59,8 +76,23 @@ export interface Router {
   listRoutes(): RouteRecord[];
   updateRoute(id: string, patch: UpdateRouteInput): RouteRecord;
   deleteRoute(id: string): boolean;
-  chat(request: unknown): Promise<ChatResult>;
+  chat(request: unknown, options?: ChatOptions): Promise<ChatResult>;
   close(): void;
+}
+
+const SAFE_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+
+/**
+ * A correlation id safe to store and log.
+ *
+ * A caller-supplied value is accepted only when it is already a bounded slug;
+ * anything else is replaced with a generated id, so nothing user-controlled can
+ * ride into telemetry through this field.
+ */
+function safeRequestId(supplied: unknown): string {
+  return typeof supplied === "string" && SAFE_REQUEST_ID.test(supplied)
+    ? supplied
+    : `req_${randomUUID()}`;
 }
 
 function codeOf(error: unknown): string | undefined {
@@ -72,6 +104,7 @@ function codeOf(error: unknown): string | undefined {
 export function createRouter(options: CreateRouterOptions): Router {
   const { storage, providers, proxies, now } = options;
   const log: RouterLogger = options.logger ?? (() => {});
+  const recorder = options.recorder;
   const repositoryOptions: CreateRouteRepositoryOptions =
     now === undefined ? {} : { now };
   const repository: RouteRepository = createRouteRepository(
@@ -168,15 +201,52 @@ export function createRouter(options: CreateRouterOptions): Router {
       return removed;
     },
 
-    async chat(input: unknown): Promise<ChatResult> {
+    async chat(input: unknown, chatOptions: ChatOptions = {}): Promise<ChatResult> {
       // Validated first: a malformed request must never reach route selection,
-      // let alone the network.
+      // let alone the network. Nothing is emitted for a request that never entered
+      // routing: there are no routing facts to observe yet.
       const request = parseChatRequest(input);
+      const requestId = safeRequestId(chatOptions.requestId);
+
+      /**
+       * Emit one metadata event.
+       *
+       * Only named scalar fields are assembled here; no request, response, or error
+       * object is ever passed through. A throwing sink is swallowed because
+       * telemetry is observational and must never become part of routing
+       * correctness.
+       */
+      const emit = (event: Record<string, unknown>): void => {
+        if (recorder === undefined) {
+          return;
+        }
+        try {
+          recorder({
+            requestId,
+            occurredAt: new Date().toISOString(),
+            model: request.model,
+            ...event,
+          });
+        } catch {
+          // A broken recorder cannot break a chat.
+        }
+      };
+
       const candidates = resolveCandidates(repository.list(), request.model);
       if (candidates.length === 0) {
+        emit({
+          kind: "request.failed",
+          routingMode: "direct",
+          failureCategory: "no_route",
+          latencyMs: 0,
+          attempts: 0,
+        });
         throw new RouterError("no_route", "chat-select");
       }
 
+      // Mode is a routing fact: more than one candidate means the request could
+      // legitimately land elsewhere, and a second attempt makes it a failover.
+      const baseMode = candidates.length >= 2 ? "combo" : "direct";
       let attempts = 0;
       let lastFailure: unknown;
       let skipped = 0;
@@ -205,6 +275,49 @@ export function createRouter(options: CreateRouterOptions): Router {
               latencyMs,
             }),
           );
+          const mode = attempts > 1 ? "failover" : baseMode;
+          if (attempts > 1) {
+            // The handoff itself is worth naming, so an operator can see which
+            // provider took over.
+            emit({
+              kind: "failover.started",
+              routeId: route.id,
+              providerId: provider.id,
+              ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+              routingMode: mode,
+              latencyMs,
+              attempts,
+            });
+          }
+          emit({
+            kind: "provider.attempted",
+            routeId: route.id,
+            providerId: provider.id,
+            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            routingMode: mode,
+            latencyMs,
+            attempts,
+          });
+          emit({
+            kind: "request.completed",
+            routeId: route.id,
+            providerId: provider.id,
+            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            routingMode: mode,
+            latencyMs,
+            attempts,
+            // Only counts the upstream actually reported. Absent stays absent: a
+            // provider that reported nothing is not a provider that used zero.
+            ...(response.usage?.promptTokens === undefined
+              ? {}
+              : { promptTokens: response.usage.promptTokens }),
+            ...(response.usage?.completionTokens === undefined
+              ? {}
+              : { completionTokens: response.usage.completionTokens }),
+            ...(response.usage?.totalTokens === undefined
+              ? {}
+              : { cachedTokens: undefined }),
+          });
           return {
             ...response,
             routeId: route.id,
@@ -226,16 +339,45 @@ export function createRouter(options: CreateRouterOptions): Router {
               latencyMs: Date.now() - started,
             }),
           );
+          const failLatency = Date.now() - started;
+          const category = code ?? "unknown_error";
+          emit({
+            kind: "provider.failed",
+            routeId: route.id,
+            providerId: provider.id,
+            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            routingMode: attempts > 1 ? "failover" : baseMode,
+            failureCategory: category,
+            latencyMs: failLatency,
+            attempts,
+          });
           lastFailure = error;
           if (code === undefined || !FAILOVER_CODES.has(code)) {
             // Deterministic failures and credential problems must surface, not be
             // masked by trying somewhere else.
+            emit({
+              kind: "request.failed",
+              routeId: route.id,
+              providerId: provider.id,
+              ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+              routingMode: attempts > 1 ? "failover" : baseMode,
+              failureCategory: category,
+              latencyMs: failLatency,
+              attempts,
+            });
             throw error;
           }
         }
       }
 
       if (lastFailure !== undefined) {
+        emit({
+          kind: "request.failed",
+          routingMode: attempts > 1 ? "failover" : baseMode,
+          failureCategory: codeOf(lastFailure) ?? "all_routes_failed",
+          latencyMs: 0,
+          attempts,
+        });
         // The real upstream code is preserved rather than flattened, so an
         // operator sees whether they were rate limited or simply offline.
         throw lastFailure;
@@ -243,6 +385,13 @@ export function createRouter(options: CreateRouterOptions): Router {
       // Every candidate was skipped because its provider is disabled. That is a
       // distinct situation from "the network failed", and `no_route` would be
       // wrong too: routes exist, they are just unusable right now.
+      emit({
+        kind: "request.failed",
+        routingMode: baseMode,
+        failureCategory: "all_routes_failed",
+        latencyMs: 0,
+        attempts,
+      });
       throw new RouterError("all_routes_failed", `chat-skipped-${skipped}`);
     },
 

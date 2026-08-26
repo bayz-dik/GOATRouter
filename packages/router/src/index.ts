@@ -59,6 +59,8 @@ export {
   createRouter,
   type ChatResult,
   type CreateRouterOptions,
+  type ChatOptions,
   type Router,
   type RouterLogger,
+  type RouterRecorder,
 } from "./router.js";
