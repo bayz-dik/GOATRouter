@@ -22,9 +22,10 @@ the explicit remote-access setting are configured.
 
 Phase 2 adds a local SQLite store and an encrypted-at-rest secret primitive in
 `packages/storage`. It stores encrypted secrets, schema version, the active key
-fingerprint, the provider registry (Phase 3), and the proxy registry (Phase 4).
-There is no route, combo, or usage schema yet, and no HTTP route or dashboard
-control touches storage.
+fingerprint, the provider registry (Phase 3), the proxy registry (Phase 4), and
+the route registry (Phase 5). There is no combo or usage schema yet, no table can
+hold a prompt or a completion, and no HTTP route or dashboard control touches
+storage.
 
 - Database: `<BAYZ_DATA_DIR>/bayz.db` (default `~/.bayz/bayz.db`)
 - Driver: Node's built-in `node:sqlite`, behind a swappable adapter. No native
@@ -206,6 +207,78 @@ or header ever appears in an error message or log line.
 No SOCKS4/4a, no proxy chaining, no PAC files, no UDP `ASSOCIATE` or `BIND`, and
 no TLS connection to the proxy itself (`https://` proxy endpoints). Only
 `CONNECT` is implemented, which is what an LLM API call needs.
+
+## Router
+
+Phase 5 adds `packages/router`: model-to-provider routes, deterministic
+selection, an OpenAI-compatible chat client, and failover. The router owns its
+own request path over `node:http`/`node:https`, which is what lets a
+proxy-bound route actually traverse its proxy.
+
+- Registry table: `routes` (id, model, provider, proxy, priority, enabled,
+  config). Deleting a provider removes its routes; deleting a proxy degrades its
+  routes to direct rather than breaking them.
+- Verify the router against real origins and a real `CONNECT` proxy:
+  `node scripts/router-smoke.mjs`
+
+### Route selection is deterministic
+
+A route's `model` is either an exact id or a single trailing wildcard
+(`gpt-4*`). It is never a regex — an operator-supplied regex is a
+denial-of-service surface — and a bare `*` is refused because it would silently
+shadow every specific binding.
+
+Candidates are ordered by specificity (exact beats wildcard, longer prefix beats
+shorter), then `priority`, then id. The id tiebreak matters: without it, routing
+would depend on insertion order, and nobody could explain after the fact why a
+request went where it did.
+
+### Prompts are never stored and never logged
+
+No table can hold a prompt or a completion, and the router's log records only
+route id, provider id, whether a proxy was used, latency, and outcome. A test
+scans the package source for any `INSERT`/`UPDATE` touching message content, and
+the smoke script scans the raw database bytes for the prompt after a completed
+request.
+
+Credentials are borrowed, not fetched: `ProviderManager.withCredential(id, fn)`
+lends the plaintext for the duration of one call. There is still no
+`getCredential` anywhere, and a source scan enforces it. A corrupt credential
+fails the request rather than degrading to an unauthenticated one, and failover
+to a second provider never carries the first provider's key.
+
+### Requests and responses are strictly validated
+
+A request accepts exactly `model`, `messages`, `temperature`, `maxTokens`,
+`topP`, and `stop`. Unknown keys are rejected, which is what stops a caller from
+smuggling `stream: true`, a tool definition, a header bag, or a provider
+override past the router. The serialized body is capped at 1 MiB.
+
+A response must carry `choices[0].message.content` as a string; a malformed one
+is an error, never an empty completion. Only known fields are copied onto a fresh
+object, so an upstream cannot inject properties into a Bayz result or reach
+`Object.prototype`. Responses are capped at 2 MiB on the wire and 512 KiB of
+content.
+
+### Failover is bounded and semantic
+
+The router walks candidate routes in order, advancing only on `unreachable`,
+`rate_limited`, or `upstream_error` — failures where a different provider may
+legitimately succeed. It stops immediately on `auth_failed`, a missing
+credential, and any validation or response-shape failure, because retrying
+elsewhere would mask a misconfiguration instead of surfacing it. When every
+candidate fails, the last real error code is raised rather than a generic one.
+
+### Deferred honestly
+
+**Streaming (SSE) is not implemented.** A correct implementation needs
+incremental parsing and cancellation semantics, and a half-verified version would
+be worse than none. `stream: true` is rejected rather than ignored, so no caller
+can believe it is streaming when it is not.
+
+Combos (multi-provider fan-out) and usage accounting are also not implemented,
+and no schema for either exists. Global `fetch` still is not proxied — only the
+router's own `node:http` path honors a proxy.
 
 ## Deferred verification
 

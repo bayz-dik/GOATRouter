@@ -6,48 +6,56 @@
 - Phase 2 Security + SQLite Storage: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 3 Provider Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Phase 4 Proxy Manager: **COMPLETE**, Task 1–8, `runtime:verify` green.
+- Phase 5 Router: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-provider-manager.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-proxy-manager.md`
+  - `docs/superpowers/plans/2026-08-26-bayz-router-router.md`
 - Approved specs:
   - `docs/superpowers/specs/2026-08-26-bayz-router-security-sqlite-design.md` (Revision 2, Fortress)
   - `docs/superpowers/specs/2026-08-26-bayz-router-provider-manager-design.md`
   - `docs/superpowers/specs/2026-08-26-bayz-router-proxy-manager-design.md`
+  - `docs/superpowers/specs/2026-08-26-bayz-router-router-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
 - No push to GitHub. All work is local commits on `master`.
 
 ## Verified totals
 
-- `@bayz/storage`: 153 tests pass (schema is now v3).
-- `@bayz/providers`: 105 tests pass.
+- `@bayz/storage`: 157 tests pass (schema is now v4).
+- `@bayz/providers`: 111 tests pass.
 - `@bayz/proxy`: 105 tests pass.
+- `@bayz/router`: 122 tests pass.
 - `@bayz/server`: 14 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/contracts`: 3, `@bayz/security`: 6, `@bayz/dashboard`: 2.
-- `npm run runtime:verify` exits 0; every build exits 0.
+- `npm run runtime:verify` exits 0; all eight builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
   reopen in a separate child process.
 - `node scripts/provider-smoke.mjs`: 36/36 against a real database, a real
   loopback HTTP upstream, real `fetch`, and a separate-process reopen.
 - `node scripts/proxy-smoke.mjs`: 39/39 against a real database plus real SOCKS5
-  and HTTP `CONNECT` servers, completing real tunneled HTTP requests to a real
-  loopback origin, with a separate-process reopen.
-- Live boot on `127.0.0.1:20996` (20128 and 20993 are occupied by unrelated
-  processes in this environment): logged
-  `{schemaVersion:3, journalMode:"wal", driver:"node:sqlite", keyProvider:"environment", keyId:"kek_…"}`,
-  served `/api/health` as exactly `{status, version, uptimeSeconds}`, wrote
-  `bayz.db` to disk. No key material appeared anywhere in the log.
-- Secret scan over tracked non-test source for `sk-live`, `hunter2`,
-  `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
-- `node:sqlite` still imported in exactly one file, enforced by the Phase 2
-  source-scan test.
+  and HTTP `CONNECT` servers, completing real tunneled HTTP requests.
+- `node scripts/router-smoke.mjs`: 46/46 against a real database, four real
+  origins, and a real `CONNECT` proxy — proving a direct chat, a proxied chat,
+  failover, `auth_failed` stopping the walk, and prompt/completion/credential
+  absence from disk and logs.
+- Live boot on `127.0.0.1:20996`: logged
+  `{schemaVersion:3, journalMode:"wal", driver:"node:sqlite", keyProvider:"environment", keyId:"kek_…"}`
+  at the time of Phase 4; schema is v4 as of Phase 5. `/api/health` still returns
+  exactly `{status, version, uptimeSeconds}`.
+- Secret scan over tracked non-test source for `sk-live`, `sk-router`, `hunter2`,
+  `PROMPT-`, `BEGIN … PRIVATE KEY`, and `AIza…`: no matches.
+- Getter scan for `getCredential`/`getPassword` across all `src`: no matches.
+- `node:sqlite` imported in exactly one file, enforced by a source-scan test.
+- `apps/dashboard` last touched in Phase 1 (`b78aef2`). No Flux Core or
+  `BAYZ-responsive-master.html` file is tracked, so nothing there was modified.
 
 ## Environment facts
 
 - Node `v24.19.0`, `linux arm64`. `node:sqlite` present, SQLite `3.53.3`, no
   ExperimentalWarning.
-- Zero new dependencies added in Phase 2, 3, or 4 — runtime or dev.
+- Zero new dependencies added in Phases 2–5 — runtime or dev.
 - scrypt measured on this device: N=2^14 49 ms/16 MiB, 2^15 95 ms/32 MiB,
   **2^16 194 ms/64 MiB (selected)**, 2^17 393 ms/128 MiB.
 
@@ -169,6 +177,48 @@ bytes into the stream and a truncated reply cannot hang the client.
    Not in the plan, but accepting one would mean speaking a protocol variant that
    was never negotiated.
 
+## Phase 5 architecture as built
+
+```text
+Router                        packages/router/src/router.ts
+  ├─ RouteRepository          model→provider bindings, validated pre-SQL
+  ├─ resolveCandidates        deterministic: specificity → priority → id
+  ├─ providers.withCredential scoped lend, never a getter
+  ├─ proxies.agentFor         proxy-bound routes traverse their proxy
+  └─ sendChatRequest          node:http POST, byte-capped, strict response parse
+```
+
+The router closes the Phase 4 `fetch` gap for its own path: because it uses
+`node:http`, the Phase 4 agent works and a proxied request genuinely tunnels.
+Global `fetch` (still used by provider discovery) remains direct.
+
+## Phase 5 deviations from the plan text
+
+1. **`withCredential` instead of a getter.** The plan already called for this; the
+   implementation detail worth recording is that the callback never runs when no
+   credential is stored, so a caller cannot accidentally send an unauthenticated
+   request believing it was signed. A corrupt credential raises `secret_corrupt`
+   rather than being treated as absent.
+2. **A disabled provider is skipped, not counted as a failed attempt.** The plan
+   did not say which. Counting it would inflate `attempts` and imply a network
+   call that never happened; if every candidate is skipped the result is
+   `all_routes_failed` with a `chat-skipped-<n>` stage, which is distinct from
+   `no_route` (routes exist, they are just unusable right now).
+3. **Malformed `usage` degrades; malformed content does not.** Token counts are
+   informational, so a bad `usage` block yields `undefined` instead of failing an
+   otherwise good response. Content is not informational, so a bad content field
+   is always a hard failure — never an empty string.
+4. **Model ids reject `//` and `:/` beyond the character class.** A name like
+   `https://evil.example.com/m` otherwise passed the slug regex, and since the
+   model is appended to a provider base URL it could have redirected the request.
+   Found by a failing test, not anticipated.
+5. **`(model, provider_id)` is unique.** The same model cannot be bound twice to
+   one provider, which surfaced in the smoke script and is the correct constraint:
+   two identical bindings would make selection order arbitrary.
+6. **Route identity is immutable.** `id`, `model`, and `providerId` are not
+   patchable, so an operator creates a new reviewable binding instead of silently
+   repointing an existing one.
+
 ## Deliberately NOT implemented, and not faked
 
 - **OS keychain custody** — `OsKeystoreKeyProvider` exists as an interface with
@@ -192,8 +242,31 @@ bytes into the stream and a truncated reply cannot hang the client.
   `agentFor()` is real and proven; global `fetch` is still direct.
 - **SOCKS4/4a, proxy chaining, PAC files, UDP ASSOCIATE/BIND, TLS-to-proxy** —
   none implemented. Only SOCKS5 `CONNECT` and HTTP `CONNECT` exist.
-- **Route / combo / usage schema** — a test asserts these tables do *not* exist,
-  so speculative schema cannot creep in.
+- **Streaming (SSE)** — not implemented. `stream: true` is *rejected*, not
+  ignored, so no caller can believe it is streaming when it is not. A correct
+  implementation needs incremental parsing plus cancellation semantics.
+- **Combos (multi-provider fan-out) and usage accounting** — not implemented, and
+  no schema for either exists. A migration test asserts the tables are absent.
+- **Router HTTP surface** — the Router is a library API. There is no route, no
+  CLI, and no dashboard control for chatting or managing routes.
+- **Combo / usage schema** — a test asserts these tables do *not* exist, so
+  speculative schema cannot creep in.
+
+## Phase 5 residual risk
+
+Protected: prompts and completions are never persisted or logged (proven against
+raw database bytes and captured logs), no credential can be read out of any
+manager, failover never carries one provider's credential to another, a corrupt
+credential fails the request instead of silently going unauthenticated, an
+upstream cannot inject fields into a router result or reach `Object.prototype`,
+response sizes are capped, model names cannot escape into a URL, and route
+selection is deterministic and explainable.
+
+Not protected: an operator who binds a model to a provider pointing at an internal
+address will reach it — that is an admin capability, not an SSRF guard. Prompts
+still travel to whatever upstream the operator configured, in plaintext if that
+upstream is `http`. There is no per-route rate limit and no request-level audit
+trail (deliberately, since an audit trail would mean storing prompts).
 
 ## Phase 4 residual risk
 
@@ -248,22 +321,25 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 
 `apps/dashboard` is the runtime foundation shell only. It is **not** a redesign
 and does **not** replace `BAYZ-responsive-master.html` as the locked visual
-source of truth. Phases 2, 3, and 4 made no dashboard change whatsoever
-(`git log -- apps/dashboard` still ends at the Phase 1 commit).
+source of truth. Phases 2–5 made no dashboard change whatsoever
+(`git log -- apps/dashboard` still ends at the Phase 1 commit `b78aef2`). The
+Flux Core animation remains LOCKED and untouched; no Flux source file is tracked
+in this workspace.
 
 ## Resume steps once the real BAYZ repo/UI is available
 
 1. Copy the Sites/UI source and the real root `package.json` into this workspace.
 2. Merge the workspace fields (`workspaces`, `runtime:*` scripts) into the real
    root `package.json` instead of overwriting it.
-3. Move the README runtime, storage, provider, and proxy sections into the real
-   README.
+3. Move the README runtime, storage, provider, proxy, and router sections into the
+   real README.
 4. Run the root Sites build and confirm it still exits 0.
-5. Re-run `npm run runtime:verify` and all three smoke scripts.
+5. Re-run `npm run runtime:verify` and all four smoke scripts.
 
 ## Next phase
 
-Phase 5 is the Router: model routing across registered providers, using the proxy
-agent where a provider names one. It consumes the Provider and Proxy managers and
-must not learn how encryption works. The `fetch` limitation from Phase 4 is the
-first thing it has to resolve, because the router owns the request path.
+Phase 6 is the HTTP API surface: an authenticated local API over the Provider,
+Proxy, and Router managers, plus an OpenAI-compatible `/v1/chat/completions`
+endpoint. It is the first phase that exposes any of this to a network listener, so
+authentication and loopback binding are its central concerns — every manager so
+far has deliberately stayed a library API for exactly that reason.
