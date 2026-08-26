@@ -78,6 +78,29 @@ export type FluxCoreViewModel = {
   activity?: FluxActivityEvent[];
   /** Selected usage period label, purely for display. */
   period?: string;
+  /**
+   * Aggregate token totals.
+   *
+   * `known: false` means no provider reported counts. The individual fields are then
+   * absent rather than zero, so "nobody reported" and "genuinely zero" stay distinct.
+   */
+  tokens?: {
+    known: boolean;
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedTokens?: number;
+  };
+  /**
+   * Cost reporting.
+   *
+   * Always `available: false` today: Bayz has no pricing table and no billing API,
+   * so a figure here would be fabricated. The reason is carried so the UI can say
+   * why rather than showing a blank.
+   */
+  cost?: {
+    available: false;
+    reason: string;
+  };
 };
 
 /**
