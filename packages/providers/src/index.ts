@@ -67,6 +67,13 @@ export {
   type DiscoverGeminiOptions,
 } from "./discovery-gemini.js";
 export {
+  MODEL_ECONOMICS,
+  classifyModelEconomics,
+  isFreeEconomics,
+  type ClassifyModelEconomicsInput,
+  type ModelEconomics,
+} from "./economics.js";
+export {
   CONNECTION_FAILURE_CODES,
   connectionFailureCodeOf,
   detectCapabilities,
