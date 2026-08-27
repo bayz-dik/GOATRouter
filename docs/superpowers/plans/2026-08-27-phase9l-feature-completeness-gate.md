@@ -136,3 +136,20 @@ Every lock named in the Phase 9 spec §18 becomes a mechanical check.
 - [ ] No product name in the runtime path; no credential read path; no content persistence.
 - [ ] `git remote -v` empty, asserted by a test.
 - [ ] README describes only evidenced support and states every honest limitation.
+
+---
+
+## AMENDMENT — Free-first gate rows (spec §25)
+
+§17's inventory grows from 27 to 29 features. Task 2's integrity test must be
+written against 29 rows, and the two new rows are release-blocking.
+
+| # | Feature | Owning subprogram | Mandatory evidence |
+|---|---|---|---|
+| 28 | Free-first model discovery | 9D | `smoke:custom-provider#N` proving classification from real catalogue metadata |
+| 29 | Free-only routing | 9E | `smoke:proxy-ux#N` proving zero requests at a paid origin |
+
+- [ ] Amend Task 2: the row count is 29; both new rows are present; row 29 may only reach `PASS` with a `smoke:` or `transcript:` citation, never a unit test alone, because the property being proven is "no money was spent" and only a real origin's connection count can prove it.
+- [ ] Amend Task 4: the anti-fabrication scan forbids any document claiming BAYZ guarantees the operator will never be charged. The honest claim, per spec §25.6, is that BAYZ never selected a paid model without metadata saying it was free. The test asserts the strong form is absent and the honest form is present in the README.
+- [ ] Amend Task 5: the lock list gains "no paid fallback" — a source scan asserting the selection path has no branch that widens a free-only candidate set on failure.
+- [ ] Amend Task 6: the README's limitations section states the §25.6 boundary.

@@ -653,7 +653,94 @@ established in the subprogram noted.
 | No reproducible build claim | The `vite`/`rolldown` chain does not guarantee it | 9K |
 | No prompt-injection filtering | Injection is not the boundary; the capability registry is | 9G |
 | No `PASS` for an untested platform or client | Six of seven platforms and two of three Core clients cannot run here | 9H, 9J |
+| No guarantee you will never be charged | BAYZ classifies from provider metadata; a provider that misreports its own pricing is misclassified and BAYZ cannot detect it | 9D (§25) |
 
 `tests/no-fabrication.test.mjs` (9L Task 4) enforces that no tracked document
 claims any of these, while permitting the documents that *refuse* them — including
 this table.
+
+## 25. AMENDMENT — Free-first model economics
+
+Approved after the original Phase 9 specification was committed. This amendment is
+**normative** and release-blocking. It changes 9D (discovery), 9E (selection UX),
+9H (a matrix column), and 9L (two gate rows).
+
+### 25.1 The requirement
+
+BAYZ must be usable without a paid API model. An operator with no paid account must
+be able to install BAYZ, connect a provider, discover models, and complete a real
+chat — and must never be charged because BAYZ silently chose a paid route.
+
+### 25.2 Classification vocabulary
+
+```ts
+type ModelEconomics =
+  | "FREE_VERIFIED"   // provider metadata proves zero price
+  | "FREE_TIER"       // limited free quota; NOT permanently free
+  | "FREE_PREVIEW"    // temporary/promotional zero cost, honestly identified
+  | "LOCAL"           // local runtime, no per-token cost to the operator
+  | "PAID"            // metadata proves a non-zero price
+  | "UNKNOWN";        // no trustworthy metadata
+```
+
+### 25.3 Rules, each mechanically enforced
+
+1. **Pricing is never invented.** A classification derives only from metadata the
+   provider actually returned, or from a provider kind whose economics are
+   structural (`LOCAL`). There is no hardcoded per-model price table, and a
+   source-scan test forbids one.
+2. **`FREE_VERIFIED` requires proof.** Trustworthy provider or catalogue pricing
+   metadata showing zero for **every** priced dimension present. A partial or
+   absent price field yields `UNKNOWN`, never `FREE_VERIFIED`.
+3. **`FREE_TIER` is not permanently free.** It is surfaced with that qualification
+   in the API and the UI. Presenting it as unconditionally free would set the
+   operator up for a bill.
+4. **`FREE_PREVIEW`** applies only where the promotional status is identifiable from
+   metadata. Otherwise `UNKNOWN`.
+5. **`UNKNOWN` is never treated as free.** This is the single most important rule:
+   the failure mode of guessing wrong is real money.
+6. **Paid stays supported, and off by default.** Paid routing is disabled unless the
+   operator opts in per route. Paid models are de-emphasised in the default UX.
+   **BAYZ never falls back from a free route to a paid route** — not on failure, not
+   on rate limit, not on exhaustion.
+7. **FREE-ONLY routing.** A route may be marked free-only. When no eligible free
+   candidate remains, the request **fails clearly** with `no_free_route` rather than
+   spending credit. Failing is the correct behaviour, not a degradation.
+8. **Discovery aggregates, it does not enumerate.** Eligible free models are
+   collected from whatever connected providers report. No model name is hardcoded.
+9. **Aggregators participate through metadata.** OpenRouter-like routers are
+   classified from their own catalogue response, using the same rules as any other
+   provider.
+10. **Custom providers participate only when classifiable.** A custom endpoint that
+    reports no pricing metadata yields `UNKNOWN`, and `UNKNOWN` is not free.
+11. **Flux Core is untouched.** Model economics is routing and selection metadata.
+    There is no visual change. The Flux Core V2 lock stands unmodified.
+
+### 25.4 Ownership
+
+| Concern | Package | Subprogram |
+|---|---|---|
+| `ModelEconomics` vocabulary and classifier | `packages/providers/src/economics.ts` | 9D |
+| Catalogue metadata capture during discovery | `packages/providers` | 9D |
+| Free-only route flag and candidate filtering | `packages/router` | 9E |
+| `no_free_route` error and API surface | `apps/server` | 9E |
+| Model selection UX, free-first default | `apps/dashboard` | 9E |
+| `FREE ONLY routing` matrix column | 9H matrix | 9H |
+| `FREE-FIRST MODEL DISCOVERY`, `FREE ONLY ROUTING` gate rows | 9L gate | 9L |
+
+### 25.5 Inventory additions
+
+§17's inventory gains two rows, taking it from 27 to 29:
+
+| # | Feature | Owning subprogram |
+|---|---|---|
+| 28 | Free-first model discovery | 9D |
+| 29 | Free-only routing | 9E |
+
+### 25.6 Honest boundary this amendment adds
+
+BAYZ classifies from provider metadata. A provider that reports its pricing
+incorrectly will be classified incorrectly, and BAYZ cannot detect that. The
+guarantee is *"BAYZ never chose a paid model on your behalf without metadata saying
+it was free"* — not *"you will never be charged"*. §24's table gains this row, and
+no document may claim the stronger version.

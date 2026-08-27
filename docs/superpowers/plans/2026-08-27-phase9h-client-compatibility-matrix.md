@@ -86,3 +86,15 @@
 - [ ] Antigravity and Hermes recorded `UNVERIFIED` on this device with the reason; harnesses ready for a host that has them.
 - [ ] `client-gate.mjs --enforce` correctly blocks release while Core 3 cells are `UNVERIFIED`.
 - [ ] No client-name branching added to any runtime path.
+
+---
+
+## AMENDMENT — FREE ONLY routing column (spec §25)
+
+The matrix gains a seventeenth column, `free-only routing`, and Task 1's integrity
+test gains it as a required column so it cannot be omitted.
+
+- [ ] Amend Task 1's column list to include `free-only routing` and re-run `node --test tests/matrix-integrity.test.mjs`.
+- [ ] Amend Task 2's conformance harness with a check that a free-only route to a paid-classified provider fails `no_free_route` over real HTTP, so the `generic-openai` row's cell has a citable check number.
+- [ ] Amend Task 4's OpenCode verification to configure a free-only route and record the cell from the transcript.
+- [ ] Statuses for this column follow the same rule as every other: `UNVERIFIED` where the client cannot run here.

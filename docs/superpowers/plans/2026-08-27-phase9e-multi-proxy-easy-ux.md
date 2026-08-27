@@ -116,3 +116,83 @@ GET  /api/proxies/:id/usage
 - [ ] Effective proxy and inherited/overridden state visible on every row.
 - [ ] No password rendered, returned, or logged anywhere.
 - [ ] No config-file editing required for any of the above.
+
+---
+
+## AMENDMENT — Free-only routing (spec §25)
+
+Added after this plan was committed. Three extra tasks, executed after Task 6 and
+before Task 7, so the UX smoke in Task 7 can cover them.
+
+**Depends on:** 9D Tasks 5a and 5b (the classifier and catalogue must exist).
+
+**Locks:** BAYZ never falls back from a free route to a paid route. `UNKNOWN` is not
+free. No hardcoded model name. Flux Core untouched — this is routing metadata.
+
+### Task 6a — Free-only route flag and candidate filtering
+
+**Modify:** `packages/storage/src/migrations.ts` (next free version), `packages/router/src/repository.ts`, `packages/router/src/selection.ts`, `packages/router/src/errors.ts`
+**Test:** `packages/router/test/free-only.test.ts`, `packages/storage/test/migrations.test.ts`
+
+**Schema:** `routes.free_only INTEGER NOT NULL DEFAULT 1 CHECK (free_only IN (0,1))`
+
+**Default is 1 — free-only ON.** Paid routing is off by default per §25 rule 6, and a default of 0 would make the safe posture opt-in, which inverts the requirement.
+
+**New error code:** `no_free_route`.
+
+- [ ] RED `packages/storage/test/migrations.test.ts`: `routes` gains `free_only`; the pinned column set updates; **every pre-existing route migrates to `free_only = 1`** — the safe value, asserted explicitly, because migrating to 0 would silently enable paid routing on an existing install; the CHECK rejects 2.
+- [ ] RED `free-only.test.ts`: a route with `freeOnly: true` selects only candidates whose economics `isFreeEconomics`; a `PAID` candidate is excluded; **an `UNKNOWN` candidate is excluded** (asserted separately and first); `LOCAL`, `FREE_VERIFIED`, `FREE_TIER`, and `FREE_PREVIEW` are all eligible; with `freeOnly: false` every candidate is eligible; the flag is per route, so two routes for the same model can differ.
+- [ ] RED same file, **the no-fallback rule**: a free-only route whose only free candidate fails does **not** try a paid candidate that exists and is healthy — assert the paid provider's origin observed **zero** requests, which is the only assertion that actually proves money was not spent; the request fails `no_free_route`; the same holds when the free candidate is rate-limited, when it times out, and when it returns 500, since each is a plausible excuse for a fallback and none is acceptable.
+- [ ] RED same file: a free-only route with no free candidate at all fails `no_free_route` **before** any upstream request; the error is a fixed message naming no model and no provider; telemetry records `request.failed` with the fixed code and no candidate list.
+- [ ] RED same file: a free-only route whose free candidate list becomes empty mid-failover (the second attempt's provider was reclassified `PAID` by a fresh discovery) fails `no_free_route` rather than continuing.
+- [ ] Verify RED.
+- [ ] GREEN. Economics come from a cached catalogue read, not a live discovery call per request — note in code why: a per-request discovery would add an upstream round trip to every chat and would let a discovery outage silently empty the free set, turning an availability problem into a `no_free_route` storm.
+- [ ] Verify: `npm run test --workspace @bayz/router` and `--workspace @bayz/storage` exit 0; `node scripts/router-smoke.mjs` still 46/46; `node scripts/storage-smoke.mjs` still 42/42.
+- [ ] Commit — `feat: add Bayz free-only routing with no paid fallback`
+
+### Task 6b — Model catalogue persistence and API surface
+
+**Modify:** `packages/storage/src/migrations.ts` (same migration as 6a), `packages/providers/src/repository.ts`, `apps/server/src/routes/providers.ts`, `apps/server/src/routes/routes.ts`, `apps/server/src/errors.ts`
+**Test:** `apps/server/test/economics-api.test.ts`
+
+**Schema:** `model_catalogue (provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE, model TEXT NOT NULL, economics TEXT NOT NULL, discovered_at TEXT NOT NULL, PRIMARY KEY (provider_id, model))`
+
+The table stores an id and a classification. It is **not** content-bearing: no prompt, no completion, no pricing value, no description. A schema-pinning test asserts the four-column set so a later phase cannot add a `description` column.
+
+- [ ] RED `economics-api.test.ts`: `POST /api/providers/:id/discover` persists the catalogue and returns `{ models: [{ id, economics }] }`; the legacy `{ models: string[] }` shape is **also** still available under the existing contract so the Phase 3 smoke does not break — assert both, since silently changing a response shape is how a client breaks in the field; `GET /api/models/free` returns the aggregated free set across every enabled provider with no duplicate model id and no `UNKNOWN` or `PAID` entry; the aggregate requires `models.read`; a provider with no catalogue contributes nothing rather than erroring; deleting a provider cascades its catalogue rows away.
+- [ ] RED same file: a free-only route that cannot be satisfied returns HTTP **409** with the stable envelope and code `no_free_route`, distinct from a 503 `unreachable`, because the operator action differs — one means "add a free provider", the other means "the network is down". The message names no model and no price.
+- [ ] RED same file: `POST /api/routes` accepts `freeOnly` and defaults it to `true` when absent; `PATCH` can set it false; setting it false requires `routes.write` and is recorded in the audit as a metadata-only event, since enabling paid spending is exactly the kind of change an operator will later want to explain.
+- [ ] Verify RED.
+- [ ] GREEN.
+- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
+- [ ] Commit — `feat: expose Bayz free model aggregation and free-only routes`
+
+### Task 6c — Free-first model selection UX
+
+**Modify:** `apps/dashboard/src/panels/ProvidersPanel.tsx`, `apps/dashboard/src/panels/RoutesPanel.tsx`, `apps/dashboard/src/api/client.ts`, `apps/dashboard/src/api/types.ts`
+**Test:** `apps/dashboard/test/free-first-ux.test.tsx`
+
+- [ ] RED `free-first-ux.test.tsx`: a discovered model list shows each model with its economics as inert text; **free models are listed first and paid models are collapsed behind an explicit "show paid models" control that is closed by default** — asserted by checking that a `PAID` model is absent from the DOM until the control is activated, since "de-emphasised" must mean actually not offered by accident; `FREE_TIER` renders with its limited-quota qualification and `FREE_PREVIEW` with its temporary qualification, so neither reads as permanently free; `UNKNOWN` renders as `Unknown` and is grouped with paid, not with free.
+- [ ] RED same file: the route form's free-only toggle defaults to on; turning it off shows a plain-language warning that paid models may be charged; the toggle state round-trips through the API; a route that is free-only shows a `FREE ONLY` marker on its row.
+- [ ] RED same file: a `no_free_route` failure in the test chat panel renders the envelope's code and a plain-language explanation that no free model was available and **nothing was charged** — the second half matters, because an operator seeing only an error will assume a bug rather than a deliberate refusal.
+- [ ] RED same file: no economics value is rendered as markup; a hostile economics string from a tampered response falls back to `Unknown` rather than rendering; Flux Core files are untouched — asserted by the 9L SHA pin, and this test additionally asserts no import of anything under `src/flux/` was added.
+- [ ] Verify RED.
+- [ ] GREEN, monochrome only, no new visual language beyond the existing panel vocabulary.
+- [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0; `node scripts/dashboard-smoke.mjs` exits 0.
+- [ ] Commit — `feat: make Bayz model selection free-first`
+
+### Amended Task 7 additions
+
+- [ ] `scripts/proxy-ux-smoke.mjs` additionally proves, against real origins: a provider whose catalogue reports zero pricing yields `FREE_VERIFIED` and is routable on a free-only route; a provider whose catalogue reports a non-zero price yields `PAID` and a free-only route to it fails `no_free_route` with **zero requests observed at that origin**; a provider whose catalogue omits pricing yields `UNKNOWN` and is likewise refused; a loopback provider yields `LOCAL` and is routable; disabling free-only on one route lets the paid provider through while a second free-only route to the same model still refuses.
+- [ ] Commit — `test: prove Bayz free-only routing spends nothing`
+
+### Amended completion checklist additions
+
+- [ ] `routes.free_only` defaults to 1; existing rows migrate to 1.
+- [ ] `UNKNOWN` and `PAID` are both excluded from a free-only route.
+- [ ] No paid fallback on failure, rate limit, timeout, or 5xx — proven by zero requests at the paid origin.
+- [ ] `no_free_route` is a distinct 409 naming no model and no price.
+- [ ] `model_catalogue` holds only id and classification; no content column.
+- [ ] Paid models are not in the DOM until explicitly requested.
+- [ ] `FREE_TIER` and `FREE_PREVIEW` carry their qualifications in the UI.
+- [ ] Flux Core untouched.

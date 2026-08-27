@@ -115,3 +115,64 @@ export function assertResolvedAddressAllowed(address: string, policy: EgressPoli
 - [ ] `custom-openai` kind added via migration v8 preserving existing rows.
 - [ ] Capability detection reports `unknown` rather than guessing.
 - [ ] Provider icon metadata still cannot become markup or a remote fetch.
+
+---
+
+## AMENDMENT — Free-first model economics (spec §25)
+
+Added after this plan was committed. Two extra tasks, executed after Task 5 and
+before Task 6, so the API and dashboard surface in Task 6 can expose economics.
+
+### Task 5a — Model economics classification
+
+**Create:** `packages/providers/src/economics.ts`
+**Test:** `packages/providers/test/economics.test.ts`
+
+**Interface produced:**
+```ts
+export const MODEL_ECONOMICS = ["FREE_VERIFIED","FREE_TIER","FREE_PREVIEW","LOCAL","PAID","UNKNOWN"] as const;
+export type ModelEconomics = (typeof MODEL_ECONOMICS)[number];
+export function isFreeEconomics(value: ModelEconomics): boolean;   // true for the three FREE_* plus LOCAL
+export function classifyModelEconomics(input: {
+  kind: ProviderKind;
+  entry: unknown;          // the raw catalogue entry, untrusted
+  allowLoopback: boolean;  // a loopback provider is a local runtime
+}): ModelEconomics;
+```
+
+- [ ] RED `economics.test.ts`: the six values are exactly as listed and frozen; `isFreeEconomics` is true for `FREE_VERIFIED`, `FREE_TIER`, `FREE_PREVIEW`, and `LOCAL`, and **false for `UNKNOWN` and `PAID`** — the `UNKNOWN` case is asserted first and explicitly, because treating it as free is the failure mode that costs real money.
+- [ ] RED same file, `FREE_VERIFIED` requires proof: an OpenRouter-style entry with `pricing: { prompt: "0", completion: "0", request: "0", image: "0" }` classifies `FREE_VERIFIED`; the same entry with **any** priced dimension non-zero classifies `PAID`; an entry with `pricing` present but a dimension **missing** classifies `UNKNOWN`, not `FREE_VERIFIED`, because a missing field is not a proven zero; `pricing: {}` is `UNKNOWN`; `pricing: null`, `pricing: "free"`, `pricing: 0`, and a prototype-polluted `pricing` are all `UNKNOWN`; a non-numeric string such as `"0.0000000abc"` is `UNKNOWN` rather than parsed leniently, since `parseFloat` would return 0 and silently invent a free model.
+- [ ] RED same file, negative and exponent handling: `"0.0"`, `"0e0"`, and `"-0"` are zero and therefore free; `"1e-9"` is non-zero and therefore `PAID`; a negative price is `UNKNOWN` because it is nonsense metadata rather than a discount.
+- [ ] RED same file, the other classifications: a `gemini` or `openai-compatible` provider with `allowLoopback: true` classifies `LOCAL` regardless of entry content, because a local runtime has no per-token cost to the operator; an entry carrying an id ending `:free` on a provider whose catalogue also gave zero pricing stays `FREE_VERIFIED` (pricing wins over a name convention); an id ending `:free` with **no** pricing metadata classifies `UNKNOWN` — **a name is not proof**, and this is asserted with a comment naming the attack: a hostile or careless catalogue could name every paid model `:free`.
+- [ ] RED same file, `FREE_TIER` and `FREE_PREVIEW`: an entry with an explicit boolean-ish free-tier marker in a documented field classifies `FREE_TIER`; a documented preview/promotional marker classifies `FREE_PREVIEW`; neither is inferred from a description string, an id substring, or a heuristic — the test asserts that a `description` containing the word "free" changes nothing.
+- [ ] RED same file, no hardcoded catalogue: a source scan over `packages/providers/src` finds no per-model price literal and no hardcoded model-name-to-economics table, so `classifyModelEconomics` cannot drift into a maintained price list.
+- [ ] RED same file, purity and bounds: the classifier is pure; a 1 MiB entry is bounded rather than walked; a deeply nested entry does not recurse without bound.
+- [ ] Verify RED: `node --import tsx --test packages/providers/test/economics.test.ts` fails with `ERR_MODULE_NOT_FOUND`.
+- [ ] GREEN.
+- [ ] Verify: `npm run test --workspace @bayz/providers` exits 0.
+- [ ] Commit — `feat: classify Bayz model economics from provider metadata`
+
+### Task 5b — Discovery returns economics
+
+**Modify:** `packages/providers/src/model-list.ts`, `packages/providers/src/discovery-openai.ts`, `packages/providers/src/discovery-gemini.ts`, `packages/providers/src/manager.ts`
+**Test:** `packages/providers/test/discovery-economics.test.ts`
+
+**Interface change:** `discoverModels(id)` keeps returning `string[]` for backward compatibility; a new `discoverModelCatalogue(id): Promise<ModelCatalogueEntry[]>` returns `{ id, economics }`. Both go through one collector, so the two cannot disagree about which models exist.
+
+- [ ] RED `discovery-economics.test.ts`: `discoverModelCatalogue` returns one entry per model with its classification; the model id set is **identical** to `discoverModels`, asserted by comparing both outputs from one upstream response, because a divergence would let the UI offer a model routing cannot reach; the existing `modelLimit` cap and dedupe apply identically; a malformed entry is skipped by the same rule as before; an entry whose economics cannot be determined appears with `UNKNOWN` rather than being dropped — hiding it would be a silent capability loss.
+- [ ] RED same file: a Gemini provider yields `LOCAL` when loopback-opted-in and `UNKNOWN` otherwise, since the Gemini catalogue carries no pricing; the test asserts `UNKNOWN` rather than assuming Google's free tier, and comments that the free tier is real but not machine-provable from the response.
+- [ ] RED same file: the raw catalogue entry never reaches the returned value — only `{ id, economics }` — so a hostile `description` or nested object cannot ride along into storage, telemetry, or the dashboard.
+- [ ] RED same file: no pricing value or catalogue body appears in any log line the manager emits (the existing `redactSecrets` path is asserted, count only).
+- [ ] Verify RED.
+- [ ] GREEN.
+- [ ] Verify: `npm run test --workspace @bayz/providers` exits 0; `node scripts/provider-smoke.mjs` still 36/36 (the existing `discoverModels` contract is unchanged, which is the point of keeping it).
+- [ ] Commit — `feat: return model economics from Bayz discovery`
+
+### Amended completion checklist additions
+
+- [ ] Six economics values; `UNKNOWN` and `PAID` are not free.
+- [ ] `FREE_VERIFIED` only from complete zero pricing metadata; a missing dimension is `UNKNOWN`.
+- [ ] A `:free` id suffix alone never yields a free classification.
+- [ ] No hardcoded price table or model-name economics map (source-scan proven).
+- [ ] `discoverModels` and `discoverModelCatalogue` agree on the model id set.
+- [ ] No raw catalogue entry escapes the classifier.
