@@ -25,3 +25,9 @@ export {
   type IdentityView,
   type UpdateIdentityInput,
 } from "./repository.js";
+export {
+  createIdentityManager,
+  type CreateIdentityManagerOptions,
+  type IdentityLogger,
+  type IdentityManager,
+} from "./manager.js";
