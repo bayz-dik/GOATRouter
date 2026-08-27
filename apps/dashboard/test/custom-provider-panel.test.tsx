@@ -37,6 +37,8 @@ function api(overrides: Partial<Parameters<typeof ProvidersPanel>[0]["api"]> = {
     setProviderCredential: vi.fn(async () => undefined),
     clearProviderCredential: vi.fn(async () => undefined),
     discoverModels: vi.fn(async () => ["gpt-4o"]),
+    // 9E free-only amendment: the economics-bearing sibling of discoverModels.
+    discoverModelCatalogue: async () => [],
     testProviderConnection: vi.fn(async () => ({
       ok: true,
       latencyMs: 42,

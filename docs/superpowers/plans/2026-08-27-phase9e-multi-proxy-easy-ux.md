@@ -320,14 +320,30 @@ The table stores an id and a classification. It is **not** content-bearing: no p
 **Modify:** `apps/dashboard/src/panels/ProvidersPanel.tsx`, `apps/dashboard/src/panels/RoutesPanel.tsx`, `apps/dashboard/src/api/client.ts`, `apps/dashboard/src/api/types.ts`
 **Test:** `apps/dashboard/test/free-first-ux.test.tsx`
 
-- [ ] RED `free-first-ux.test.tsx`: a discovered model list shows each model with its economics as inert text; **free models are listed first and paid models are collapsed behind an explicit "show paid models" control that is closed by default** — asserted by checking that a `PAID` model is absent from the DOM until the control is activated, since "de-emphasised" must mean actually not offered by accident; `FREE_TIER` renders with its limited-quota qualification and `FREE_PREVIEW` with its temporary qualification, so neither reads as permanently free; `UNKNOWN` renders as `Unknown` and is grouped with paid, not with free.
-- [ ] RED same file: the route form's free-only toggle defaults to on; turning it off shows a plain-language warning that paid models may be charged; the toggle state round-trips through the API; a route that is free-only shows a `FREE ONLY` marker on its row.
-- [ ] RED same file: a `no_free_route` failure in the test chat panel renders the envelope's code and a plain-language explanation that no free model was available and **nothing was charged** — the second half matters, because an operator seeing only an error will assume a bug rather than a deliberate refusal.
-- [ ] RED same file: no economics value is rendered as markup; a hostile economics string from a tampered response falls back to `Unknown` rather than rendering; Flux Core files are untouched — asserted by the 9L SHA pin, and this test additionally asserts no import of anything under `src/flux/` was added.
-- [ ] Verify RED.
-- [ ] GREEN, monochrome only, no new visual language beyond the existing panel vocabulary.
-- [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0; `node scripts/dashboard-smoke.mjs` exits 0.
-- [ ] Commit — `feat: make Bayz model selection free-first`
+- [x] RED `free-first-ux.test.tsx`: a discovered model list shows each model with its economics as inert text; **free models are listed first and paid models are collapsed behind an explicit "show paid models" control that is closed by default** — asserted by checking that a `PAID` model is absent from the DOM until the control is activated, since "de-emphasised" must mean actually not offered by accident; `FREE_TIER` renders with its limited-quota qualification and `FREE_PREVIEW` with its temporary qualification, so neither reads as permanently free; `UNKNOWN` renders as `Unknown` and is grouped with paid, not with free.
+- [x] RED same file: the route form's free-only toggle defaults to on; turning it off shows a plain-language warning that paid models may be charged; the toggle state round-trips through the API; a route that is free-only shows a `FREE ONLY` marker on its row.
+- [x] RED same file: a `no_free_route` failure in the test chat panel renders the envelope's code and a plain-language explanation that no free model was available and **nothing was charged** — the second half matters, because an operator seeing only an error will assume a bug rather than a deliberate refusal.
+- [x] RED same file: no economics value is rendered as markup; a hostile economics string from a tampered response falls back to `Unknown` rather than rendering; Flux Core files are untouched — asserted by the 9L SHA pin, and this test additionally asserts no import of anything under `src/flux/` was added.
+- [x] Verify RED.
+- [x] GREEN, monochrome only, no new visual language beyond the existing panel vocabulary.
+- [x] Verify: `npm run test --workspace @bayz/dashboard` exits 0; `node scripts/dashboard-smoke.mjs` exits 0.
+- [x] Commit — `feat: make Bayz model selection free-first`
+
+Recorded deviations:
+
+- **`CatalogueList` extracted as a component**, unlike Task 5's assign bar. It owns real
+  logic — classification, free-first ordering, and the hidden count — so a caller cannot
+  render the list and forget to withhold paid models.
+- **`asEconomics` narrows on the way in.** The plan asked that a hostile economics string
+  fall back to `Unknown`; doing that at the type boundary rather than at each render site
+  means an unrecognised classification also groups with paid, so it cannot become
+  silently spendable.
+- **`no_free_route` help lives in `RoutesPanel`, not a chat panel.** There is no test chat
+  panel in this dashboard; the refusal surfaces where routes are created and edited, which
+  is where the operator can act on it.
+- The economics choice is **not** reset after a successful create, unlike the rest of the
+  form: an operator adding several paid routes should not re-confirm on each one.
+
 
 ### Amended Task 7 additions
 

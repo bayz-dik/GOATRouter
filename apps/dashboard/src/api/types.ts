@@ -87,6 +87,63 @@ export type ModelCatalogueEntry = {
   economics: ModelEconomics;
 };
 
+/**
+ * Whether a classification means the model can be routed without spending money.
+ *
+ * Mirrors `isFreeEconomics` in `@bayz/providers`. `UNKNOWN` is **not** free: absence of
+ * a price is not evidence of zero, and treating it as free is how an operator gets a
+ * bill. `LOCAL` is free because the machine costs nothing per token.
+ */
+export function isFreeEconomics(economics: ModelEconomics): boolean {
+  return (
+    economics === "FREE_VERIFIED" ||
+    economics === "FREE_TIER" ||
+    economics === "FREE_PREVIEW" ||
+    economics === "LOCAL"
+  );
+}
+
+/**
+ * The operator-facing label for a classification.
+ *
+ * `FREE_TIER` and `FREE_PREVIEW` carry their qualification in the label itself: both are
+ * free *today* under conditions, and a bare "Free" would let an operator plan capacity
+ * on a quota that runs out or a preview that ends.
+ */
+export function describeEconomics(economics: ModelEconomics): string {
+  switch (economics) {
+    case "FREE_VERIFIED":
+      return "Free";
+    case "FREE_TIER":
+      return "Free (limited quota)";
+    case "FREE_PREVIEW":
+      return "Free (temporary preview)";
+    case "LOCAL":
+      return "Local (no per-token cost)";
+    case "PAID":
+      return "Paid";
+    case "UNKNOWN":
+      return "Unknown";
+  }
+}
+
+/**
+ * Narrow an untrusted economics value from a response.
+ *
+ * A tampered or future server value falls back to `UNKNOWN` rather than being rendered:
+ * `UNKNOWN` groups with paid and is never offered as free, so the failure mode of an
+ * unrecognised string is refusing to spend, not silently spending.
+ */
+export function asEconomics(value: unknown): ModelEconomics {
+  return value === "FREE_VERIFIED" ||
+    value === "FREE_TIER" ||
+    value === "FREE_PREVIEW" ||
+    value === "LOCAL" ||
+    value === "PAID"
+    ? value
+    : "UNKNOWN";
+}
+
 export type ProviderView = {
   id: string;
   kind: ProviderKind;
@@ -213,6 +270,13 @@ export type RouteView = {
   proxyId: string | undefined;
   /** Never proxy this route, even when its provider has a default. */
   forceDirect: boolean;
+  /**
+   * Whether this route refuses to spend money.
+   *
+   * `true` — the server's default — restricts routing to models proven free. It is a
+   * policy, not a preference: there is no paid fallback when a free candidate fails.
+   */
+  freeOnly: boolean;
   priority: number;
   enabled: boolean;
   config: RouteConfig;
@@ -225,6 +289,8 @@ export type CreateRouteBody = {
   model: string;
   providerId: string;
   proxyId?: string;
+  /** Omitted means free-only: the server defaults it to `true`. */
+  freeOnly?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: Partial<RouteConfig>;
@@ -232,6 +298,8 @@ export type CreateRouteBody = {
 
 export type UpdateRouteBody = {
   proxyId?: string | null;
+  /** Setting this `false` permits paid models on this route. */
+  freeOnly?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: Partial<RouteConfig>;

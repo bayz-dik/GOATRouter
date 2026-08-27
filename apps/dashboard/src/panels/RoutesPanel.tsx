@@ -76,6 +76,31 @@ function describeEffectiveProxy(effective: EffectiveProxy): string {
 }
 
 
+/**
+ * The help text shown when the server refuses on economics grounds.
+ *
+ * A bare `no_free_route` reads as a bug. Naming the refusal and stating that nothing was
+ * charged is what tells an operator this was policy working, not a failure.
+ */
+function NoFreeRouteHelp() {
+  return (
+    <p data-testid="no-free-route-help">
+      no_free_route: no model proven free is available for this route, so nothing was
+      charged and no request was sent. Add a provider with free models, or allow paid
+      models on this route.
+    </p>
+  );
+}
+
+/** Whether a thrown value is the server's 409 economics refusal. */
+function isNoFreeRoute(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "no_free_route"
+  );
+}
+
 export function RoutesPanel({ api }: { api: RoutesApi }) {
   const routes = useAsync(() => api.listRoutes());
   const providers = useAsync(() => api.listProviders());
@@ -89,6 +114,14 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
     proxyId: "",
     priority: "",
   });
+  /*
+   * The new-route economics choice, defaulting to free-only.
+   *
+   * Held as its own boolean rather than a string in `form` so the checkbox cannot end up
+   * in a third state, and defaulted to `true` to match the server: a form that quietly
+   * created paid routes would defeat the policy no matter what the server allows.
+   */
+  const [freeOnly, setFreeOnly] = useState(true);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -111,6 +144,7 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
       <h2 id="routes-heading">Routes</h2>
 
       {actionError !== undefined && <PanelError error={actionError} />}
+      {isNoFreeRoute(actionError) && <NoFreeRouteHelp />}
       {routes.error !== undefined && <PanelError error={routes.error} />}
       {routes.loading && <p>Loading routes…</p>}
 
@@ -128,6 +162,13 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
               */}
               <span data-testid={`route-proxy-${route.id}`}>
                 {describeEffectiveProxy(effectiveProxy(route, providerList))}
+              </span>
+              {/*
+                The economics posture, stated on every row. An operator scanning a route
+                list needs to see which routes can spend money without opening each one.
+              */}
+              <span data-testid={`route-economics-${route.id}`}>
+                {route.freeOnly ? "Free only" : "Paid allowed"}
               </span>
               <span>{route.priority}</span>
               <span>{route.enabled ? "enabled" : "disabled"}</span>
@@ -163,6 +204,19 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
               >
                 {route.enabled ? `Disable ${route.id}` : `Enable ${route.id}`}
               </button>
+              <button
+                type="button"
+                data-testid={`toggle-free-only-${route.id}`}
+                onClick={() =>
+                  void run(() =>
+                    api.updateRoute(route.id, { freeOnly: !route.freeOnly }),
+                  )
+                }
+              >
+                {route.freeOnly
+                  ? `Allow paid models on ${route.id}`
+                  : `Restrict ${route.id} to free models`}
+              </button>
               {route.proxyId !== undefined && (
                 <button
                   type="button"
@@ -189,16 +243,22 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
               id: form.id,
               model: form.model,
               providerId: form.providerId,
+              // Always sent explicitly, never left to the server's default: the operator
+              // saw a checkbox, so the request should say what it said.
+              freeOnly,
               ...(form.proxyId.length === 0 ? {} : { proxyId: form.proxyId }),
               ...(priority.length === 0 ? {} : { priority: Number(priority) }),
             });
             setForm({ id: "", model: "", providerId: "", proxyId: "", priority: "" });
+            // The economics choice is deliberately *not* reset: an operator adding
+            // several paid routes should not have to re-confirm on each one.
           });
         }}
       >
         <label htmlFor="route-id">Route id</label>
         <input
           id="route-id"
+          data-testid="route-id-input"
           value={form.id}
           onChange={(event) => setForm({ ...form, id: event.target.value })}
         />
@@ -206,6 +266,7 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
         <label htmlFor="route-model">Model</label>
         <input
           id="route-model"
+          data-testid="route-model-input"
           value={form.model}
           onChange={(event) => setForm({ ...form, model: event.target.value })}
         />
@@ -213,6 +274,7 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
         <label htmlFor="route-provider">Provider</label>
         <select
           id="route-provider"
+          data-testid="route-provider-input"
           value={form.providerId}
           onChange={(event) => setForm({ ...form, providerId: event.target.value })}
         >
@@ -246,7 +308,26 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
           onChange={(event) => setForm({ ...form, priority: event.target.value })}
         />
 
-        <button type="submit">Add route</button>
+        <label htmlFor="route-free-only">Free-only routing</label>
+        <input
+          id="route-free-only"
+          data-testid="route-free-only"
+          type="checkbox"
+          checked={freeOnly}
+          onChange={(event) => setFreeOnly(event.target.checked)}
+        />
+        {!freeOnly && (
+          // Shown at the moment of the decision, not after submitting. Plain language,
+          // and it names the consequence rather than the flag.
+          <p data-testid="paid-warning">
+            This route may use paid models. Requests on it can be charged by the
+            provider.
+          </p>
+        )}
+
+        <button type="submit" data-testid="route-submit">
+          Add route
+        </button>
       </form>
     </section>
   );

@@ -12,6 +12,9 @@ function route(overrides: Partial<RouteView> = {}): RouteView {
     proxyId: undefined,
     // 9E Task 1 added force-direct; 9E Task 6 made the panel read it.
     forceDirect: false,
+    // 9E free-only amendment. Explicit rather than omitted: the field is required on
+    // RouteView because the server always sends it.
+    freeOnly: true,
     priority: 100,
     enabled: true,
     config: { maxAttempts: 2, requestTimeoutMs: 60000 },
@@ -67,6 +70,9 @@ describe("RoutesPanel", () => {
       model: "claude-3.5",
       providerId: "p1",
       priority: 500,
+      // 9E free-only amendment: the form now states its economics choice explicitly
+      // rather than relying on the server default.
+      freeOnly: true,
     });
   });
 
@@ -87,6 +93,7 @@ describe("RoutesPanel", () => {
       model: "m",
       providerId: "p1",
       proxyId: "x1",
+      freeOnly: true,
     });
   });
 

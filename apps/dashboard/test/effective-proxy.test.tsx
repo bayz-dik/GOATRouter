@@ -26,6 +26,9 @@ function route(overrides: Partial<RouteView> = {}): RouteView {
     providerId: "p1",
     proxyId: undefined,
     forceDirect: false,
+    // 9E free-only amendment. Explicit rather than omitted: the field is required on
+    // RouteView because the server always sends it.
+    freeOnly: true,
     priority: 100,
     enabled: true,
     config: { maxAttempts: 2, requestTimeoutMs: 60000 },
@@ -71,6 +74,8 @@ function providersApi(list: ProviderView[]) {
     setProviderCredential: vi.fn(),
     clearProviderCredential: vi.fn(),
     discoverModels: vi.fn(),
+    // 9E free-only amendment: the economics-bearing sibling of discoverModels.
+    discoverModelCatalogue: async () => [],
     testProviderConnection: vi.fn(),
     listProxies: vi.fn(async () => [proxy("tor")]),
     assignProxy: vi.fn(),

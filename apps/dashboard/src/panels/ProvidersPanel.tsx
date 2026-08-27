@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import type {
   ConnectionResult,
   CreateProviderBody,
+  ModelCatalogueEntry,
   ProviderConfigInput,
   ProviderKind,
   ProviderView,
@@ -9,6 +10,7 @@ import type {
   ProxyUnassignResult,
   ProxyView,
 } from "../api/types";
+import { asEconomics, describeEconomics, isFreeEconomics } from "../api/types";
 import { PanelError, useAsync } from "./shared";
 
 /** Only the calls this panel needs, so a test can supply a narrow stub. */
@@ -20,6 +22,13 @@ export type ProvidersApi = {
   setProviderCredential(id: string, value: string): Promise<void>;
   clearProviderCredential(id: string): Promise<void>;
   discoverModels(id: string): Promise<string[]>;
+  /**
+   * Models with their economics.
+   *
+   * Separate from `discoverModels` so the legacy `string[]` caller keeps working; this
+   * is the call the free-first list uses.
+   */
+  discoverModelCatalogue(id: string): Promise<ModelCatalogueEntry[]>;
   testProviderConnection(id: string): Promise<ConnectionResult>;
   /** Proxies offered in the bulk-assign selector. */
   listProxies(): Promise<ProxyView[]>;
@@ -122,11 +131,83 @@ function headerRowError(row: HeaderRow, earlier: readonly HeaderRow[]): string |
   return undefined;
 }
 
+/**
+ * A provider's models, free ones first and paid ones withheld.
+ *
+ * Extracted as its own component because it owns real logic — classification, ordering,
+ * and the hidden count — unlike the assign bar in Task 5, which was four pieces of state
+ * with one call site.
+ *
+ * `UNKNOWN` is grouped with `PAID`. Absence of a price is not evidence of zero, so an
+ * unclassified model must not be offered as free.
+ */
+function CatalogueList({
+  providerId,
+  entries,
+  paidShown,
+  onShowPaid,
+}: {
+  providerId: string;
+  entries: readonly ModelCatalogueEntry[];
+  paidShown: boolean;
+  onShowPaid: () => void;
+}) {
+  // `asEconomics` narrows an untrusted value: a tampered or future classification reads
+  // as UNKNOWN, so it groups with paid rather than becoming silently spendable.
+  const classified = entries.map((entry) => ({
+    id: entry.id,
+    economics: asEconomics(entry.economics),
+  }));
+  const free = classified.filter((entry) => isFreeEconomics(entry.economics));
+  const paid = classified.filter((entry) => !isFreeEconomics(entry.economics));
+  const visible = paidShown ? [...free, ...paid] : free;
+
+  return (
+    <div>
+      <ul className="bayz-models" data-testid={`catalogue-list-${providerId}`}>
+        {visible.map((entry) => (
+          // React escapes both values, so a hostile id or classification renders as text
+          // rather than being parsed as markup.
+          <li
+            key={entry.id}
+            data-testid={`model-${entry.id}`}
+            data-economics={entry.economics}
+          >
+            <span>{entry.id}</span>
+            <span>{describeEconomics(entry.economics)}</span>
+          </li>
+        ))}
+      </ul>
+      {paid.length > 0 && !paidShown && (
+        <p data-testid={`paid-hidden-count-${providerId}`}>
+          {/* Disclosed, never silent: hiding a count is how an operator concludes a
+              model is missing rather than withheld. */}
+          {`${paid.length} paid or unclassified model(s) hidden`}
+          <button type="button" data-testid={`show-paid-${providerId}`} onClick={onShowPaid}>
+            Show paid models for {providerId}
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ProvidersPanel({ api }: { api: ProvidersApi }) {
   const { value, error, loading, reload } = useAsync(() => api.listProviders());
   const proxies = useAsync(() => api.listProxies());
   const [actionError, setActionError] = useState<unknown>(undefined);
   const [models, setModels] = useState<Record<string, string[]>>({});
+  /*
+   * The economics-bearing catalogue, per provider.
+   *
+   * Kept separate from `models` rather than replacing it: `discoverModels` remains the
+   * legacy `string[]` call and other tests depend on its behaviour.
+   */
+  const [catalogues, setCatalogues] = useState<
+    Record<string, ModelCatalogueEntry[]>
+  >({});
+  /** Providers whose paid models the operator has explicitly asked to see. */
+  const [paidShown, setPaidShown] = useState<Record<string, boolean>>({});
   const [tests, setTests] = useState<Record<string, ConnectionResult>>({});
   // Credential drafts are keyed per provider and cleared the moment they are sent.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -480,6 +561,21 @@ export function ProvidersPanel({ api }: { api: ProvidersApi }) {
               </button>
               <button
                 type="button"
+                data-testid={`catalogue-${provider.id}`}
+                onClick={() =>
+                  void run(async () => {
+                    const found = await api.discoverModelCatalogue(provider.id);
+                    setCatalogues((current) => ({ ...current, [provider.id]: found }));
+                    // Each fresh discovery re-hides paid models. The operator's earlier
+                    // "show paid" was a decision about a list that no longer exists.
+                    setPaidShown((current) => ({ ...current, [provider.id]: false }));
+                  })
+                }
+              >
+                List models with pricing for {provider.id}
+              </button>
+              <button
+                type="button"
                 onClick={() =>
                   void run(async () => {
                     const result = await api.testProviderConnection(provider.id);
@@ -519,6 +615,16 @@ export function ProvidersPanel({ api }: { api: ProvidersApi }) {
                   <li key={model}>{model}</li>
                 ))}
               </ul>
+            )}
+            {catalogues[provider.id] !== undefined && (
+              <CatalogueList
+                providerId={provider.id}
+                entries={catalogues[provider.id]!}
+                paidShown={paidShown[provider.id] === true}
+                onShowPaid={() =>
+                  setPaidShown((current) => ({ ...current, [provider.id]: true }))
+                }
+              />
             )}
           </li>
         ))}

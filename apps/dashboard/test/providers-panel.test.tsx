@@ -30,6 +30,8 @@ function api(overrides: Partial<Parameters<typeof ProvidersPanel>[0]["api"]> = {
     setProviderCredential: vi.fn(async () => undefined),
     clearProviderCredential: vi.fn(async () => undefined),
     discoverModels: vi.fn(async () => ["gpt-4o", "gpt-4o-mini"]),
+    // 9E free-only amendment: the economics-bearing sibling of discoverModels.
+    discoverModelCatalogue: async () => [],
     testProviderConnection: vi.fn(async () => ({
       ok: true,
       latencyMs: 12,
@@ -161,6 +163,8 @@ describe("ProvidersPanel", () => {
   it("renders a hostile model name as text, never as markup", async () => {
     const client = api({
       discoverModels: vi.fn(async () => ['<img src=x onerror="window.__xssModel = true">']),
+      // 9E free-only amendment: the economics-bearing sibling of discoverModels.
+      discoverModelCatalogue: async () => [],
     });
     const { container } = render(<ProvidersPanel api={client} />);
     await screen.findByText("Local Llama");
