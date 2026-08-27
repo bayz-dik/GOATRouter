@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer, connect } from "node:net";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -124,6 +124,84 @@ async function startOrigin(index) {
   server.on("connection", track);
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return { server, port: server.address().port, seen, index };
+}
+
+/**
+ * A non-loopback address to bind economics origins to.
+ *
+ * Loopback cannot be used for the paid/unknown scenarios: `allowLoopback` short-circuits
+ * classification to `LOCAL` before the catalogue is even read, so a loopback origin can
+ * never be seen as PAID. Binding a private LAN address gives the classifier the same
+ * posture a real remote provider has.
+ */
+function privateHost() {
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) {
+        return entry.address;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * An origin that publishes a fixed catalogue and counts chat requests.
+ *
+ * `chatHits` is the assertion that matters for the refusal cases: a refused route must
+ * leave it at zero. A 409 alone would not prove the request was never sent.
+ */
+async function startEconomicsOrigin(host, models) {
+  let chatHits = 0;
+  const server = createHttpServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "application/json" });
+      if (request.url?.includes("/chat/completions")) {
+        chatHits += 1;
+        response.end(
+          JSON.stringify({
+            id: "chatcmpl-econ",
+            model: "econ",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: COMPLETION },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+          }),
+        );
+        return;
+      }
+      response.end(JSON.stringify({ data: models }));
+    });
+  });
+  server.on("connection", track);
+  await new Promise((resolve) => server.listen(0, host, resolve));
+  return {
+    server,
+    port: server.address().port,
+    get chatHits() {
+      return chatHits;
+    },
+  };
+}
+
+/**
+ * A model priced at zero across every priced dimension.
+ *
+ * All four of `prompt`, `completion`, `request`, and `image` are required: the
+ * classifier treats a *missing* dimension as unproven, not as zero, so a two-field
+ * fixture classifies UNKNOWN and would make a free-routing assertion vacuous.
+ */
+function freeModelEntry(id) {
+  return {
+    id,
+    pricing: { prompt: "0", completion: "0", request: "0", image: "0" },
+  };
 }
 
 /**
@@ -675,6 +753,161 @@ async function main() {
         headers: { authorization: `Bearer ${TOKEN}` },
       });
       check("there is no GET password route", forged.status === 404 || forged.status === 405);
+    }
+
+    /*
+     * Free-only routing, against real origins on a non-loopback address.
+     *
+     * Skipped rather than faked when the host has no private IPv4: `allowLoopback`
+     * short-circuits classification to LOCAL, so loopback origins cannot exercise the
+     * PAID or UNKNOWN paths at all. Reporting a skip is honest; asserting against
+     * loopback would report a pass that proves nothing.
+     */
+    section("13. Free-only routing refuses paid and undiscovered models");
+    const econHost = privateHost();
+    if (econHost === undefined) {
+      console.log("       SKIP: no non-loopback IPv4 address on this host");
+    } else {
+      const freeOrigin = await startEconomicsOrigin(econHost, [
+        freeModelEntry("free-model"),
+      ]);
+      const paidOrigin = await startEconomicsOrigin(econHost, [
+        { id: "paid-model", pricing: { prompt: "0.00002", completion: "0.00004" } },
+      ]);
+      const mysteryOrigin = await startEconomicsOrigin(econHost, [{ id: "mystery-model" }]);
+      /*
+       * A second origin publishing the *same* paid model id.
+       *
+       * `routes_model_provider_idx` is UNIQUE on (model, provider_id), so two routes to
+       * one model must go through two different providers. That constraint is what makes
+       * this scenario meaningful: the two routes are genuinely independent rows.
+       */
+      const paidOrigin2 = await startEconomicsOrigin(econHost, [
+        { id: "paid-model", pricing: { prompt: "0.00002", completion: "0.00004" } },
+      ]);
+      // Loopback deliberately, so this one classifies LOCAL.
+      const localOrigin = await startEconomicsOrigin("127.0.0.1", [{ id: "local-model" }]);
+
+      try {
+        const cases = [
+          ["econ-free", freeOrigin, econHost, "free-model", false],
+          ["econ-paid", paidOrigin, econHost, "paid-model", false],
+          ["econ-mystery", mysteryOrigin, econHost, "mystery-model", false],
+          ["econ-paid-2", paidOrigin2, econHost, "paid-model", false],
+          ["econ-local", localOrigin, "127.0.0.1", "local-model", true],
+        ];
+        for (const [id, origin, host, model, loopback] of cases) {
+          const created = await call("POST", "/api/providers", {
+            body: {
+              id,
+              kind: "openai-compatible",
+              displayName: id,
+              baseUrl: `http://${host}:${origin.port}/v1`,
+              config: loopback ? { allowLoopback: true } : { allowPrivate: true },
+            },
+          });
+          check(`${id} was created`, created.status === 201);
+          await call("PUT", `/api/providers/${id}/credential`, {
+            body: { value: CREDENTIAL },
+          });
+          const catalogue = await call("POST", `/api/providers/${id}/catalogue`, {});
+          check(`${id} published a catalogue`, catalogue.status === 200);
+          // Free-only left at its default: this section is about the default refusing.
+          const route = await call("POST", "/api/routes", {
+            body: { id: `route-${id}`, model, providerId: id },
+          });
+          check(`route-${id} was created`, route.status === 201);
+        }
+
+        const freeChat = await call("POST", "/v1/chat/completions", {
+          body: { model: "free-model", messages: [{ role: "user", content: PROMPT }] },
+        });
+        check("a FREE_VERIFIED model routes on a free-only route", freeChat.status === 200);
+        check("the free origin served exactly one chat", freeOrigin.chatHits === 1);
+
+        const localChat = await call("POST", "/v1/chat/completions", {
+          body: { model: "local-model", messages: [{ role: "user", content: PROMPT }] },
+        });
+        check("a LOCAL model routes on a free-only route", localChat.status === 200);
+        check("the local origin served exactly one chat", localOrigin.chatHits === 1);
+
+        for (const [label, model, origin] of [
+          ["PAID", "paid-model", paidOrigin],
+          ["UNKNOWN", "mystery-model", mysteryOrigin],
+        ]) {
+          const refused = await call("POST", "/v1/chat/completions", {
+            body: { model, messages: [{ role: "user", content: PROMPT }] },
+          });
+          check(`a ${label} model is refused 409`, refused.status === 409);
+          check(
+            `the ${label} refusal names no_free_route`,
+            refused.json?.error?.code === "no_free_route",
+          );
+          // The assertion that matters: refused before any socket was opened.
+          check(`the ${label} origin was never asked`, origin.chatHits === 0);
+          check(
+            `the ${label} refusal leaks no price`,
+            !refused.text.includes("0.00002") && !refused.text.includes("0.00004"),
+          );
+        }
+
+        section("14. Disabling free-only on one route does not affect another");
+        {
+          /*
+           * `route-econ-paid` and `route-econ-paid-2` both serve `paid-model` through
+           * different providers, and both start free-only. Turning free-only off on the
+           * first makes it the only eligible candidate — the second is filtered out on
+           * economics — so the destination is deterministic rather than priority luck.
+           */
+          const opened = await call("PATCH", "/api/routes/route-econ-paid", {
+            body: { freeOnly: false },
+          });
+          check("free-only was turned off on the first route", opened.status === 200);
+          check("the route reports freeOnly false", opened.json?.freeOnly === false);
+
+          const paidChat = await call("POST", "/v1/chat/completions", {
+            body: { model: "paid-model", messages: [{ role: "user", content: PROMPT }] },
+          });
+          check("the opened route now reaches the paid origin", paidChat.status === 200);
+          check("the opened route's origin served one chat", paidOrigin.chatHits === 1);
+          check(
+            "the still-strict route's origin was never asked",
+            paidOrigin2.chatHits === 0,
+          );
+
+          // Disable the opened route; only the free-only one remains.
+          await call("PATCH", "/api/routes/route-econ-paid", { body: { enabled: false } });
+          const stillRefused = await call("POST", "/v1/chat/completions", {
+            body: { model: "paid-model", messages: [{ role: "user", content: PROMPT }] },
+          });
+          check("the remaining free-only route still refuses", stillRefused.status === 409);
+          check(
+            "neither paid origin was asked again",
+            paidOrigin.chatHits === 1 && paidOrigin2.chatHits === 0,
+          );
+        }
+
+        section("15. The free set is queryable and lists only free models");
+        {
+          const free = await call("GET", "/api/models/free");
+          check("the free list returned 200", free.status === 200);
+          const ids = (free.json?.models ?? []).map((entry) => entry.id);
+          check("free-model is listed", ids.includes("free-model"));
+          check("local-model is listed", ids.includes("local-model"));
+          check("paid-model is absent", !ids.includes("paid-model"));
+          check("mystery-model is absent", !ids.includes("mystery-model"));
+          check(
+            "no price appears in the free list",
+            !free.text.includes("0.00002") && !free.text.includes("0.00004"),
+          );
+        }
+      } finally {
+        await new Promise((resolve) => freeOrigin.server.close(resolve));
+        await new Promise((resolve) => paidOrigin.server.close(resolve));
+        await new Promise((resolve) => mysteryOrigin.server.close(resolve));
+        await new Promise((resolve) => paidOrigin2.server.close(resolve));
+        await new Promise((resolve) => localOrigin.server.close(resolve));
+      }
     }
   } finally {
     await app.close();

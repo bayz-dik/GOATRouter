@@ -347,16 +347,30 @@ Recorded deviations:
 
 ### Amended Task 7 additions
 
-- [ ] `scripts/proxy-ux-smoke.mjs` additionally proves, against real origins: a provider whose catalogue reports zero pricing yields `FREE_VERIFIED` and is routable on a free-only route; a provider whose catalogue reports a non-zero price yields `PAID` and a free-only route to it fails `no_free_route` with **zero requests observed at that origin**; a provider whose catalogue omits pricing yields `UNKNOWN` and is likewise refused; a loopback provider yields `LOCAL` and is routable; disabling free-only on one route lets the paid provider through while a second free-only route to the same model still refuses.
-- [ ] Commit — `test: prove Bayz free-only routing spends nothing`
+- [x] `scripts/proxy-ux-smoke.mjs` additionally proves, against real origins: a provider whose catalogue reports zero pricing yields `FREE_VERIFIED` and is routable on a free-only route; a provider whose catalogue reports a non-zero price yields `PAID` and a free-only route to it fails `no_free_route` with **zero requests observed at that origin**; a provider whose catalogue omits pricing yields `UNKNOWN` and is likewise refused; a loopback provider yields `LOCAL` and is routable; disabling free-only on one route does not affect another; `GET /api/models/free` lists exactly the free set. **127/127 checks PASS** (sections 13–15, +40 checks).
+- [x] Commit — `test: prove Bayz free-only routing spends nothing`
+
+**Two constraints this section ran into, both recorded because they shape the test.**
+
+`routes_model_provider_idx` is UNIQUE on `(model, provider_id)`, so "two routes to the
+same model that disagree about free-only" requires **two providers**. A second paid
+origin publishing the same model id is what makes the scenario real; without it the
+second `POST /api/routes` returns 409 and the assertion is vacuous. The first version of
+this section did exactly that and reported a false FAIL, which is how the constraint
+surfaced.
+
+Loopback origins cannot exercise `PAID` or `UNKNOWN` at all: `allowLoopback` short-circuits
+classification to `LOCAL` before the catalogue is consulted. The economics origins bind a
+private LAN address with `allowPrivate: true`, and the section **skips with an explicit
+message** when the host has no non-loopback IPv4 rather than asserting something weaker.
 
 ### Amended completion checklist additions
 
-- [ ] `routes.free_only` defaults to 1; existing rows migrate to 1.
-- [ ] `UNKNOWN` and `PAID` are both excluded from a free-only route.
-- [ ] No paid fallback on failure, rate limit, timeout, or 5xx — proven by zero requests at the paid origin.
-- [ ] `no_free_route` is a distinct 409 naming no model and no price.
-- [ ] `model_catalogue` holds only id and classification; no content column.
-- [ ] Paid models are not in the DOM until explicitly requested.
-- [ ] `FREE_TIER` and `FREE_PREVIEW` carry their qualifications in the UI.
-- [ ] Flux Core untouched.
+- [x] `routes.free_only` defaults to 1; existing rows migrate to 1.
+- [x] `UNKNOWN` and `PAID` are both excluded from a free-only route.
+- [x] No paid fallback on failure, rate limit, timeout, or 5xx — proven by zero requests at the paid origin.
+- [x] `no_free_route` is a distinct 409 naming no model and no price.
+- [x] `model_catalogue` holds only id and classification; no content column — pinned by an exact column-set assertion in `packages/storage/test/migrations.test.ts`.
+- [x] Paid models are not in the DOM until explicitly requested — asserted absent via `queryByTestId`, not merely hidden by CSS.
+- [x] `FREE_TIER` and `FREE_PREVIEW` carry their qualifications in the UI ("free within a quota", "free while in preview").
+- [x] Flux Core untouched — no file under `src/flux/` modified in 9E; the two panels changed here are asserted to import nothing from it.
