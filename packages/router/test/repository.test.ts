@@ -400,7 +400,10 @@ test("stored rows contain no prompt-like or credential-like value", () => {
     ctx.repo.create({ id: "clean", ...BASE });
     const row = ctx.db.prepare("SELECT * FROM routes WHERE id = ?").get("clean");
     assert.ok(row !== undefined);
-    assert.equal(Object.keys(row).length, 9);
+    // Ten columns after 9E added `force_direct`. Pinned as an exact count so a column
+    // able to hold a prompt or a credential cannot be added without this failing.
+    assert.equal(Object.keys(row).length, 10);
+    assert.equal(row.force_direct, 0);
     const serialized = JSON.stringify(row).toLowerCase();
     for (const forbidden of ["bearer", "sk-", "prompt", "message"]) {
       assert.equal(serialized.includes(forbidden), false);

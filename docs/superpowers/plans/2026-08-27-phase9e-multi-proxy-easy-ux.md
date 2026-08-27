@@ -37,11 +37,21 @@
 
 **Resolution:** route override → provider default → direct
 
-- [ ] RED `proxy-resolution.test.ts`: a route with `proxyId` uses it even when the provider has a different default (override wins); a route with no `proxyId` uses the provider default; neither set means direct; a route explicitly set to direct must be distinguishable from "unset" — introduce `proxyId: null` on the route meaning *force direct*, and pin that it beats the provider default; telemetry records the **effective** proxy id, not the route's raw value; the effective proxy is reported in the `x-bayz-proxy` header.
-- [ ] Verify RED.
-- [ ] GREEN. Note in code why `null` (force direct) and `undefined` (inherit) must differ, since collapsing them makes "opt this one route out" impossible.
-- [ ] Verify: `npm run test --workspace @bayz/router` exits 0; `node scripts/router-smoke.mjs` still 46/46.
-- [ ] Commit — `feat: resolve Bayz proxies by route override then provider default`
+- [x] RED `proxy-resolution.test.ts`: a route with `proxyId` uses it even when the provider has a different default (override wins); a route with no `proxyId` uses the provider default; neither set means direct; a route explicitly set to direct must be distinguishable from "unset" — introduce `proxyId: null` on the route meaning *force direct*, and pin that it beats the provider default; telemetry records the **effective** proxy id, not the route's raw value; the effective proxy is reported in the `x-bayz-proxy` header.
+- [x] Verify RED.
+- [x] GREEN. Note in code why `null` (force direct) and `undefined` (inherit) must differ, since collapsing them makes "opt this one route out" impossible.
+- [x] Verify: `npm run test --workspace @bayz/router` exits 0; `node scripts/router-smoke.mjs` still 46/46.
+- [x] Commit — `feat: resolve Bayz proxies by route override then provider default`
+
+**As built — one deviation from the plan text.** The plan proposed expressing force-direct
+as `proxyId: null` on the route. That does not work: `proxyId` is already `NULL` for an
+inheriting route, so the two states would be the same row and indistinguishable after a
+reload. Force-direct is therefore a separate column, `routes.force_direct` (migration
+**v9**), defaulting to 0 = inherit so no existing route changes behaviour. The API-level
+`proxyId: null` on an *update* keeps its existing meaning — return to inheriting — and
+`forceDirect: true` is the new, distinct request. A sentinel `proxy_id` value was the
+other option and was rejected: it would break the foreign key and put a magic string in a
+reference column.
 
 ### Task 3 — Bulk assignment API
 

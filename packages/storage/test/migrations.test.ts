@@ -354,6 +354,9 @@ test("the routes table binds a model to a provider and stores no prompt", () => 
       "config_json",
       "created_at",
       "enabled",
+      // 9E: separates "inherit the provider's proxy" from "never proxy this route".
+      // Both have a NULL `proxy_id`, so a flag is the only way to tell them apart.
+      "force_direct",
       "id",
       "model",
       "priority",
@@ -1105,7 +1108,15 @@ test("migration v8 leaves existing provider rows intact with a NULL proxy", () =
        VALUES ('r1', 'gpt-4o', 'legacy', NULL, 100, 1, '{}', 't', 't')`,
     ).run();
 
-    assert.equal(runMigrations(db), 1);
+    // Scoped to v8 so the assertion is about *that* migration rather than however many
+    // exist today.
+    assert.equal(
+      runMigrations(
+        db,
+        MIGRATIONS.filter((migration) => migration.version <= 8),
+      ),
+      1,
+    );
 
     const provider = db.prepare("SELECT * FROM providers WHERE id = 'legacy'").get();
     assert.equal(provider?.display_name, "Legacy");
@@ -1149,6 +1160,82 @@ test("the custom-openai kind still inserts after the v8 rebuild", () => {
         )
         .run(),
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v9 adds routes.force_direct defaulting to inherit", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const column = db
+      .prepare("SELECT name, type, `notnull`, dflt_value FROM pragma_table_info('routes')")
+      .all()
+      .find((row) => String(row.name) === "force_direct");
+
+    assert.ok(column !== undefined, "routes.force_direct must exist");
+    assert.equal(Number(column.notnull), 1);
+    // 0 is inherit, which is what every route did before this column existed, so the
+    // upgrade changes no behaviour.
+    assert.equal(Number(column.dflt_value), 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("routes.force_direct is boolean-constrained", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json,
+          force_direct, created_at, updated_at)
+       VALUES (?, ?, 'p1', NULL, 100, 1, '{}', ?, 't', 't')`,
+    );
+    insert.run("r0", "m0", 0);
+    insert.run("r1", "m1", 1);
+    // A third state would make "inherit or never" ambiguous in exactly the place the
+    // column exists to disambiguate.
+    assert.throws(() => insert.run("r2", "m2", 2));
+    assert.throws(() => insert.run("r3", "m3", null));
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v9 migrates every existing route to inherit", () => {
+  const db = freshDb();
+  try {
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version <= 8),
+    );
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json, created_at, updated_at)
+       VALUES ('legacy', 'gpt-4o', 'p1', NULL, 100, 1, '{}', 'created', 'updated')`,
+    ).run();
+
+    assert.equal(runMigrations(db), 1);
+
+    const route = db.prepare("SELECT * FROM routes WHERE id = 'legacy'").get();
+    // Inherit, not force-direct. Migrating to 1 would silently opt every existing route
+    // out of the provider default an operator is about to configure.
+    assert.equal(Number(route?.force_direct), 0);
+    assert.equal(route?.created_at, "created");
+    assert.equal(route?.priority, 100);
   } finally {
     db.close();
   }

@@ -26,7 +26,8 @@ export type Migration = {
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
  * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
  * telemetry, v6 per-client identities with a metadata-only audit trail, v7 the
- * `custom-openai` provider kind, and v8 the provider-level proxy default. None of them
+ * `custom-openai` provider kind, v8 the provider-level proxy default, and v9 the
+ * route-level force-direct flag. None of them
  * holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
@@ -297,6 +298,25 @@ export const MIGRATIONS: readonly Migration[] = [
       // Assignment is a bulk operation over providers sharing one proxy, and the usage
       // endpoint counts them, so both read by proxy rather than by provider.
       `CREATE INDEX providers_proxy_idx ON providers (proxy_id)`,
+    ],
+  },
+  {
+    version: 9,
+    statements: [
+      /*
+       * Distinguish "this route inherits the provider's proxy" from "this route must
+       * never be proxied".
+       *
+       * Both states have `proxy_id IS NULL`, so without a separate flag they are the
+       * same row and an operator cannot opt one route out of a proxied provider at all.
+       * A sentinel `proxy_id` value was the alternative and was rejected: it would break
+       * the foreign key and put a magic string in a reference column.
+       *
+       * Defaults to 0 — inherit — which is what every existing route was already doing,
+       * so the upgrade changes no behaviour.
+       */
+      `ALTER TABLE routes
+         ADD COLUMN force_direct INTEGER NOT NULL DEFAULT 0 CHECK (force_direct IN (0, 1))`,
     ],
   },
 ];

@@ -8,6 +8,8 @@ function route(overrides: Partial<RouteRecord> & { id: string }): RouteRecord {
     model: "gpt-4o",
     providerId: "p1",
     proxyId: undefined,
+    // Inherit the provider's proxy, which is what every route does by default.
+    forceDirect: false,
     priority: 100,
     enabled: true,
     config: { maxAttempts: 2, requestTimeoutMs: 60000 },

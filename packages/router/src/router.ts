@@ -139,6 +139,31 @@ function codeOf(error: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * The proxy an attempt actually uses.
+ *
+ * Order: route override → provider default → direct.
+ *
+ * `route.proxyId === undefined` means *inherit*, not direct, which is why
+ * `forceDirect` exists: without it there would be no way to express "this one route
+ * goes direct even though its provider is proxied", and an operator would have to
+ * remove the provider default and re-add it to every other route.
+ *
+ * Everything downstream reads this one function — the agent, the telemetry, the
+ * `x-bayz-proxy` header, and the chunk metadata. Two implementations would eventually
+ * disagree, and the disagreement would show up as telemetry claiming a request went
+ * direct when it went through a tunnel.
+ */
+function effectiveProxyId(
+  route: RouteRecord,
+  provider: ProviderView,
+): string | undefined {
+  if (route.forceDirect) {
+    return undefined;
+  }
+  return route.proxyId ?? provider.proxyId;
+}
+
 export function createRouter(options: CreateRouterOptions): Router {
   const { storage, providers, proxies, now } = options;
   const log: RouterLogger = options.logger ?? (() => {});
@@ -181,11 +206,14 @@ export function createRouter(options: CreateRouterOptions): Router {
         : { supportsTools: provider.config.supportsTools }),
     };
 
+    const proxyId = effectiveProxyId(route, provider);
     let agent: HttpAgent | HttpsAgent | undefined;
-    if (route.proxyId !== undefined) {
-      // A proxy-bound route must genuinely traverse its proxy; if the agent
-      // cannot be built the attempt fails rather than silently going direct.
-      agent = proxies.agentFor(route.proxyId, {
+    if (proxyId !== undefined) {
+      // A proxy-bound attempt must genuinely traverse its proxy; if the agent
+      // cannot be built the attempt fails rather than silently going direct. That
+      // holds for an inherited proxy exactly as for a route override — an operator
+      // who disabled a proxy has not consented to their traffic leaving directly.
+      agent = proxies.agentFor(proxyId, {
         tls: transportProvider.baseUrl.startsWith("https:"),
       });
     }
@@ -245,9 +273,11 @@ export function createRouter(options: CreateRouterOptions): Router {
         : { supportsTools: provider.config.supportsTools }),
     };
 
+    // The same resolver as the buffered path. Two implementations would drift.
+    const proxyId = effectiveProxyId(route, provider);
     let agent: HttpAgent | HttpsAgent | undefined;
-    if (route.proxyId !== undefined) {
-      agent = proxies.agentFor(route.proxyId, {
+    if (proxyId !== undefined) {
+      agent = proxies.agentFor(proxyId, {
         tls: transportProvider.baseUrl.startsWith("https:"),
       });
     }
@@ -378,6 +408,10 @@ export function createRouter(options: CreateRouterOptions): Router {
           skipped += 1;
           continue;
         }
+        // Resolved once per candidate and used for every telemetry field below, so
+        // what an operator reads is what the socket did. `attempt` calls the same pure
+        // resolver, so the two cannot disagree.
+        const effectiveProxy = effectiveProxyId(route, provider);
 
         attempts += 1;
         const started = Date.now();
@@ -389,7 +423,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               event: "router_attempt",
               routeId: route.id,
               providerId: provider.id,
-              proxied: route.proxyId !== undefined,
+              proxied: effectiveProxy !== undefined,
               outcome: "ok",
               latencyMs,
             }),
@@ -402,7 +436,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               kind: "failover.started",
               routeId: route.id,
               providerId: provider.id,
-              ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+              ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
               routingMode: mode,
               latencyMs,
               attempts,
@@ -412,7 +446,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "provider.attempted",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: mode,
             latencyMs,
             attempts,
@@ -421,7 +455,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "request.completed",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: mode,
             latencyMs,
             attempts,
@@ -441,7 +475,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             ...response,
             routeId: route.id,
             providerId: provider.id,
-            proxyId: route.proxyId,
+            proxyId: effectiveProxy,
             attempts,
             latencyMs,
           };
@@ -452,7 +486,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               event: "router_attempt",
               routeId: route.id,
               providerId: provider.id,
-              proxied: route.proxyId !== undefined,
+              proxied: effectiveProxy !== undefined,
               outcome: "failed",
               code: code ?? "unknown",
               latencyMs: Date.now() - started,
@@ -464,7 +498,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "provider.failed",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: attempts > 1 ? "failover" : baseMode,
             failureCategory: category,
             latencyMs: failLatency,
@@ -478,7 +512,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               kind: "request.failed",
               routeId: route.id,
               providerId: provider.id,
-              ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+              ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
               routingMode: attempts > 1 ? "failover" : baseMode,
               failureCategory: category,
               latencyMs: failLatency,
@@ -561,6 +595,9 @@ export function createRouter(options: CreateRouterOptions): Router {
           skipped += 1;
           continue;
         }
+        // Same resolver as the buffered path, for the same reason: the header written
+        // before the first body byte has to match what the socket did.
+        const effectiveProxy = effectiveProxyId(route, provider);
 
         attempts += 1;
         const started = Date.now();
@@ -575,7 +612,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               event: "router_stream_attempt",
               routeId: route.id,
               providerId: provider.id,
-              proxied: route.proxyId !== undefined,
+              proxied: effectiveProxy !== undefined,
               outcome: "failed",
               code: code ?? "unknown",
               latencyMs: failLatency,
@@ -585,7 +622,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "provider.failed",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: attempts > 1 ? "failover" : baseMode,
             failureCategory: code ?? "unknown_error",
             latencyMs: failLatency,
@@ -600,7 +637,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               kind: "request.failed",
               routeId: route.id,
               providerId: provider.id,
-              ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+              ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
               routingMode: attempts > 1 ? "failover" : baseMode,
               failureCategory: code ?? "unknown_error",
               latencyMs: failLatency,
@@ -620,7 +657,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "failover.started",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: mode,
             latencyMs: firstLatency,
             attempts,
@@ -630,7 +667,7 @@ export function createRouter(options: CreateRouterOptions): Router {
           kind: "provider.attempted",
           routeId: route.id,
           providerId: provider.id,
-          ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+          ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
           routingMode: mode,
           latencyMs: firstLatency,
           attempts,
@@ -647,7 +684,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               ...step.value,
               routeId: route.id,
               providerId: provider.id,
-              proxyId: route.proxyId,
+              proxyId: effectiveProxy,
               attempts,
             };
             step = await opened.iterator.next();
@@ -658,7 +695,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               event: "router_stream_attempt",
               routeId: route.id,
               providerId: provider.id,
-              proxied: route.proxyId !== undefined,
+              proxied: effectiveProxy !== undefined,
               outcome: "ok",
               latencyMs,
             }),
@@ -667,7 +704,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "request.completed",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: mode,
             latencyMs,
             attempts,
@@ -687,7 +724,7 @@ export function createRouter(options: CreateRouterOptions): Router {
               event: "router_stream_attempt",
               routeId: route.id,
               providerId: provider.id,
-              proxied: route.proxyId !== undefined,
+              proxied: effectiveProxy !== undefined,
               outcome: "failed",
               code: code ?? "unknown",
               latencyMs,
@@ -698,7 +735,7 @@ export function createRouter(options: CreateRouterOptions): Router {
             kind: "request.failed",
             routeId: route.id,
             providerId: provider.id,
-            ...(route.proxyId === undefined ? {} : { proxyId: route.proxyId }),
+            ...(effectiveProxy === undefined ? {} : { proxyId: effectiveProxy }),
             routingMode: mode,
             failureCategory: code ?? "unknown_error",
             latencyMs,

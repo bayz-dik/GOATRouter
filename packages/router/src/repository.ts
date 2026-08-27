@@ -25,7 +25,20 @@ export type RouteRecord = {
   id: string;
   model: string;
   providerId: string;
+  /**
+   * A proxy this route uses regardless of the provider's default.
+   *
+   * `undefined` does **not** mean direct — it means "inherit". See `forceDirect`.
+   */
   proxyId: string | undefined;
+  /**
+   * Never proxy this route, even when its provider has a default.
+   *
+   * This exists because `proxyId: undefined` has to mean "inherit the provider's
+   * proxy", which leaves no way to say "this one route goes direct". Two states, one
+   * NULL column, so the flag is the only thing that can distinguish them.
+   */
+  forceDirect: boolean;
   priority: number;
   enabled: boolean;
   config: RouteConfig;
@@ -38,14 +51,24 @@ export type CreateRouteInput = {
   model: string;
   providerId: string;
   proxyId?: string;
+  /** Mutually exclusive with `proxyId`: setting both is contradictory intent. */
+  forceDirect?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: unknown;
 };
 
 export type UpdateRouteInput = {
-  /** `null` clears a proxy binding; `undefined` leaves it unchanged. */
+  /** `null` returns the route to inheriting; `undefined` leaves it unchanged. */
   proxyId?: string | null;
+  /**
+   * Set or clear force-direct.
+   *
+   * Assigning a `proxyId` in the same patch clears this, because assigning a proxy is
+   * unambiguous intent and refusing would make the operator issue two calls to express
+   * one decision.
+   */
+  forceDirect?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: unknown;
@@ -176,6 +199,7 @@ function rowToRecord(row: Record<string, unknown>): RouteRecord {
       row.proxy_id === null || row.proxy_id === undefined
         ? undefined
         : String(row.proxy_id),
+    forceDirect: Number(row.force_direct) === 1,
     priority: Number(row.priority),
     enabled: Number(row.enabled) === 1,
     config,
@@ -245,6 +269,16 @@ export function createRouteRepository(
       const providerId = requireProviderExists(input.providerId);
       const proxyId =
         input.proxyId === undefined ? undefined : requireProxyExists(input.proxyId);
+      const forceDirect =
+        input.forceDirect === undefined
+          ? false
+          : parseEnabled(input.forceDirect, "create-force-direct");
+      if (forceDirect && proxyId !== undefined) {
+        // Contradictory: "use this proxy" and "never use a proxy". Picking a winner
+        // silently would make the stored config do something the operator did not ask
+        // for.
+        throw new RouterError("invalid_route_config", "proxy-and-force-direct");
+      }
       const priority =
         input.priority === undefined
           ? PRIORITY_DEFAULT
@@ -274,8 +308,8 @@ export function createRouteRepository(
       db.prepare(
         `INSERT INTO routes
            (id, model, provider_id, proxy_id, priority, enabled, config_json,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            force_direct, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         model,
@@ -284,6 +318,7 @@ export function createRouteRepository(
         priority,
         enabled ? 1 : 0,
         JSON.stringify(config),
+        forceDirect ? 1 : 0,
         timestamp,
         timestamp,
       );
@@ -293,6 +328,7 @@ export function createRouteRepository(
         model,
         providerId,
         proxyId,
+        forceDirect,
         priority,
         enabled,
         config,
@@ -333,6 +369,18 @@ export function createRouteRepository(
           : patch.proxyId === null
             ? undefined
             : requireProxyExists(patch.proxyId);
+      // Assigning a proxy clears force-direct: it is unambiguous intent, and refusing
+      // would make the operator issue two calls to express one decision. An explicit
+      // `forceDirect` in the same patch still wins, and is then checked for conflict.
+      const forceDirect =
+        patch.forceDirect !== undefined
+          ? parseEnabled(patch.forceDirect, "update-force-direct")
+          : patch.proxyId !== undefined && patch.proxyId !== null
+            ? false
+            : current.forceDirect;
+      if (forceDirect && proxyId !== undefined) {
+        throw new RouterError("invalid_route_config", "proxy-and-force-direct");
+      }
       const priority =
         patch.priority === undefined
           ? current.priority
@@ -352,18 +400,28 @@ export function createRouteRepository(
       const timestamp = now();
       db.prepare(
         `UPDATE routes
-            SET proxy_id = ?, priority = ?, enabled = ?, config_json = ?, updated_at = ?
+            SET proxy_id = ?, priority = ?, enabled = ?, config_json = ?,
+                force_direct = ?, updated_at = ?
           WHERE id = ?`,
       ).run(
         proxyId ?? null,
         priority,
         enabled ? 1 : 0,
         JSON.stringify(config),
+        forceDirect ? 1 : 0,
         timestamp,
         current.id,
       );
 
-      return { ...current, proxyId, priority, enabled, config, updatedAt: timestamp };
+      return {
+        ...current,
+        proxyId,
+        forceDirect,
+        priority,
+        enabled,
+        config,
+        updatedAt: timestamp,
+      };
     },
 
     delete(id: string): boolean {
