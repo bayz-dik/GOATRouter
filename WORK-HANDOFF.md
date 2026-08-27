@@ -820,7 +820,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
-| 9E Multi-Proxy Easy UX | **Tasks 1–5 COMPLETE** | `@bayz/router` 261 tests, `@bayz/server` 239 tests, `@bayz/dashboard` 317 tests, migrations v8 + v9 |
+| 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -829,20 +829,95 @@ Authoritative resume point. Everything below is measured, not asserted.
 
 ### State
 
-- **Last completed task:** 9E Task 5 — bulk provider proxy assignment UX. Committed at
-  `4a9b303`.
+- **Last completed task:** 9E is **finished** — Tasks 1–7 plus the free-only amendment
+  (6a, 6b, 6c) and the Amended Task 7 additions. Last commit `032cc16`.
 - **Exact current task:** none in progress. The tree is **clean and fully GREEN**.
 - **RED/GREEN/DIRTY:** **GREEN, committed, nothing dirty.**
-- **Last command result:** `@bayz/dashboard` 21 files / 317 pass / 0 fail;
-  `tsc --noEmit -p apps/dashboard` clean. Server side unchanged since Task 3:
-  `@bayz/server` 239 pass, `api-smoke` 70/70.
-- **Exact next step:** start **9E Task 6 — effective proxy visibility**, per
-  `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
-  `apps/dashboard/test/effective-proxy.test.tsx` RED first.
+- **Last command result:** all five workspaces pass (185 / 276 / 276 / 252 / 69) and all
+  nine smokes PASS: api 70/70, stream 63/63, usage 119/119, router 46/46, storage 42/42,
+  provider 36/36, proxy 39/39, **proxy-ux 127/127**, dashboard 48/48.
+- **Exact next step:** start **9F**, per the Phase 9 spec. 9E requires nothing further.
 
 ### Commit chain for 9E
 
-`f9c5253` handoff → `f4c2ce8` Task 3 API → `6c3feaa` Task 4 panel → `4a9b303` Task 5 UX.
+`f9c5253` handoff → `f4c2ce8` Task 3 API → `6c3feaa` Task 4 panel → `4a9b303` Task 5 UX →
+`8591948` docs → `506b6f8` Task 6 effective proxy → `0870aa8` Task 7 proxy smoke →
+`6955443` 6a free-only routing → `7ad37f3` 6b catalogue persistence →
+`17eaad3` 6c free-first UX → `032cc16` Task 7 economics additions.
+
+### The free-only amendment as built (6a–6c), and what it costs a future task
+
+**Migration v10** adds `routes.free_only INTEGER NOT NULL DEFAULT 1` and the
+`model_catalogue` table (`provider_id`, `model_id`, `economics`, `discovered_at` — no
+content column, pinned by an exact column-set assertion). Existing routes migrate to
+`free_only = 1`, the safe value: migrating to 0 would silently opt every route into
+spending.
+
+**The default being ON broke 55 router tests, 33 server tests, and four smokes** — all
+`no_free_route`. That was correct behaviour, not a regression: those fixtures route to
+origins publishing no pricing metadata, which classifies `UNKNOWN`, and `UNKNOWN` is not
+free (§25 rule 5). **The fixtures were fixed, not the policy.** Every one now passes
+`freeOnly: false` explicitly with a comment stating why. Any new test that routes to a
+fixture origin must do the same or serve four-dimension zero pricing.
+
+**`classifyModelEconomics` requires a proven zero on all four priced dimensions**
+(`prompt`, `completion`, `request`, `image`). `{prompt: "0", completion: "0"}` classifies
+`UNKNOWN`, not `FREE_VERIFIED` — a missing dimension is not a zero. This cost one RED
+cycle; the fixture helper now documents it.
+
+**Loopback origins cannot test `PAID` or `UNKNOWN` at all.** `allowLoopback`
+short-circuits classification to `LOCAL` before the catalogue is consulted, so economics
+tests bind a private LAN address with `allowPrivate: true`. `proxy-ux-smoke` skips its
+economics sections with an explicit message when the host has no non-loopback IPv4,
+rather than asserting something weaker.
+
+**`routes_model_provider_idx` is UNIQUE on `(model, provider_id)`.** Two routes to one
+model that disagree about free-only therefore need **two providers**. The first version of
+that smoke scenario used one and reported a false FAIL.
+
+Economics are read from the **persisted catalogue**, never a per-request discovery call: a
+discovery outage must not become a `no_free_route` storm. `no_free_route` is **409**, kept
+distinct from the 502 an unreachable provider gives — one means "add a free provider", the
+other means "the network is down". Turning free-only **off** writes a metadata-only audit
+row via `recordDecision`; turning it back on is deliberately not audited, since only the
+money-spending direction is interesting.
+
+The scope-surface count moved **40 → 41** for `GET /api/models/free` (`models.read`).
+
+### Tasks 6–7 as built
+
+**Task 6** gave `RoutesPanel.tsx` an `effectiveProxy()` that mirrors the router's
+precedence exactly — `forceDirect` → route override → provider default. A panel
+disagreeing with the router would tell an operator traffic goes direct while it tunnels. A
+route whose provider is missing renders `Effective proxy unknown (provider missing)`, not
+a fabricated `Direct`; `Direct (override)` appears only when something is actually
+overridden.
+
+**Task 6c** withholds paid and `UNKNOWN` models from the DOM entirely — `queryByTestId`
+asserts absence, not CSS hiding — behind a "Show paid models" action that discloses the
+hidden count, so a withheld model is never mistaken for a missing one. `UNKNOWN` groups
+with paid: absence of a price is not evidence of zero. `asEconomics` narrows at the type
+boundary so a tampered response reads `Unknown` and lands in the withheld group rather
+than becoming silently spendable. A fresh discovery re-hides paid models. `FREE_TIER` and
+`FREE_PREVIEW` render their qualifications ("free within a quota", "free while in
+preview"). The `no_free_route` help lives in `RoutesPanel` rather than a test chat panel —
+recorded as a deviation, because no such panel exists here.
+
+**Task 7** (`scripts/proxy-ux-smoke.mjs`, 127/127) is non-mocked: a real listener, two
+real CONNECT proxies with Basic auth, one real SOCKS5 with RFC 1929 auth, twelve loopback
+origins, plus four economics origins. Every "where did traffic go" claim reads the
+proxies' own CONNECT logs keyed by origin port, never a router return value. Refusals are
+proven by **zero requests observed at the paid origin**, not just by the status code. The
+leak scan covers db/`-wal`/`-shm`, logs, and every response body for three proxy
+passwords, the provider credential, API token, root key, prompt, and completion — with
+`fleet-1` asserted **present** as a positive control, so a scan reading an empty buffer
+cannot pass.
+
+One fixture bug worth remembering: a provider credential containing `«»` fails with
+`ERR_INVALID_CHAR` before reaching the socket, because Node rejects non-latin1
+`Authorization` values. Sixteen checks failed as `500 internal_error` until the smoke
+started dumping the router's attempt log on failure.
+
 
 ### Tasks 4–5 as built
 
