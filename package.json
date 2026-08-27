@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "runtime:test": "npm run test --workspaces --if-present",
-    "runtime:build": "npm run build --workspace @bayz/contracts --if-present && npm run build --workspace @bayz/security --if-present && npm run build --workspace @bayz/storage --if-present && npm run build --workspace @bayz/telemetry --if-present && npm run build --workspace @bayz/identity --if-present && npm run build --workspace @bayz/providers --if-present && npm run build --workspace @bayz/proxy --if-present && npm run build --workspace @bayz/router --if-present && npm run build --workspace @bayz/dashboard && npm run build --workspace @bayz/server",
+    "runtime:build": "npm run build --workspace @bayz/contracts --if-present && npm run build --workspace @bayz/security --if-present && npm run build --workspace @bayz/storage --if-present && npm run build --workspace @bayz/telemetry --if-present && npm run build --workspace @bayz/identity --if-present && npm run build --workspace @bayz/providers --if-present && npm run build --workspace @bayz/proxy --if-present && npm run build --workspace @bayz/gateway --if-present && npm run build --workspace @bayz/router --if-present && npm run build --workspace @bayz/dashboard && npm run build --workspace @bayz/server",
     "runtime:verify": "npm run runtime:test && npm run runtime:build"
   },
   "devDependencies": {
