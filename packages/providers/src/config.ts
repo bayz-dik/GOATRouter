@@ -20,7 +20,118 @@ export type ProviderConfig = {
    *             not reveal tool support, so inferring it would be fabrication.
    */
   supportsTools?: boolean;
+  /**
+   * Extra request headers a relay needs.
+   *
+   * Allowlisted by name pattern *then* denylisted, in that order — see
+   * `parseCustomHeaders`. Names are normalized to lower case so the denylist cannot be
+   * evaded by casing and so two spellings of one header cannot both be set.
+   */
+  headers?: Record<string, string>;
+  /** Opt in to dialling loopback, for a local model runtime. Default is deny. */
+  allowLoopback?: boolean;
+  /** Opt in to dialling a private/LAN address. Default is deny. */
+  allowPrivate?: boolean;
 };
+
+export const MAX_CUSTOM_HEADERS = 8;
+export const MAX_HEADER_VALUE_LENGTH = 1024;
+
+/** Letters, digits, and hyphens; must start with a letter. Bounded at 64. */
+const HEADER_NAME_RE = /^[A-Za-z][A-Za-z0-9-]{0,63}$/;
+/** Printable ASCII only: no CR, no LF, no NUL, no tab, nothing above 0x7e. */
+const HEADER_VALUE_RE = /^[\x20-\x7e]*$/;
+
+/**
+ * Headers a provider config may never set.
+ *
+ * Each one would either forge BAYZ's own authentication (`authorization`,
+ * `proxy-authorization`), redirect the request (`host`), corrupt framing
+ * (`content-length`, `transfer-encoding`, `connection`, `te`, `trailer`), or carry
+ * ambient credentials (`cookie`).
+ */
+const DENIED_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "host",
+  "cookie",
+  "set-cookie",
+  "content-length",
+  "content-type",
+  "transfer-encoding",
+  "connection",
+  "upgrade",
+  "te",
+  "trailer",
+  "expect",
+  "keep-alive",
+  "accept-encoding",
+]);
+
+/** Whole families that are forbidden by prefix rather than by exact name. */
+const DENIED_PREFIXES = ["sec-", "proxy-"];
+
+function parseCustomHeaders(value: unknown, stage: string): Record<string, string> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    throw new ProviderError("invalid_provider_config", stage);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    // An inherited header would be sent without ever having been validated.
+    throw new ProviderError("invalid_provider_config", "config-header-prototype");
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > MAX_CUSTOM_HEADERS) {
+    throw new ProviderError("invalid_provider_config", "config-header-count");
+  }
+
+  const headers: Record<string, string> = {};
+  for (const [rawName, rawValue] of entries) {
+    // Allowlist first: the shape has to be sane before the name is judged.
+    if (!HEADER_NAME_RE.test(rawName)) {
+      throw new ProviderError("invalid_provider_config", "config-header-name");
+    }
+    const name = rawName.toLowerCase();
+    // Denylist second, on the normalized name. Folding these into the pattern would
+    // make `Authorization` pass while `authorization` failed.
+    if (
+      DENIED_HEADERS.has(name) ||
+      DENIED_PREFIXES.some((prefix) => name.startsWith(prefix))
+    ) {
+      throw new ProviderError("invalid_provider_config", "config-header-denied");
+    }
+    if (Object.hasOwn(headers, name)) {
+      // Two spellings of one header: keeping either would make the winner depend on
+      // insertion order.
+      throw new ProviderError("invalid_provider_config", "config-header-duplicate");
+    }
+    if (typeof rawValue !== "string") {
+      throw new ProviderError("invalid_provider_config", "config-header-value-type");
+    }
+    if (rawValue.length > MAX_HEADER_VALUE_LENGTH) {
+      throw new ProviderError("invalid_provider_config", "config-header-value-length");
+    }
+    if (!HEADER_VALUE_RE.test(rawValue)) {
+      // Header injection: a CRLF in a value would end the header and let the operator
+      // — or whoever wrote their config — append arbitrary further headers.
+      throw new ProviderError("invalid_provider_config", "config-header-value-bytes");
+    }
+    headers[name] = rawValue;
+  }
+  return headers;
+}
+
+function parseBoolean(value: unknown, stage: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ProviderError("invalid_provider_config", stage);
+  }
+  return value;
+}
 
 export const TIMEOUT_MS_MIN = 1000;
 export const TIMEOUT_MS_MAX = 120000;
@@ -43,6 +154,9 @@ const ALLOWED_KEYS = new Set([
   "discoveryPath",
   "modelLimit",
   "supportsTools",
+  "headers",
+  "allowLoopback",
+  "allowPrivate",
 ]);
 
 function defaultDiscoveryPath(kind: ProviderKind): string {
@@ -127,6 +241,15 @@ export function parseProviderConfig(
     ...(record.supportsTools === undefined
       ? {}
       : { supportsTools: record.supportsTools as boolean }),
+    ...(record.headers === undefined
+      ? {}
+      : { headers: parseCustomHeaders(record.headers, "config-headers") }),
+    ...(record.allowLoopback === undefined
+      ? {}
+      : { allowLoopback: parseBoolean(record.allowLoopback, "config-allow-loopback") }),
+    ...(record.allowPrivate === undefined
+      ? {}
+      : { allowPrivate: parseBoolean(record.allowPrivate, "config-allow-private") }),
     timeoutMs:
       record.timeoutMs === undefined
         ? TIMEOUT_MS_DEFAULT

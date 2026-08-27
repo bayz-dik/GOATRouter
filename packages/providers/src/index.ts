@@ -20,6 +20,8 @@ export {
   type ProviderKind,
 } from "./url.js";
 export {
+  MAX_CUSTOM_HEADERS,
+  MAX_HEADER_VALUE_LENGTH,
   MODEL_LIMIT_DEFAULT,
   MODEL_LIMIT_MAX,
   MODEL_LIMIT_MIN,
