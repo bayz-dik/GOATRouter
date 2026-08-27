@@ -167,9 +167,33 @@ added to their stubs, since `ProvidersApi` grew.
 **Modify:** `apps/dashboard/src/panels/ProvidersPanel.tsx`, `apps/dashboard/src/panels/RoutesPanel.tsx`
 **Test:** `apps/dashboard/test/effective-proxy.test.tsx`
 
-- [ ] RED `effective-proxy.test.tsx`: a provider row shows its proxy id or `Direct`; a route row shows the **effective** proxy plus whether it is `inherited` or `overridden`; a route forcing direct against a proxied provider shows `Direct (override)`; the proxy id renders as inert text even when hostile; a proxy that was deleted leaves the provider showing `Direct` with no dangling id.
-- [ ] Verify RED.
-- [ ] GREEN.
+- [x] RED `effective-proxy.test.tsx`: a provider row shows its proxy id or `Direct`; a route row shows the **effective** proxy plus whether it is `inherited` or `overridden`; a route forcing direct against a proxied provider shows `Direct (override)`; the proxy id renders as inert text even when hostile; a proxy that was deleted leaves the provider showing `Direct` with no dangling id.
+- [x] Verify RED — 7 of 10 failed for the right reason (no `route-proxy-*` cell existed).
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/dashboard` exits 0 — 22 files, 327 tests; `tsc --noEmit -p apps/dashboard` clean.
+- [x] Commit — `feat: show the effective Bayz proxy per provider and route`
+
+**As built.** `effectiveProxy()` in `RoutesPanel.tsx` mirrors `effectiveProxyId()` in
+`packages/router/src/router.ts` exactly, including the order — `forceDirect` first, then
+the route override, then the provider default. A test pins that precedence (`proxyId` set
+*and* `forceDirect` true renders Direct), because a panel that disagreed with the router
+would tell the operator traffic goes direct while it tunnels.
+
+Two states the plan text did not name:
+
+1. **A route whose provider is missing renders `Effective proxy unknown (provider
+   missing)`,** not `Direct`. The effective proxy genuinely cannot be computed without the
+   provider, and `Direct` would be a fabricated claim about where traffic goes.
+2. **`Direct (override)` only when it actually overrides something.** A forced-direct route
+   under an already-direct provider reads plain `Direct` — nothing was overridden, and
+   labelling it a decision invites the operator to go looking for a proxy that isn't there.
+
+A route pinning its own proxy reads `(overridden)` whether or not the provider had a
+default, because the route no longer follows whatever the provider does next.
+
+`RouteView` gained the `forceDirect: boolean` the repository has carried since Task 1; the
+route row now renders the effective proxy in place of the raw `proxyId` column, and
+`routes-panel.test.tsx` needed `forceDirect` in its fixture.
 - [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0; `node scripts/dashboard-smoke.mjs` exits 0.
 - [ ] Commit — `feat: show effective Bayz proxy assignment in the dashboard`
 

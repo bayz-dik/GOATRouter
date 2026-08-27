@@ -10,6 +10,8 @@ function route(overrides: Partial<RouteView> = {}): RouteView {
     model: "gpt-4o",
     providerId: "p1",
     proxyId: undefined,
+    // 9E Task 1 added force-direct; 9E Task 6 made the panel read it.
+    forceDirect: false,
     priority: 100,
     enabled: true,
     config: { maxAttempts: 2, requestTimeoutMs: 60000 },

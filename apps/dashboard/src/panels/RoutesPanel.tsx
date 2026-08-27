@@ -17,6 +17,65 @@ export type RoutesApi = {
   deleteRoute(id: string): Promise<void>;
 };
 
+/** How a route arrived at the proxy it will actually use. */
+type EffectiveProxy =
+  | { kind: "proxy"; proxyId: string; origin: "inherited" | "overridden" }
+  | { kind: "direct"; origin: "default" | "override" }
+  | { kind: "unknown" };
+
+/**
+ * The proxy a route will actually use, and why.
+ *
+ * This mirrors `effectiveProxyId` in `@bayz/router` exactly, including the order:
+ * `forceDirect` first, then the route override, then the provider default. The panel
+ * disagreeing with the router would mean the dashboard claims traffic goes direct while
+ * it tunnels, which is worse than showing nothing.
+ *
+ * A route whose provider is not in the list returns `unknown` rather than `direct` — the
+ * effective proxy genuinely cannot be computed, and `Direct` would be a fabricated claim.
+ */
+function effectiveProxy(
+  route: RouteView,
+  providers: readonly ProviderView[],
+): EffectiveProxy {
+  const provider = providers.find((candidate) => candidate.id === route.providerId);
+  if (provider === undefined) {
+    return { kind: "unknown" };
+  }
+  if (route.forceDirect) {
+    // An override only when it overrides something; a forced-direct route under a direct
+    // provider changes nothing and should not be dressed up as a decision.
+    return {
+      kind: "direct",
+      origin: provider.proxyId === undefined ? "default" : "override",
+    };
+  }
+  if (route.proxyId !== undefined) {
+    // Pinned on the route. Called "overridden" whether or not the provider had a default,
+    // because the route is no longer following whatever the provider does next.
+    return { kind: "proxy", proxyId: route.proxyId, origin: "overridden" };
+  }
+  if (provider.proxyId !== undefined) {
+    return { kind: "proxy", proxyId: provider.proxyId, origin: "inherited" };
+  }
+  return { kind: "direct", origin: "default" };
+}
+
+/** One short, unambiguous phrase per state. */
+function describeEffectiveProxy(effective: EffectiveProxy): string {
+  switch (effective.kind) {
+    case "unknown":
+      return "Effective proxy unknown (provider missing)";
+    case "direct":
+      return effective.origin === "override" ? "Direct (override)" : "Direct";
+    case "proxy":
+      return effective.origin === "inherited"
+        ? `Proxy ${effective.proxyId} (inherited)`
+        : `Proxy ${effective.proxyId} (overridden)`;
+  }
+}
+
+
 export function RoutesPanel({ api }: { api: RoutesApi }) {
   const routes = useAsync(() => api.listRoutes());
   const providers = useAsync(() => api.listProviders());
@@ -45,6 +104,7 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
   );
 
   const list = routes.value ?? [];
+  const providerList = providers.value ?? [];
 
   return (
     <section className="bayz-panel" aria-labelledby="routes-heading">
@@ -61,7 +121,14 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
               <strong>{route.model}</strong>
               <span>{route.id}</span>
               <span>{route.providerId}</span>
-              {route.proxyId !== undefined && <span>{route.proxyId}</span>}
+              {/*
+                The effective proxy, not the raw column: an operator needs to know where
+                traffic actually goes. React escapes the id, so a hostile one renders as
+                text rather than being parsed as markup.
+              */}
+              <span data-testid={`route-proxy-${route.id}`}>
+                {describeEffectiveProxy(effectiveProxy(route, providerList))}
+              </span>
               <span>{route.priority}</span>
               <span>{route.enabled ? "enabled" : "disabled"}</span>
             </div>

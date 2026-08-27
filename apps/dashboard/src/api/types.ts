@@ -204,7 +204,15 @@ export type RouteView = {
   id: string;
   model: string;
   providerId: string;
+  /**
+   * A proxy this route uses regardless of its provider's default.
+   *
+   * `undefined` means **inherit the provider's proxy**, not direct — which is why
+   * `forceDirect` exists as a separate flag.
+   */
   proxyId: string | undefined;
+  /** Never proxy this route, even when its provider has a default. */
+  forceDirect: boolean;
   priority: number;
   enabled: boolean;
   config: RouteConfig;
