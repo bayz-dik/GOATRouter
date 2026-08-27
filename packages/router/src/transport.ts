@@ -2,7 +2,12 @@ import type { Agent as HttpAgent, ClientRequest, IncomingMessage } from "node:ht
 import { request as httpRequest } from "node:http";
 import type { Agent as HttpsAgent } from "node:https";
 import { request as httpsRequest } from "node:https";
-import { ProviderError } from "@bayz/providers";
+import {
+  ProviderError,
+  assertEgressAllowed,
+  assertRequestEgressAllowed,
+  safeCustomHeaders,
+} from "@bayz/providers";
 import { parseChatChunk, type ChatChunk } from "./chunk.js";
 import { RouterError } from "./errors.js";
 import type { ChatRequest } from "./request.js";
@@ -12,6 +17,7 @@ import {
   authHeaders,
   chatUrl,
   mapStatus,
+  transportEgressPolicy,
   wireBody,
   type TransportProvider,
 } from "./wire.js";
@@ -61,6 +67,31 @@ function assertToolsSupported(options: SendChatRequestOptions): void {
 }
 
 /**
+ * Refuse the attempt if the provider's host is outside its egress policy.
+ *
+ * Runs before any socket is opened, on both the buffered and the streaming path. The
+ * repository already refuses to *store* a forbidden base URL, so in normal operation
+ * this never fires; it exists because a pre-9D row is deliberately still loadable, and
+ * because a policy enforced only at write time is one hand-edited row away from an
+ * SSRF.
+ *
+ * When the attempt goes through a proxy the *name* is still checked but the address is
+ * not resolved locally: the proxy performs its own resolution, so a local answer would
+ * be a different lookup than the one that matters and checking it would imply a
+ * guarantee that does not exist.
+ */
+async function assertEgressForAttempt(options: SendChatRequestOptions): Promise<void> {
+  const url = chatUrl(options.provider.baseUrl);
+  const policy = transportEgressPolicy(options.provider);
+  if (options.agent !== undefined) {
+    // Name-only, for the reason above.
+    assertEgressAllowed(url.hostname, policy);
+    return;
+  }
+  await assertRequestEgressAllowed(url.hostname, policy, options.provider.resolve);
+}
+
+/**
  * Open the upstream request.
  *
  * `node:http` is used rather than `fetch` precisely because it accepts a custom
@@ -86,6 +117,10 @@ function openRequest(
       method: "POST",
       ...(options.agent === undefined ? {} : { agent: options.agent }),
       headers: {
+        // Custom headers first, so every assignment below wins. A stored config can
+        // therefore never forge the credential, retarget the request with `host`, or
+        // corrupt framing with `content-length`.
+        ...safeCustomHeaders(options.provider),
         "content-type": "application/json",
         accept: stream ? "text/event-stream" : "application/json",
         "content-length": String(Buffer.byteLength(body, "utf8")),
@@ -174,6 +209,7 @@ export async function sendChatRequest(
     throw new ProviderError("unsupported_operation", "codex-chat");
   }
   assertToolsSupported(options);
+  await assertEgressForAttempt(options);
 
   const raw = await performRequest(options, wireBody(options.request, false));
 
@@ -289,6 +325,7 @@ export async function* sendChatRequestStreaming(
     // the provider nothing.
     throw new ProviderError("unreachable", "stream-aborted");
   }
+  await assertEgressForAttempt(options);
 
   const { provider, maxResponseBytes = MAX_RESPONSE_BYTES } = options;
   const idleTimeoutMs = provider.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;

@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { ProviderError } from "./errors.js";
 
@@ -327,5 +328,65 @@ export function assertResolvedAddressAllowed(
   }
   if (!permitted(classify(address), policy)) {
     throw new ProviderError("invalid_provider_config", "egress-resolved-denied");
+  }
+}
+
+/**
+ * Resolve a hostname to every address a connect might pick.
+ *
+ * Injectable so a test can present a rebinding answer without a resolver, and so a
+ * caller that already has addresses need not look them up twice.
+ */
+export type EgressResolver = (hostname: string) => Promise<readonly string[]>;
+
+export const defaultEgressResolver: EgressResolver = async (hostname) => {
+  const answers = await lookup(hostname, { all: true, verbatim: true });
+  return answers.map((answer) => answer.address);
+};
+
+/**
+ * The full pre-connect check for one request.
+ *
+ * Two stages, and both are needed:
+ *
+ * 1. The *name* is classified. This catches `localhost`, the metadata names, and
+ *    every numeric literal form, and it happens with no network traffic at all.
+ * 2. If the name is not already a literal, it is resolved and **every** returned
+ *    address is classified. Checking only the first would let a multi-record answer
+ *    hide a private address behind a public one, since the connect is free to pick
+ *    either.
+ *
+ * This narrows the DNS-rebinding window rather than closing it: Node gives no hook
+ * between the resolution a socket performs and its own connect, so the answer checked
+ * here and the answer used there are two separate lookups. The honest guarantee is
+ * "an address BAYZ has seen is checked", not "rebinding is impossible". A resolution
+ * failure is `unreachable`, not a policy error — the operator's configuration is fine
+ * and the name simply did not resolve.
+ */
+export async function assertRequestEgressAllowed(
+  hostname: string,
+  policy: EgressPolicy,
+  resolver: EgressResolver | undefined = defaultEgressResolver,
+): Promise<void> {
+  assertEgressAllowed(hostname, policy);
+
+  const bare = stripBrackets(hostname.trim());
+  if (isIP(bare) !== 0) {
+    // Already a literal: it was just classified, and resolving it would be a
+    // pointless lookup plus a second answer that could differ.
+    return;
+  }
+
+  let addresses: readonly string[];
+  try {
+    addresses = await (resolver ?? defaultEgressResolver)(bare);
+  } catch {
+    throw new ProviderError("unreachable", "egress-resolve");
+  }
+  if (addresses.length === 0) {
+    throw new ProviderError("unreachable", "egress-resolve-empty");
+  }
+  for (const address of addresses) {
+    assertResolvedAddressAllowed(address, policy);
   }
 }

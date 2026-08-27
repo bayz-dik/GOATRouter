@@ -3,9 +3,22 @@ import test from "node:test";
 import {
   MODEL_LIMIT_MAX,
   ProviderError,
-  discoverOpenAiModels,
+  discoverOpenAiModels as discoverWithResolver,
+  type DiscoverOpenAiOptions,
   type Fetcher,
 } from "../src/index.js";
+
+/**
+ * Every provider in this file has a public hostname and an injected fetcher, so the
+ * pre-connect address check would otherwise perform a real DNS lookup for a name that
+ * does not exist. The stub answers with a public address, which is what these tests
+ * are about: the resolution *policy* is covered in `egress-enforcement.test.ts`.
+ */
+const RESOLVES_PUBLIC = async () => ["93.184.216.34"];
+
+function discoverOpenAiModels(options: DiscoverOpenAiOptions): Promise<string[]> {
+  return discoverWithResolver({ resolve: RESOLVES_PUBLIC, ...options });
+}
 
 function jsonFetcher(payload: unknown, status = 200): { fetcher: Fetcher; calls: Array<{ url: string; headers: Headers }> } {
   const calls: Array<{ url: string; headers: Headers }> = [];
@@ -215,7 +228,13 @@ test("the discovery path is appended to the base url without doubling slashes", 
     provider: {
       ...PROVIDER,
       baseUrl: "http://127.0.0.1:11434",
-      config: { ...PROVIDER.config, discoveryPath: "/v1/models" },
+      // A loopback base URL, so the opt-in is required. The URL construction is what
+      // is under test, and the policy would otherwise refuse before building it.
+      config: {
+        ...PROVIDER.config,
+        discoveryPath: "/v1/models",
+        allowLoopback: true,
+      },
     },
     fetcher,
   });

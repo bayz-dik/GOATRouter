@@ -7,14 +7,18 @@ export { assertProviderId, isProviderId } from "./identity.js";
 export {
   DEFAULT_EGRESS_POLICY,
   assertEgressAllowed,
+  assertRequestEgressAllowed,
   assertResolvedAddressAllowed,
+  defaultEgressResolver,
   isEgressAllowed,
   type EgressPolicy,
+  type EgressResolver,
 } from "./egress.js";
 export {
   PROVIDER_KINDS,
   assertProviderKind,
   defaultBaseUrl,
+  hostnameOfBaseUrl,
   isProviderKind,
   normalizeBaseUrl,
   type ProviderKind,
@@ -28,7 +32,9 @@ export {
   TIMEOUT_MS_DEFAULT,
   TIMEOUT_MS_MAX,
   TIMEOUT_MS_MIN,
+  egressPolicyOf,
   parseProviderConfig,
+  safeCustomHeaders,
   type ProviderConfig,
 } from "./config.js";
 export {

@@ -98,6 +98,8 @@ function providerFor(port: number, overrides: Partial<{ requestTimeoutMs: number
     kind: "openai-compatible" as const,
     baseUrl: `http://127.0.0.1:${port}`,
     requestTimeoutMs: overrides.requestTimeoutMs ?? 5000,
+    // A real loopback origin, which 9D's egress policy requires an opt-in for.
+    egress: { allowLoopback: true, allowPrivate: false },
     ...(overrides.idleTimeoutMs === undefined
       ? {}
       : { idleTimeoutMs: overrides.idleTimeoutMs }),
@@ -505,6 +507,7 @@ test("a codex provider refuses to stream rather than pretending", async () => {
             kind: "codex-oauth",
             baseUrl: "http://127.0.0.1:1",
             requestTimeoutMs: 1000,
+            egress: { allowLoopback: true, allowPrivate: false },
           },
           request: REQUEST,
         }),

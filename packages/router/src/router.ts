@@ -3,6 +3,7 @@ import type { Agent as HttpsAgent } from "node:https";
 import { randomUUID } from "node:crypto";
 import { redactSecrets } from "@bayz/security";
 import {
+  egressPolicyOf,
   type ProviderManager,
   type ProviderView,
 } from "@bayz/providers";
@@ -165,6 +166,12 @@ export function createRouter(options: CreateRouterOptions): Router {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
+      // The provider's own opt-ins travel with the attempt. Without this the
+      // transport's deny-by-default would refuse every legitimate local runtime.
+      egress: egressPolicyOf(provider.config),
+      ...(provider.config.headers === undefined
+        ? {}
+        : { headers: provider.config.headers }),
       ...(provider.config.supportsTools === undefined
         ? {}
         : { supportsTools: provider.config.supportsTools }),
@@ -224,6 +231,10 @@ export function createRouter(options: CreateRouterOptions): Router {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
+      egress: egressPolicyOf(provider.config),
+      ...(provider.config.headers === undefined
+        ? {}
+        : { headers: provider.config.headers }),
       ...(provider.config.supportsTools === undefined
         ? {}
         : { supportsTools: provider.config.supportsTools }),

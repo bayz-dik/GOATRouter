@@ -2,10 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ProviderError,
-  discoverGeminiModels,
-  discoverOpenAiModels,
+  discoverGeminiModels as discoverGeminiWithResolver,
+  discoverOpenAiModels as discoverOpenAiWithResolver,
+  type DiscoverGeminiOptions,
+  type DiscoverOpenAiOptions,
   type Fetcher,
 } from "../src/index.js";
+
+/**
+ * The resolver is stubbed so these tests do not depend on DNS. Without it the
+ * pre-connect address check would really look up `generativelanguage.googleapis.com`,
+ * making a unit test fail on an offline machine.
+ */
+const RESOLVES_PUBLIC = async () => ["142.250.72.106"];
+
+function discoverGeminiModels(options: DiscoverGeminiOptions): Promise<string[]> {
+  return discoverGeminiWithResolver({ resolve: RESOLVES_PUBLIC, ...options });
+}
+
+function discoverOpenAiModels(options: DiscoverOpenAiOptions): Promise<string[]> {
+  return discoverOpenAiWithResolver({ resolve: RESOLVES_PUBLIC, ...options });
+}
 
 function jsonFetcher(payload: unknown, status = 200) {
   const calls: Array<{ url: string; headers: Headers }> = [];

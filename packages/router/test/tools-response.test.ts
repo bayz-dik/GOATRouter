@@ -241,6 +241,7 @@ test("a provider declared without tool support refuses rather than silently drop
             kind: "openai-compatible",
             baseUrl: `http://127.0.0.1:${port}`,
             requestTimeoutMs: 5000,
+            egress: { allowLoopback: true, allowPrivate: false },
             supportsTools: false,
           },
           request: {
@@ -283,6 +284,7 @@ test("an unknown tool capability forwards and lets the upstream decide", async (
         kind: "openai-compatible",
         baseUrl: `http://127.0.0.1:${port}`,
         requestTimeoutMs: 5000,
+        egress: { allowLoopback: true, allowPrivate: false },
       },
       request: {
         model: "m",
@@ -323,6 +325,7 @@ test("a provider declared with tool support forwards them", async () => {
         baseUrl: `http://127.0.0.1:${port}`,
         requestTimeoutMs: 5000,
         supportsTools: true,
+        egress: { allowLoopback: true, allowPrivate: false },
       },
       request: {
         model: "m",

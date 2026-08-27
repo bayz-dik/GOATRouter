@@ -64,11 +64,11 @@ export function assertResolvedAddressAllowed(address: string, policy: EgressPoli
 **Modify:** `packages/providers/src/http.ts`, `packages/router/src/transport.ts`
 **Test:** `packages/providers/test/egress-enforcement.test.ts`
 
-- [ ] RED `egress-enforcement.test.ts` against real loopback servers: a provider configured with `allowLoopback: true` reaches a local origin; the same provider with the flag absent is refused **before any socket opens** (assert the origin observed zero connections); custom headers arrive at the origin exactly as configured; a configured header cannot override `authorization` — the credential header wins and the config value is absent; `redirect: "error"` is asserted on both the discovery path and the chat transport, and a `302` yields `unreachable` rather than following; the resolved-address check runs before connect.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/providers` and `--workspace @bayz/router` exit 0; `node scripts/router-smoke.mjs` still 46/46.
-- [ ] Commit — `feat: enforce Bayz egress policy and safe headers on the wire`
+- [x] RED `egress-enforcement.test.ts` against real loopback servers: a provider configured with `allowLoopback: true` reaches a local origin; the same provider with the flag absent is refused **before any socket opens** (assert the origin observed zero connections); custom headers arrive at the origin exactly as configured; a configured header cannot override `authorization` — the credential header wins and the config value is absent; `redirect: "error"` is asserted on both the discovery path and the chat transport, and a `302` yields `unreachable` rather than following; the resolved-address check runs before connect.
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/providers` and `--workspace @bayz/router` exit 0; `node scripts/router-smoke.mjs` still 46/46.
+- [x] Commit — `feat: enforce Bayz egress policy and safe headers on the wire`
 
 ### Task 5 — Capability detection and test connection
 

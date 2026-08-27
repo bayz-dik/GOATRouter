@@ -121,11 +121,16 @@ const REQUEST = {
   messages: [{ role: "user" as const, content: "hello" }],
 };
 
+/** Every origin here is a real loopback server, which 9D's egress policy requires an
+ * explicit opt-in for. Stating it in the helper is the policy working as intended. */
+const LOOPBACK_EGRESS = { allowLoopback: true, allowPrivate: false } as const;
+
 function target(port: number, kind: "openai-compatible" | "gemini" | "openrouter" = "openai-compatible") {
   return {
     kind,
     baseUrl: `http://127.0.0.1:${port}/v1`,
     requestTimeoutMs: 3000,
+    egress: LOOPBACK_EGRESS,
   };
 }
 
@@ -400,6 +405,7 @@ test("the request path is built from the base url without doubling slashes", asy
         kind: "openai-compatible",
         baseUrl: `http://127.0.0.1:${port}/v1/`,
         requestTimeoutMs: 3000,
+        egress: LOOPBACK_EGRESS,
       },
       request: REQUEST,
     });
@@ -415,6 +421,7 @@ test("a codex-oauth provider is refused before any request", async () => {
           kind: "codex-oauth",
           baseUrl: `http://127.0.0.1:${port}/v1`,
           requestTimeoutMs: 3000,
+          egress: LOOPBACK_EGRESS,
         },
         request: REQUEST,
       }),

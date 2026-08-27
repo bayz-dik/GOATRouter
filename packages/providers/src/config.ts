@@ -1,3 +1,4 @@
+import type { EgressPolicy } from "./egress.js";
 import { ProviderError } from "./errors.js";
 import type { ProviderKind } from "./url.js";
 
@@ -131,6 +132,53 @@ function parseBoolean(value: unknown, stage: string): boolean {
     throw new ProviderError("invalid_provider_config", stage);
   }
   return value;
+}
+
+/**
+ * The egress policy a config expresses.
+ *
+ * One function, so every call site agrees on what "no opt-in" means. Absent is
+ * `false`: a config that was written before these keys existed denies by default.
+ */
+export function egressPolicyOf(config: ProviderConfig): EgressPolicy {
+  return {
+    allowLoopback: config.allowLoopback === true,
+    allowPrivate: config.allowPrivate === true,
+  };
+}
+
+/**
+ * The configured headers that are safe to put on the wire.
+ *
+ * `parseProviderConfig` already refuses a denied header, so in normal operation this
+ * filters nothing. It exists because the send path must not depend on that: a row
+ * written by an older build, edited by hand, or produced by a future code path that
+ * forgets to re-parse would otherwise forge `authorization` or redirect the request
+ * with `host`. Filtering here is silent by design — the loud rejection belongs at
+ * configuration time, and a request is the wrong place to fail for a stored defect.
+ */
+export function safeCustomHeaders(
+  config: Partial<Pick<ProviderConfig, "headers">> & Record<string, unknown>,
+): Record<string, string> {
+  const configured = config.headers;
+  if (configured === undefined || configured === null) {
+    return {};
+  }
+  const safe: Record<string, string> = {};
+  for (const [rawName, rawValue] of Object.entries(configured)) {
+    if (typeof rawValue !== "string" || !HEADER_NAME_RE.test(rawName)) {
+      continue;
+    }
+    const name = rawName.toLowerCase();
+    if (DENIED_HEADERS.has(name) || DENIED_PREFIXES.some((p) => name.startsWith(p))) {
+      continue;
+    }
+    if (rawValue.length > MAX_HEADER_VALUE_LENGTH || !HEADER_VALUE_RE.test(rawValue)) {
+      continue;
+    }
+    safe[name] = rawValue;
+  }
+  return safe;
 }
 
 export const TIMEOUT_MS_MIN = 1000;

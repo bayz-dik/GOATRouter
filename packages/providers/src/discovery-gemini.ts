@@ -1,3 +1,5 @@
+import { egressPolicyOf, safeCustomHeaders } from "./config.js";
+import { assertRequestEgressAllowed, type EgressResolver } from "./egress.js";
 import { ProviderError } from "./errors.js";
 import { DEFAULT_MAX_BYTES, fetchJsonCapped, type Fetcher } from "./http.js";
 import {
@@ -6,12 +8,15 @@ import {
   requireCredential,
   type DiscoveryTarget,
 } from "./model-list.js";
+import { hostnameOfBaseUrl } from "./url.js";
 
 export type DiscoverGeminiOptions = {
   provider: DiscoveryTarget;
   credential?: string;
   fetcher?: Fetcher;
   maxBytes?: number;
+  /** Injectable resolver for the pre-connect address check. */
+  resolve?: EgressResolver;
 };
 
 /**
@@ -58,11 +63,19 @@ export async function discoverGeminiModels(
     throw new ProviderError("unsupported_operation", "gemini-path-kind");
   }
 
+  await assertRequestEgressAllowed(
+    hostnameOfBaseUrl(provider.baseUrl),
+    egressPolicyOf(provider.config),
+    options.resolve,
+  );
+
   const key = requireCredential(credential, "gemini-credential");
 
   const body = await fetchJsonCapped({
     url: discoveryUrl(provider),
-    headers: { "x-goog-api-key": key },
+    // The credential header is assigned after the custom ones, so a stored config
+    // cannot displace it.
+    headers: { ...safeCustomHeaders(provider.config), "x-goog-api-key": key },
     timeoutMs: provider.config.timeoutMs,
     maxBytes,
     malformedCode: "discovery_failed",

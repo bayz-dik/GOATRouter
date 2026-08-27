@@ -1,4 +1,9 @@
-import { ProviderError, type ProviderKind } from "@bayz/providers";
+import {
+  ProviderError,
+  type EgressPolicy,
+  type EgressResolver,
+  type ProviderKind,
+} from "@bayz/providers";
 import type { ChatRequest } from "./request.js";
 
 const CHAT_PATH = "/chat/completions";
@@ -21,6 +26,17 @@ export type TransportProvider = {
    * a stream that has gone silent must not be held open by a generous total.
    */
   idleTimeoutMs?: number;
+  /**
+   * The egress policy this provider's config expresses.
+   *
+   * Absent means **deny loopback and private**, which is the safe reading: a caller
+   * that forgot to pass a policy gets the restrictive one, not a bypass.
+   */
+  egress?: EgressPolicy;
+  /** Validated custom headers. Never able to carry `authorization` or `host`. */
+  headers?: Record<string, string>;
+  /** Injectable resolver for the pre-connect address check. */
+  resolve?: EgressResolver;
 };
 
 /**
@@ -71,6 +87,21 @@ export function authHeaders(
   return kind === "gemini"
     ? { "x-goog-api-key": credential }
     : { authorization: `Bearer ${credential}` };
+}
+
+/**
+ * The egress policy to enforce for one attempt.
+ *
+ * Absent is deny-loopback and deny-private rather than allow, so a caller that
+ * omitted the field is restricted rather than exempt.
+ */
+export function transportEgressPolicy(provider: TransportProvider): EgressPolicy {
+  return (
+    provider.egress ?? {
+      allowLoopback: false,
+      allowPrivate: false,
+    }
+  );
 }
 
 export function mapStatus(

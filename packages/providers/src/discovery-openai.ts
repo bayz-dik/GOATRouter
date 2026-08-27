@@ -1,3 +1,8 @@
+import { egressPolicyOf, safeCustomHeaders } from "./config.js";
+import {
+  assertRequestEgressAllowed,
+  type EgressResolver,
+} from "./egress.js";
 import { ProviderError } from "./errors.js";
 import { DEFAULT_MAX_BYTES, fetchJsonCapped, type Fetcher } from "./http.js";
 import {
@@ -6,12 +11,15 @@ import {
   requireCredential,
   type DiscoveryTarget,
 } from "./model-list.js";
+import { hostnameOfBaseUrl } from "./url.js";
 
 export type DiscoverOpenAiOptions = {
   provider: DiscoveryTarget;
   credential?: string;
   fetcher?: Fetcher;
   maxBytes?: number;
+  /** Injectable resolver for the pre-connect address check. */
+  resolve?: EgressResolver;
 };
 
 /**
@@ -61,7 +69,18 @@ export async function discoverOpenAiModels(
     throw new ProviderError("unsupported_operation", "gemini-openai-path");
   }
 
-  const headers: Record<string, string> = {};
+  // Before anything else, and before any socket: a stored row can hold a base URL
+  // the current policy forbids, because loading such a row is deliberately allowed
+  // so a pre-9D install still starts.
+  await assertRequestEgressAllowed(
+    hostnameOfBaseUrl(provider.baseUrl),
+    egressPolicyOf(provider.config),
+    options.resolve,
+  );
+
+  // Custom headers go on first, so a credential or framing header can never be
+  // overwritten by one: the assignments below win.
+  const headers: Record<string, string> = safeCustomHeaders(provider.config);
   if (provider.kind === "openrouter") {
     // A hosted aggregator never serves an anonymous catalogue, so failing before
     // the request keeps a pointless unauthenticated call off the wire.
