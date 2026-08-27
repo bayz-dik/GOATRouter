@@ -506,7 +506,7 @@ test("a tampered credential fails closed instead of sending an unauthenticated r
   }
 });
 
-test("streaming is not implemented and cannot be requested", async () => {
+test("the buffered chat path still refuses a stream flag", async () => {
   const origin = await startOrigin((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
@@ -527,11 +527,18 @@ test("streaming is not implemented and cannot be requested", async () => {
         error instanceof RouterError && error.code === "invalid_request",
     );
     assert.equal(origin.hits, 0);
-    // And nothing on the router pretends to stream.
-    assert.equal(
-      Object.keys(ctx.router).some((key) => key.toLowerCase().includes("stream")),
-      false,
+    // Amended in 9B. Streaming now exists as a *separate* entry point, so the
+    // assertion worth keeping is that the buffered path cannot be talked into it:
+    // `chat()` still refuses `stream`, because a caller wanting events must call
+    // `chatStream` and get a real SSE reader rather than a buffered body.
+    assert.equal(typeof ctx.router.chatStream, "function");
+    await assert.rejects(
+      ctx.router.chat({ ...REQUEST, stream: false } as never),
+      (error: unknown) =>
+        error instanceof RouterError && error.code === "invalid_request",
+      "the buffered path accepts no stream flag in either state",
     );
+    assert.equal(origin.hits, 0);
   } finally {
     ctx.router.close();
     await origin.close();
