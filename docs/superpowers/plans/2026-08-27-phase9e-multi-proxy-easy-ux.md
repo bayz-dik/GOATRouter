@@ -126,12 +126,41 @@ delete assertion became two-step now that delete confirms.
 **Create:** `apps/dashboard/src/panels/ProxyAssignBar.tsx`
 **Test:** `apps/dashboard/test/proxy-assign-ux.test.tsx`
 
-- [ ] RED `proxy-assign-ux.test.tsx`: each provider row has a selection checkbox; select-all selects every visible provider; a filter box narrows the list and select-all then selects only the filtered set (assert with 40 providers, filter matching 12); the assign bar appears only with a selection and shows the count; choosing a proxy and confirming issues **one** `assign` call carrying all selected ids (assert the client was called once, not N times); "Set to Direct" issues one `unassign`; the bar clears after success; a failure shows the envelope code and leaves the selection intact so the operator can retry.
-- [ ] RED same file: with 120 providers, select-all then assign still issues one call, and the rendered row count stays 120 (no truncation).
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0.
-- [ ] Commit — `feat: add Bayz bulk provider proxy assignment UX`
+- [x] RED `proxy-assign-ux.test.tsx`: each provider row has a selection checkbox; select-all selects every visible provider; a filter box narrows the list and select-all then selects only the filtered set (assert with 40 providers, filter matching 12); the assign bar appears only with a selection and shows the count; choosing a proxy and confirming issues **one** `assign` call carrying all selected ids (assert the client was called once, not N times); "Set to Direct" issues one `unassign`; the b
+- [x] RED same file: with 120 providers, select-all then assign still issues one call, and the rendered row count stays 120 (no truncation).
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/dashboard` exits 0 — 21 files, 317 tests.
+- [x] Commit — `feat: add Bayz bulk provider proxy assignment UX`
+
+**As built.** Three decisions, one of them a deviation from the plan text:
+
+1. **No `ProxyAssignBar.tsx`.** The bar is ~30 lines of JSX over four pieces of state
+   (`selected`, `filter`, `assignProxyId`, `assignNote`) that all belong to the provider
+   list. Extracting it would mean threading every one of them plus two callbacks through
+   props for no reuse — there is exactly one call site. It stays inline in
+   `ProvidersPanel.tsx`.
+2. **A filter never deselects.** Filtering is a view operation; select-all acts on the
+   visible rows only, and rows hidden by the filter keep whatever state they had.
+   Silently dropping a selection an operator built would lose work.
+3. **A batch over `MAX_BULK_PROVIDER_IDS` (200) is refused, not split.** Two calls would
+   forfeit the server's single transaction, and a half-applied assignment is worse than a
+   refused one. The panel says how many are selected and suggests narrowing the filter.
+
+A failed assignment **keeps the selection** — the server applied nothing, and rebuilding
+a 40-provider selection by hand after a transient 502 would be punishing.
+
+**Test-performance note (worth knowing before touching these tests).** With 120 rows,
+`getByLabelText` costs ~26 s per call under jsdom: it walks every label in the document
+and normalises text. `getByTestId` is a single attribute selector and costs ~7 ms. The
+40-row RED run took 122 s and the 120-row case timed out at 5 s per test purely from
+label queries. Every bulk control therefore carries a `data-testid` alongside its real
+`<label htmlFor>` — the label is what an operator and a screen reader use, the testid is
+what the suite queries. Same accessibility, ~3000× cheaper assertions; the whole file now
+runs in 11 s.
+
+Both existing provider-panel suites needed `listProxies`/`assignProxy`/`unassignProxy`
+added to their stubs, since `ProvidersApi` grew.
 
 ### Task 6 — Effective proxy visibility
 

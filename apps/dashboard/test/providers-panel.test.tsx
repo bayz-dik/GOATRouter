@@ -35,6 +35,19 @@ function api(overrides: Partial<Parameters<typeof ProvidersPanel>[0]["api"]> = {
       latencyMs: 12,
       modelCount: 2,
     })),
+    // 9E Task 5 added the bulk proxy assign bar to this panel.
+    listProxies: vi.fn(async () => []),
+    assignProxy: vi.fn(async () => ({
+      proxyId: "tor",
+      providerCount: 0,
+      proxyEnabled: true,
+      notes: [] as string[],
+    })),
+    unassignProxy: vi.fn(async () => ({
+      proxyId: "tor",
+      providerCount: 0,
+      detachedFromProxy: 0,
+    })),
     ...overrides,
   };
 }

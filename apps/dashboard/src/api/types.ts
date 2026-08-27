@@ -94,6 +94,13 @@ export type ProviderView = {
   baseUrl: string;
   enabled: boolean;
   config: ProviderConfig;
+  /**
+   * The proxy every route to this provider uses unless the route overrides it.
+   *
+   * An id, never a password — the password has no read accessor anywhere in the API.
+   * Absent means direct.
+   */
+  proxyId?: string;
   credentialPresent: boolean;
   createdAt: string;
   updatedAt: string;
