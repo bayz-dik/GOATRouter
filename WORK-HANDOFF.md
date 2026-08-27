@@ -820,7 +820,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
-| 9E Multi-Proxy Easy UX | **Tasks 1–3 COMPLETE** | `@bayz/router` 261 tests, `@bayz/server` 239 tests, migrations v8 + v9 |
+| 9E Multi-Proxy Easy UX | **Tasks 1–5 COMPLETE** | `@bayz/router` 261 tests, `@bayz/server` 239 tests, `@bayz/dashboard` 317 tests, migrations v8 + v9 |
 | 9F–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -829,14 +829,61 @@ Authoritative resume point. Everything below is measured, not asserted.
 
 ### State
 
-- **Last completed task:** 9E Task 3 — bulk proxy assignment API.
+- **Last completed task:** 9E Task 5 — bulk provider proxy assignment UX. Committed at
+  `4a9b303`.
 - **Exact current task:** none in progress. The tree is **clean and fully GREEN**.
 - **RED/GREEN/DIRTY:** **GREEN, committed, nothing dirty.**
-- **Last command result:** `@bayz/server` 239 pass / 0 fail; `tsc --noEmit -p apps/server`
-  clean; `api-smoke` 70/70.
-- **Exact next step:** start **9E Task 4 — proxy panel lifecycle and test connection**,
-  per `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
-  `apps/dashboard/test/proxies-panel-ux.test.tsx` RED first.
+- **Last command result:** `@bayz/dashboard` 21 files / 317 pass / 0 fail;
+  `tsc --noEmit -p apps/dashboard` clean. Server side unchanged since Task 3:
+  `@bayz/server` 239 pass, `api-smoke` 70/70.
+- **Exact next step:** start **9E Task 6 — effective proxy visibility**, per
+  `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
+  `apps/dashboard/test/effective-proxy.test.tsx` RED first.
+
+### Commit chain for 9E
+
+`f9c5253` handoff → `f4c2ce8` Task 3 API → `6c3feaa` Task 4 panel → `4a9b303` Task 5 UX.
+
+### Tasks 4–5 as built
+
+**Task 4** rewrote `ProxiesPanel.tsx` for the full lifecycle. An edit sends **only what
+changed** — a full-object PATCH would rewrite untouched fields and make an accidental save
+indistinguishable from a deliberate one; saving an unchanged form is refused rather than
+issuing a no-op write. Clearing a username sends `null`, not `""`, because the API models
+absence as `null`. A **failed** connection check renders the envelope's code and message
+with **no latency at all**: a failed dial has no measurement, and `0 ms` would be a
+fabricated one. `disabled` outranks `degraded` on a row's `data-state`. Per-row usage comes
+from `GET /api/proxies/:id/usage` and renders `Usage unavailable` on failure — a caller
+without `proxies.read`, or an older Core, must not be shown a fabricated `0 providers`.
+Delete became two-step, since it silently detaches every provider using the proxy.
+
+**Task 5** added selection checkboxes, a filter, and an assign bar to `ProvidersPanel.tsx`.
+Two deviations from the plan text, both recorded in the plan file:
+
+- **No `ProxyAssignBar.tsx`.** The bar is ~30 lines of JSX over four pieces of state that
+  all belong to the provider list, with exactly one call site. Extracting it would thread
+  six props for no reuse.
+- **A batch over `MAX_BULK_PROVIDER_IDS` (200) is refused, not split.** Two calls would
+  forfeit the server's single transaction, and a half-applied assignment is worse than a
+  refused one.
+
+A filter never deselects — filtering is a view operation, and select-all acts on visible
+rows only. A failed assignment **keeps the selection**: the server applied nothing, and
+rebuilding a 40-provider selection by hand after a transient 502 would be punishing.
+
+### Read this before touching the dashboard tests
+
+Under jsdom with 120 rows, `getByLabelText` costs **~26 s per call** — it walks every label
+in the document and normalises text. `getByTestId` is a single attribute selector at ~7 ms.
+That, not the panel, is why the first 40-provider run took 122 s and the 120-provider case
+timed out at the 5 s default. Every bulk control therefore carries a `data-testid`
+**alongside** its real `<label htmlFor>`: the label is what an operator and a screen reader
+use, the testid is what the suite queries. Same accessibility, ~3000× cheaper assertions,
+and the file runs in 11 s.
+
+Both pre-existing provider-panel suites needed `listProxies`/`assignProxy`/`unassignProxy`
+added to their stubs when `ProvidersApi` grew, and `proxies-panel.test.tsx` needed
+`proxyUsage` plus a two-step delete assertion.
 
 ### Task 3 as built
 
