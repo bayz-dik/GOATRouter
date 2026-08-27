@@ -11,11 +11,14 @@
 - Phase 7 Operator Dashboard: **COMPLETE**, Task 1–8, `runtime:verify` green.
 - Flux Core V2 + scalable provider constellation: **INTEGRATED**, visually LOCKED.
 - Phase 8 Usage Telemetry: **COMPLETE**, Task 1–8, `runtime:verify` green.
-- Phase 9 GOAT Release: **PLANNING COMPLETE, NOT IMPLEMENTED.** One spec plus
-  twelve subprogram plans, 608 checkbox steps across 86 tasks. Zero source files
-  changed. A previous session was killed by SIGKILL after writing 9A–9H; this
-  session recovered that work untouched, wrote 9I–9L, and self-reviewed all
-  thirteen documents against the real repository.
+- Phase 9 GOAT Release: **IN EXECUTION.**
+  - Free-first model economics amendment: **COMMITTED** (`8069b65`), spec §25.
+  - 9A Universal Client Gateway: **COMPLETE**, Tasks 1–6.
+  - 9B Streaming + Tool Calling: **COMPLETE**, Tasks 1–8.
+  - 9C Per-Client Security: **COMPLETE**, Tasks 1–8.
+  - 9D–9L: **NOT STARTED.**
+  - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
+    subsequent commit is implementation.
 - Approved plans:
   - `docs/superpowers/plans/2026-08-26-bayz-router-foundation.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-security-sqlite.md`
@@ -797,6 +800,166 @@ Migration v5 adds the only new tables. Neither has a column able to hold content
 - **Telemetry failure is silent by design.** A recorder throwing or storage failing
   drops the row rather than failing the chat. That is correct for routing
   correctness, but it means telemetry gaps are not surfaced to the operator.
+
+## Phase 9 GOAT — execution state
+
+Authoritative resume point. Everything below is measured, not asserted.
+
+### Completed subprograms
+
+| Subprogram | State | Evidence |
+|---|---|---|
+| Free-first amendment | COMMITTED | spec §25, `8069b65` |
+| 9A Universal Client Gateway | COMPLETE | `@bayz/gateway` 74 tests |
+| 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
+| 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
+| 9D–9L | NOT STARTED | — |
+
+### Measured totals after 9C
+
+- `@bayz/contracts` 3 · `@bayz/security` 6 · `@bayz/storage` 166 · `@bayz/telemetry` 55
+- `@bayz/identity` 69 · `@bayz/gateway` 74 · `@bayz/providers` 111 · `@bayz/proxy` 105
+- `@bayz/router` 245 · `@bayz/server` 212 · `@bayz/dashboard` 269 across 18 files
+- `npm run runtime:verify` exits 0; 11 build targets.
+- Smokes: storage 42/42 · provider 36/36 · proxy 39/39 · router 46/46 · api **70/70**
+  · usage 119/119 · dashboard 48/48 · **stream 63/63** · **identity 74/74**.
+- Schema is **v6** (`client_identities`, `identity_audit`). Read from
+  `TARGET_SCHEMA_VERSION` — no test hardcodes it any more.
+
+### New packages
+
+```text
+packages/identity   scopes, registry, key custody, audit   deps: security, storage
+packages/gateway    capabilities, profile, presets, normalize   deps: identity, security
+```
+
+`runtime:build` order is now: contracts → security → storage → telemetry →
+identity → providers → proxy → gateway → router → dashboard → server.
+
+### 9A as built
+
+- `deriveProfile` builds a `ClientProfile` from **path, Accept, body shape, and
+  granted scopes** — never a product name. `adversarial.test.ts` scans
+  `packages/gateway/src` and `apps/server/src/routes` for `opencode`/`hermes`/
+  `antigravity`/`cline` with comments stripped, and only `presets.ts` may contain them.
+- Capability is the **intersection of request intent and granted scope**. A request
+  asking for streaming and tools with a `models.read`-only key gets an empty set.
+- Profiles use sealed sets: `add`/`delete`/`clear` are replaced with throwing stubs,
+  because `Object.freeze` on a `Set` leaves the mutators working and a caller could
+  otherwise grant itself a capability the scope check refused.
+- `normalizeRequest` maps `max_tokens`→`maxTokens`, `top_p`→`topP`, and a bare-string
+  `stop` to an array. **This fixed a real compatibility defect**: before 9A a
+  compliant OpenAI client sending `max_tokens` got a 400.
+- One declared quirk, `max-tokens-string`, converts a string `max_tokens` — strictly,
+  so `"512abc"` and `"1e9"` are refused rather than coerced.
+- `apps/server/src/principal.ts` holds `BayzPrincipal` and the bootstrap admin
+  identity; `apps/server/src/scopes.ts` holds `requireScope`.
+
+### 9B as built
+
+- `packages/router/src/sse.ts`: `encodeSseEvent`, `encodeSseDone`, `SseLineReader`.
+  Bounded at 64 KiB per line and 2 MiB per stream, 8 malformed frames tolerated then
+  fatal, streaming UTF-8 decode so a multi-byte character split across chunks is not
+  corrupted, and `done()` throws on a stream that never sent `[DONE]`.
+- `sendChatRequestStreaming` in `transport.ts` with a `ChunkQueue` bridging Node's
+  push-based `IncomingMessage` to a pull-based async generator. Idle timeout distinct
+  from total timeout, abort destroys the socket, and cleanup runs in a `finally` so a
+  consumer that breaks out of its loop still tears the upstream down.
+- `router.chatStream` fails over **only before the first chunk**. After that the
+  response is committed and `router-stream.test.ts` asserts the second origin
+  observes zero requests.
+- `apps/server` serves SSE with `content-type: text/event-stream`,
+  `cache-control: no-cache, no-transform`, `x-accel-buffering: no`, and the strict
+  CSP. Routing headers are written from the first chunk, before the body.
+- A mid-stream failure emits a terminal error event and **no `[DONE]`**, so a client
+  can distinguish a broken stream from a complete one.
+- Tools: `parseToolDefinitions`, `parseToolChoice`, `parseToolCalls`,
+  `parseToolMessage`. Arguments stay the opaque JSON string the OpenAI contract
+  defines, validated as an object but never re-serialized. Caps: 64 tools, 8 calls,
+  32 KiB per blob, 16 levels of `parameters` nesting.
+- `role: "tool"` requires a `tool_call_id` declared by an **earlier** assistant
+  message; the walk is forward-only, so an out-of-order or fabricated result fails.
+- `ProviderConfig.supportsTools` is tri-state. `false` refuses with
+  `tools_unsupported` (501) rather than silently stripping tools; **absent means
+  unknown and forwards**, because a discovery endpoint cannot reveal tool support.
+
+### 9C as built
+
+- Migration **v6**: `client_identities` (9 columns, no key/hash/secret column) and
+  `identity_audit` (7 columns, enum-constrained `action` and `outcome`, cascade on
+  identity delete).
+- Keys are 32 random bytes stored envelope-encrypted at `client:<id>:key` through the
+  Phase 3 scoped-secret primitive, returned **exactly once**. No accessor returns a
+  stored key; the adversarial suite scans for one.
+- `verifyKey` shape-checks before hashing (a 1 MiB bearer costs nothing), compares
+  with `timingSafeEqual` over SHA-256 digests, and iterates **ids not views** so one
+  corrupt `scopes_json` row cannot lock every client out.
+- Ten scopes, no implication except `admin`. `providers.write` does **not** grant
+  `providers.read`.
+- 34 `/api/*` routes each declare a scope, enumerated from Fastify's own route table.
+  `scope-enforcement.test.ts` rebuilds the full URL from `printRoutes`' indentation,
+  because a naive per-line parse reports `/:id` as a top-level route and
+  under-reports the surface by more than half.
+- Identity management is `admin`-only without exception: minting a credential is
+  strictly more powerful than any write scope.
+- `DELETE /api/usage/requests` moved to `admin` — purging an operator's audit trail
+  is destruction, not a read.
+- Dashboard `IdentitiesPanel` shows a key once, drops it from the DOM on
+  acknowledgement, and uses no clipboard API (`navigator.clipboard` is unavailable
+  over plain HTTP, so a copy button on a loopback dashboard would silently do nothing).
+
+### Deviations from the plan text, with reasons
+
+1. **9A ran before 9C's registry.** The plan has 9C first. 9A Task 1 needed only the
+   scope *vocabulary*, so that one task was pulled forward and the rest of 9C ran
+   after 9B. `apps/server/src/principal.ts` provided an injectable resolver seam in
+   the meantime, which is also what let 9A's scope logic be tested against a
+   genuinely limited principal rather than only the all-powerful bootstrap token.
+2. **Phase 6 refused `stream: false`.** `rejectsStreaming` refused *any* request
+   carrying a `stream` key. A compliant client explicitly asking for a buffered
+   response got a 400. Corrected in 9A, then made moot by 9B.
+3. **`api-smoke` grew 62 → 70 checks.** Section 9 changed from "streaming is refused"
+   to "streaming works over real SSE", which needed eight new assertions.
+4. **A lone surrogate is escaped, not refused.** The plan assumed `JSON.stringify`
+   emits a raw unpaired surrogate. It does not — well-formed stringify escapes it as
+   `\ud800`, so the frame is already valid UTF-8 and refusing would reject a
+   readable completion. Verified rather than assumed.
+5. **Client-disconnect abort listens on `reply.raw`, not `request.raw`.** Fastify
+   fully consumes and destroys `request.raw` while parsing the JSON body, so a
+   `close` listener there fires before the handler runs and cancelled every stream
+   instantly. Found by a failing test, not by inspection.
+6. **`x-bayz-*` headers ride on each chunk.** HTTP headers cannot be revised after
+   the first byte, so `RoutedChatChunk` carries routing identity and the header comes
+   from the same object the body does.
+7. **`tools_unsupported` maps to 501**, alongside `unsupported_operation`: the request
+   is well-formed and the remedy is to configure a capable provider.
+8. **Tool names beginning `__` are refused.** Harmless inside BAYZ, where a name is
+   only a value, but BAYZ hands these names to clients it does not control and a
+   client building `handlers[toolName]` would resolve `__proto__`.
+9. **Identity ids reject a trailing dash**, matching `assertProviderId`, because the
+   id is concatenated into `client:<id>:key`.
+10. **Expiry requires a full ISO-8601 timestamp.** `Date.parse("0")` returns a valid
+    time in 1999, so a bare digit would have been accepted as an expiry.
+11. **`counts` in `/api/status` gained `identities`.** Two tests pinned the old shape
+    and were updated; both now read `TARGET_SCHEMA_VERSION` instead of a literal 5.
+
+### Residual risks after 9C
+
+- **No mid-stream failover.** Structural, documented, and tested. Once a byte reaches
+  the client the response is committed.
+- **`verifyKey` is O(identities).** Each authentication walks the identity list
+  hashing one candidate per usable identity. Fine at the tens-of-clients scale BAYZ
+  targets; a deployment with thousands would want an indexed lookup, which would need
+  a stored key hash and therefore a different custody decision.
+- **A database-write attacker can widen scopes.** `scopes_json` is revalidated on
+  read, so a *malformed* or unknown scope fails closed, but a valid `["admin"]`
+  written directly into the row is honoured. Preventing that needs signed rows, which
+  9F's config HMAC addresses partially.
+- **Streaming telemetry records one row at stream end.** A stream that never
+  terminates records nothing until it fails, so an in-flight long stream is invisible
+  to the usage API.
+- **The dashboard shows a key as selectable text.** Correct given no clipboard API
+  over HTTP, but it is in the DOM until acknowledged, so a screen recording captures it.
 
 ## Phase 9 GOAT — planning state
 
