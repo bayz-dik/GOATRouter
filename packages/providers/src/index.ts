@@ -52,17 +52,23 @@ export {
   type Fetcher,
 } from "./http.js";
 export {
+  collectModelCatalogue,
   collectModelIds,
   discoveryUrl,
+  economicsClassifierFor,
   isUsableModelId,
   requireCredential,
   type DiscoveryTarget,
+  type ModelCandidate,
+  type ModelCatalogueEntry,
 } from "./model-list.js";
 export {
+  discoverOpenAiCatalogue,
   discoverOpenAiModels,
   type DiscoverOpenAiOptions,
 } from "./discovery-openai.js";
 export {
+  discoverGeminiCatalogue,
   discoverGeminiModels,
   type DiscoverGeminiOptions,
 } from "./discovery-gemini.js";

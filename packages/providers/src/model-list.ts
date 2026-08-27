@@ -1,4 +1,5 @@
 import { MODEL_LIMIT_MAX, type ProviderConfig } from "./config.js";
+import { classifyModelEconomics, type ModelEconomics } from "./economics.js";
 import { ProviderError } from "./errors.js";
 import type { ProviderKind } from "./url.js";
 
@@ -58,6 +59,68 @@ export function collectModelIds(
     throw new ProviderError("discovery_failed", "no-usable-models");
   }
   return models;
+}
+
+/** One discovered model and what it costs, as far as the catalogue proves. */
+export type ModelCatalogueEntry = {
+  id: string;
+  economics: ModelEconomics;
+};
+
+/**
+ * A candidate paired with the raw entry it came from.
+ *
+ * The pairing exists so one collector can serve both the id-only and the
+ * economics-bearing path. Two collectors would eventually disagree about which models
+ * exist, and a disagreement means the UI can offer a model routing cannot reach.
+ */
+export type ModelCandidate = {
+  /** The extracted id, still untrusted. */
+  id: unknown;
+  /** The raw catalogue entry. Never escapes the classifier. */
+  entry: unknown;
+};
+
+/**
+ * Collapse candidates into a bounded, deduplicated catalogue.
+ *
+ * Deliberately the *same* filter, cap, and dedupe rule as `collectModelIds`, applied
+ * by shared code rather than by two similar loops. First-seen wins on a duplicate,
+ * exactly as it does there, or the two paths would report different economics for one
+ * id.
+ */
+export function collectModelCatalogue(
+  candidates: readonly ModelCandidate[],
+  limit: number,
+  classify: (entry: unknown) => ModelEconomics,
+): ModelCatalogueEntry[] {
+  const cap = Math.min(limit, MODEL_LIMIT_MAX);
+  const seen = new Set<string>();
+  const entries: ModelCatalogueEntry[] = [];
+  for (const candidate of candidates) {
+    if (!isUsableModelId(candidate.id) || seen.has(candidate.id)) {
+      continue;
+    }
+    seen.add(candidate.id);
+    entries.push({ id: candidate.id, economics: classify(candidate.entry) });
+    if (entries.length >= cap) {
+      break;
+    }
+  }
+  if (entries.length === 0) {
+    throw new ProviderError("discovery_failed", "no-usable-models");
+  }
+  return entries;
+}
+
+/** The classifier bound to one provider's kind and loopback posture. */
+export function economicsClassifierFor(target: {
+  kind: ProviderKind;
+  config: ProviderConfig;
+}): (entry: unknown) => ModelEconomics {
+  const allowLoopback = target.config.allowLoopback === true;
+  return (entry) =>
+    classifyModelEconomics({ kind: target.kind, entry, allowLoopback });
 }
 
 /** Reject a blank credential the same way as a missing one. */

@@ -6,10 +6,14 @@ import {
 import { ProviderError } from "./errors.js";
 import { DEFAULT_MAX_BYTES, fetchJsonCapped, type Fetcher } from "./http.js";
 import {
+  collectModelCatalogue,
   collectModelIds,
   discoveryUrl,
+  economicsClassifierFor,
   requireCredential,
   type DiscoveryTarget,
+  type ModelCandidate,
+  type ModelCatalogueEntry,
 } from "./model-list.js";
 import { hostnameOfBaseUrl } from "./url.js";
 
@@ -51,13 +55,26 @@ function idsOf(candidates: readonly unknown[]): unknown[] {
   );
 }
 
+/** Pair each extracted id with the entry it came from, in one pass. */
+function candidatePairs(candidates: readonly unknown[]): ModelCandidate[] {
+  return candidates.map((entry) => ({
+    id:
+      typeof entry === "object" && entry !== null
+        ? (entry as { id?: unknown }).id
+        : undefined,
+    entry,
+  }));
+}
+
 /**
- * Discover models from an OpenAI-compatible endpoint. OpenRouter uses the same
- * wire format and therefore the same path, differing only in requiring a key.
+ * Fetch and validate the raw candidate list.
+ *
+ * Shared by both public entry points, which is the whole reason they cannot disagree
+ * about which models exist.
  */
-export async function discoverOpenAiModels(
+async function fetchCandidates(
   options: DiscoverOpenAiOptions,
-): Promise<string[]> {
+): Promise<unknown[]> {
   const { provider, credential, fetcher, maxBytes = DEFAULT_MAX_BYTES } = options;
 
   if (provider.kind === "codex-oauth") {
@@ -102,5 +119,39 @@ export async function discoverOpenAiModels(
     fetcher,
   });
 
-  return collectModelIds(idsOf(candidatesOf(body)), provider.config.modelLimit);
+  return candidatesOf(body);
+}
+
+/**
+ * Discover models from an OpenAI-compatible endpoint. OpenRouter uses the same
+ * wire format and therefore the same path, differing only in requiring a key.
+ *
+ * Kept returning `string[]` for backward compatibility. Every existing caller and
+ * smoke depends on that contract, and the catalogue variant below is additive.
+ */
+export async function discoverOpenAiModels(
+  options: DiscoverOpenAiOptions,
+): Promise<string[]> {
+  const candidates = await fetchCandidates(options);
+  return collectModelIds(idsOf(candidates), options.provider.config.modelLimit);
+}
+
+/**
+ * Discover models with their economics.
+ *
+ * Goes through the same fetch, the same shape validation, the same id filter, and the
+ * same cap as `discoverOpenAiModels`, so the two cannot report different model sets. A
+ * model whose economics cannot be determined appears as `UNKNOWN` rather than being
+ * dropped: it exists and routing can reach it, so hiding it would be a silent
+ * capability loss.
+ */
+export async function discoverOpenAiCatalogue(
+  options: DiscoverOpenAiOptions,
+): Promise<ModelCatalogueEntry[]> {
+  const candidates = await fetchCandidates(options);
+  return collectModelCatalogue(
+    candidatePairs(candidates),
+    options.provider.config.modelLimit,
+    economicsClassifierFor(options.provider),
+  );
 }

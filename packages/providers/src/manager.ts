@@ -8,11 +8,13 @@ import {
   type ProviderCapabilities,
 } from "./capabilities.js";
 import type { ProviderConfig } from "./config.js";
-import { discoverGeminiModels } from "./discovery-gemini.js";
-import { discoverOpenAiModels } from "./discovery-openai.js";
+import { isFreeEconomics } from "./economics.js";
+import { discoverGeminiCatalogue, discoverGeminiModels } from "./discovery-gemini.js";
+import { discoverOpenAiCatalogue, discoverOpenAiModels } from "./discovery-openai.js";
 import { ProviderError } from "./errors.js";
 import type { Fetcher } from "./http.js";
 import { assertProviderId } from "./identity.js";
+import type { ModelCatalogueEntry } from "./model-list.js";
 import {
   createProviderRepository,
   type CreateProviderInput,
@@ -75,6 +77,14 @@ export interface ProviderManager {
    */
   withCredential<T>(id: string, use: (credential: string) => T): T;
   discoverModels(id: string): Promise<string[]>;
+  /**
+   * Discover models with their economics.
+   *
+   * Additive: `discoverModels` keeps its `string[]` contract because every existing
+   * caller and smoke depends on it. Both go through one collector, so the two cannot
+   * disagree about which models exist.
+   */
+  discoverModelCatalogue(id: string): Promise<ModelCatalogueEntry[]>;
   /**
    * Report what a provider can do.
    *
@@ -141,6 +151,20 @@ export function createProviderManager(
     const credential = readCredential(record.id);
     return {
       target,
+      ...(credential === undefined ? {} : { credential }),
+      ...(fetcher === undefined ? {} : { fetcher }),
+    };
+  };
+
+  /** One shape for both discovery entry points, so they cannot drift apart. */
+  const discoveryOptions = (record: ProviderRecord) => {
+    const credential = readCredential(record.id);
+    return {
+      provider: {
+        kind: record.kind,
+        baseUrl: record.baseUrl,
+        config: record.config,
+      },
       ...(credential === undefined ? {} : { credential }),
       ...(fetcher === undefined ? {} : { fetcher }),
     };
@@ -237,25 +261,12 @@ export function createProviderManager(
       if (!record.enabled) {
         throw new ProviderError("unsupported_operation", "provider-disabled");
       }
-      const credential = readCredential(record.id);
-      const target = {
-        kind: record.kind,
-        baseUrl: record.baseUrl,
-        config: record.config,
-      };
+      const options = discoveryOptions(record);
 
       const models =
         record.kind === "gemini"
-          ? await discoverGeminiModels({
-              provider: target,
-              ...(credential === undefined ? {} : { credential }),
-              ...(fetcher === undefined ? {} : { fetcher }),
-            })
-          : await discoverOpenAiModels({
-              provider: target,
-              ...(credential === undefined ? {} : { credential }),
-              ...(fetcher === undefined ? {} : { fetcher }),
-            });
+          ? await discoverGeminiModels(options)
+          : await discoverOpenAiModels(options);
 
       log(
         redactSecrets({
@@ -266,6 +277,32 @@ export function createProviderManager(
         }),
       );
       return models;
+    },
+
+    async discoverModelCatalogue(id: string): Promise<ModelCatalogueEntry[]> {
+      const record = repository.require(id);
+      if (!record.enabled) {
+        throw new ProviderError("unsupported_operation", "provider-disabled");
+      }
+      const options = discoveryOptions(record);
+
+      const entries =
+        record.kind === "gemini"
+          ? await discoverGeminiCatalogue(options)
+          : await discoverOpenAiCatalogue(options);
+
+      log(
+        redactSecrets({
+          event: "provider_catalogue_discovered",
+          id: record.id,
+          kind: record.kind,
+          count: entries.length,
+          // Counts per classification, never a price. The pricing metadata itself is
+          // upstream text and has no business in a log line.
+          freeCount: entries.filter((entry) => isFreeEconomics(entry.economics)).length,
+        }),
+      );
+      return entries;
     },
 
     close(): void {
