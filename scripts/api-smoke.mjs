@@ -77,6 +77,33 @@ async function startOrigin() {
         authorization: request.headers.authorization,
         body: Buffer.concat(chunks).toString("utf8"),
       });
+      const requestBody = Buffer.concat(chunks).toString("utf8");
+      // Added in 9B: the origin now answers a streaming request with real SSE, so
+      // the smoke exercises the actual transport rather than a refusal path.
+      let wantsStream = false;
+      try {
+        wantsStream = JSON.parse(requestBody).stream === true;
+      } catch {
+        wantsStream = false;
+      }
+      if (request.url?.includes("/chat/completions") && wantsStream) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write(
+          `data: ${JSON.stringify({
+            model: "gpt-4o",
+            choices: [{ delta: { content: COMPLETION } }],
+          })}\n\n`,
+        );
+        response.write(
+          `data: ${JSON.stringify({
+            choices: [{ delta: {}, finish_reason: "stop" }],
+            usage: { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 },
+          })}\n\n`,
+        );
+        response.write("data: [DONE]\n\n");
+        response.end();
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
       if (request.url?.includes("/chat/completions")) {
         response.end(
@@ -391,7 +418,7 @@ async function main() {
     );
     await call("PATCH", "/api/routes/r1", { body: { proxyId: null } });
 
-    section("9. Streaming is refused, not faked");
+    section("9. Streaming works over real SSE");
     const streamed = await call("POST", "/v1/chat/completions", {
       body: {
         model: "gpt-4o",
@@ -399,10 +426,43 @@ async function main() {
         stream: true,
       },
     });
-    check("a stream request is 400", streamed.status === 400);
+    check("a stream request is 200", streamed.status === 200);
     check(
-      "the refusal names streaming",
-      streamed.json?.error?.code === "streaming_unsupported",
+      "the response is server-sent events",
+      String(streamed.headers.get("content-type")).startsWith("text/event-stream"),
+    );
+    check("the stream is terminated by DONE", streamed.text.trimEnd().endsWith("data: [DONE]"));
+    const streamFrames = streamed.text
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: {"))
+      .map((line) => JSON.parse(line.slice("data: ".length)));
+    check("every frame is a chat completion chunk",
+      streamFrames.length >= 2 &&
+        streamFrames.every((frame) => frame.object === "chat.completion.chunk"));
+    check(
+      "the stream id is stable across frames",
+      new Set(streamFrames.map((frame) => frame.id)).size === 1,
+    );
+    check(
+      "the streamed completion reaches the client",
+      streamFrames.some((frame) => frame.choices?.[0]?.delta?.content === COMPLETION),
+    );
+    check(
+      "the streamed usage is reported",
+      streamFrames.some((frame) => frame.usage?.prompt_tokens === 7),
+    );
+    check(
+      "the routing headers arrive before the body",
+      streamed.headers.get("x-bayz-route") === "r1" &&
+        streamed.headers.get("x-bayz-provider") === "smoke",
+    );
+    check(
+      "the strict CSP is served on a stream too",
+      String(streamed.headers.get("content-security-policy")).includes("default-src 'none'"),
+    );
+    check(
+      "the upstream was asked to stream",
+      origin.seen.some((entry) => entry.body.includes('"stream":true')),
     );
 
     section("10. Hostile input fails safely");

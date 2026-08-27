@@ -42,6 +42,22 @@ export type ChatResult = ChatResponse & {
   usage: ChatUsage | undefined;
 };
 
+/**
+ * A streamed chunk plus the routing facts that produced it.
+ *
+ * The routing identity rides on every chunk rather than being reported separately,
+ * because the server must write `x-bayz-route` and `x-bayz-provider` *before* the
+ * first byte — HTTP headers cannot be revised afterwards. Carrying it on the chunk
+ * means the header values come from the same object the body does, so they cannot
+ * disagree.
+ */
+export type RoutedChatChunk = ChatChunk & {
+  routeId: string;
+  providerId: string;
+  proxyId: string | undefined;
+  attempts: number;
+};
+
 export type RouterLogger = (payload: Record<string, unknown>) => void;
 
 /**
@@ -94,7 +110,10 @@ export interface Router {
    * elsewhere would interleave two completions. `router-stream.test.ts` asserts the
    * second origin observes zero requests in that case.
    */
-  chatStream(request: unknown, options?: ChatOptions): AsyncGenerator<ChatChunk, void, undefined>;
+  chatStream(
+    request: unknown,
+    options?: ChatOptions,
+  ): AsyncGenerator<RoutedChatChunk, void, undefined>;
   close(): void;
 }
 
@@ -476,7 +495,7 @@ export function createRouter(options: CreateRouterOptions): Router {
     async *chatStream(
       input: unknown,
       chatOptions: ChatOptions = {},
-    ): AsyncGenerator<ChatChunk, void, undefined> {
+    ): AsyncGenerator<RoutedChatChunk, void, undefined> {
       const request = parseChatRequest(input);
       const requestId = safeRequestId(chatOptions.requestId);
       const signal = chatOptions.signal;
@@ -602,7 +621,13 @@ export function createRouter(options: CreateRouterOptions): Router {
             if (step.value.usage !== undefined) {
               usage = step.value.usage;
             }
-            yield step.value;
+            yield {
+              ...step.value,
+              routeId: route.id,
+              providerId: provider.id,
+              proxyId: route.proxyId,
+              attempts,
+            };
             step = await opened.iterator.next();
           }
           const latencyMs = Date.now() - started;

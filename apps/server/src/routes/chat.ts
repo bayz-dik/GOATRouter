@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import {
   denormalizeResponse,
   deriveProfile,
   normalizeRequest,
   type ClientProfile,
 } from "@bayz/gateway";
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import { handleDomain } from "../http-errors.js";
+import {
+  encodeSseDone,
+  encodeSseEvent,
+  type ChatChunk,
+  type RoutedChatChunk,
+} from "@bayz/router";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { handleDomain, mapDomainError } from "../http-errors.js";
 import { principalOf, requireScope } from "../scopes.js";
 import type { BayzRuntime } from "../runtime.js";
 
@@ -28,6 +35,138 @@ function profileFor(request: FastifyRequest): ClientProfile {
   });
 }
 
+/** Render one router chunk as an OpenAI streaming chunk object. */
+function chunkBody(id: string, created: number, chunk: ChatChunk): Record<string, unknown> {
+  return {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: chunk.model ?? null,
+    choices: [
+      {
+        index: 0,
+        delta: chunk.contentDelta === undefined ? {} : { content: chunk.contentDelta },
+        finish_reason: chunk.finishReason ?? null,
+      },
+    ],
+    ...(chunk.usage === undefined
+      ? {}
+      : {
+          usage: {
+            prompt_tokens: chunk.usage.promptTokens ?? null,
+            completion_tokens: chunk.usage.completionTokens ?? null,
+            total_tokens: chunk.usage.totalTokens ?? null,
+          },
+        }),
+  };
+}
+
+/**
+ * Serve a streaming chat completion.
+ *
+ * The shape of this function is driven by one hard constraint: **HTTP status and
+ * headers are sent with the first byte and cannot be revised.** So the first chunk
+ * is pulled *before* anything is written. A failure up to that point is still a
+ * normal JSON error envelope with a real status code; a failure after it can only
+ * be a terminal event inside the stream, because the 200 has already gone out.
+ *
+ * That is also why the response never ends with `[DONE]` after a mid-stream
+ * failure: a client must be able to distinguish a complete stream from a broken
+ * one, and terminating normally after an error would claim success.
+ */
+async function serveStream(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  runtime: BayzRuntime,
+  profile: ClientProfile,
+): Promise<FastifyReply> {
+  const normalized = normalizeRequest(profile, request.body);
+
+  // Client disconnect must tear down the upstream, or an abandoned stream leaves
+  // the provider generating tokens nobody will read.
+  //
+  // The listener is on the *response*, not the request. Fastify fully consumes and
+  // destroys `request.raw` while parsing the JSON body, so `request.raw` emits
+  // `close` before this handler even runs — wiring the abort there cancelled every
+  // stream instantly. `reply.raw` closes when the socket does, and
+  // `writableEnded` distinguishes a completed response from an abandoned one.
+  const controller = new AbortController();
+  const onClose = (): void => {
+    if (!reply.raw.writableEnded) {
+      controller.abort();
+    }
+  };
+  reply.raw.once("close", onClose);
+
+  const iterator = runtime.router
+    .chatStream(normalized, { requestId: String(request.id), signal: controller.signal })
+    [Symbol.asyncIterator]();
+
+  let first: IteratorResult<RoutedChatChunk>;
+  try {
+    first = await iterator.next();
+  } catch (error) {
+    reply.raw.removeListener("close", onClose);
+    // Nothing has been written, so the honest answer is the stable envelope a
+    // client already knows how to parse rather than a 200 containing an error.
+    const mapped = mapDomainError(error);
+    return reply.code(mapped.status).send({
+      error: { code: mapped.code, message: mapped.message, requestId: String(request.id) },
+    });
+  }
+
+  const id = `chatcmpl-${randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  // Written before the body, from the same chunk the body will carry, so the
+  // headers and the payload cannot disagree about where the request went.
+  if (first.value !== undefined) {
+    void reply.header("x-bayz-route", first.value.routeId);
+    void reply.header("x-bayz-provider", first.value.providerId);
+    if (first.value.proxyId !== undefined) {
+      void reply.header("x-bayz-proxy", first.value.proxyId);
+    }
+  }
+
+  void reply.header("content-type", "text/event-stream; charset=utf-8");
+  void reply.header("cache-control", "no-cache, no-transform");
+  void reply.header("connection", "keep-alive");
+  // Stops a reverse proxy buffering the stream into a single response, which would
+  // silently defeat streaming for anyone running BAYZ behind nginx.
+  void reply.header("x-accel-buffering", "no");
+
+  const stream = Readable.from(
+    (async function* frames(): AsyncGenerator<string, void, undefined> {
+      try {
+        let step = first;
+        while (step.done !== true) {
+          yield encodeSseEvent(chunkBody(id, created, step.value));
+          step = await iterator.next();
+        }
+        yield encodeSseDone();
+      } catch (error) {
+        // A terminal error event, and deliberately no `[DONE]`.
+        const mapped = mapDomainError(error);
+        yield encodeSseEvent({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          error: {
+            code: mapped.code,
+            message: mapped.message,
+            requestId: String(request.id),
+          },
+        });
+      } finally {
+        reply.raw.removeListener("close", onClose);
+        await iterator.return?.(undefined);
+      }
+    })(),
+  );
+
+  return reply.send(stream);
+}
+
 export function registerChatRoutes(app: FastifyInstance, runtime: BayzRuntime): void {
   app.post("/v1/chat/completions", async (request, reply) => {
     const denied = requireScope(request, reply, "chat.completions");
@@ -35,25 +174,18 @@ export function registerChatRoutes(app: FastifyInstance, runtime: BayzRuntime): 
       return denied;
     }
 
-    return handleDomain(request, reply, async () => {
-      const profile = profileFor(request);
-      // Streaming lands in 9B. Until the transport exists, the honest answer to
-      // `stream: true` is a refusal naming the missing capability rather than a
-      // buffered body a client will sit waiting to receive as events.
-      if (profile.capabilities.has("chat.stream")) {
-        return reply
-          .code(400)
-          .send({
-            error: {
-              code: "streaming_unsupported",
-              message: "Streaming responses are not implemented; omit the stream field",
-              requestId: String(request.id),
-            },
-          });
-      }
+    const profile = profileFor(request);
+    if (profile.capabilities.has("chat.stream")) {
+      return handleDomain(request, reply, () =>
+        serveStream(request, reply, runtime, profile),
+      );
+    }
 
+    return handleDomain(request, reply, async () => {
       const normalized = normalizeRequest(profile, request.body);
-      const result = await runtime.router.chat(normalized);
+      const result = await runtime.router.chat(normalized, {
+        requestId: String(request.id),
+      });
 
       // Routing facts travel in headers so the response body stays exactly the
       // OpenAI shape a client already knows how to parse.

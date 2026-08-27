@@ -273,15 +273,13 @@ test("a proxy-bound route traverses the proxy for a chat request", async (t) => 
   );
 });
 
-test("stream true is refused while stream false is served", async (t) => {
-  // Amended in 9A. Phase 6 refused *any* request carrying a `stream` key, which
+test("stream false is served as a buffered completion", async (t) => {
+  // Amended twice. Phase 6 refused *any* request carrying a `stream` key, which
   // also rejected `stream: false` — a compliant client explicitly asking for a
-  // buffered response. That was a real compatibility defect: the honest refusal
-  // applies only to the capability BAYZ does not yet have.
-  const origin = await startOrigin([
-    { status: 200, body: completion("buffered") },
-    { status: 200, body: completion("buffered") },
-  ]);
+  // buffered response. 9A narrowed the refusal to `stream: true`; 9B implemented
+  // streaming, so there is nothing left to refuse. `chat-stream.test.ts` owns the
+  // `stream: true` path, which needs a real listener because `inject` buffers SSE.
+  const origin = await startOrigin([{ status: 200, body: completion("buffered") }]);
   const { app, runtime } = harness();
   t.after(async () => {
     void app.close();
@@ -290,17 +288,6 @@ test("stream true is refused while stream false is served", async (t) => {
   });
   await seed(app, origin.port);
 
-  const refused = await app.inject({
-    method: "POST",
-    url: "/v1/chat/completions",
-    headers: JSON_AUTH,
-    payload: { ...REQUEST, stream: true },
-  });
-  assert.equal(refused.statusCode, 400);
-  assert.equal(refused.json().error.code, "streaming_unsupported");
-  assert.match(refused.json().error.message, /stream/i);
-  assert.equal(origin.seen.length, 0, "a refused stream must make no upstream call");
-
   const served = await app.inject({
     method: "POST",
     url: "/v1/chat/completions",
@@ -308,7 +295,9 @@ test("stream true is refused while stream false is served", async (t) => {
     payload: { ...REQUEST, stream: false },
   });
   assert.equal(served.statusCode, 200);
+  assert.equal(served.json().object, "chat.completion");
   assert.equal(served.json().choices[0].message.content, "buffered");
+  assert.match(String(served.headers["content-type"]), /application\/json/);
 });
 
 test("an unbound model is 400 no_route", async (t) => {

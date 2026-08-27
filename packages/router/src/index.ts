@@ -72,6 +72,7 @@ export {
   type ChatResult,
   type CreateRouterOptions,
   type ChatOptions,
+  type RoutedChatChunk,
   type Router,
   type RouterLogger,
   type RouterRecorder,
