@@ -19,3 +19,10 @@ export {
   type ClientProtocol,
   type DeriveProfileInput,
 } from "./profile.js";
+export {
+  CLIENT_PRESETS,
+  isClientPresetName,
+  presetFor,
+  type ClientPreset,
+  type ClientPresetName,
+} from "./presets.js";
