@@ -28,6 +28,19 @@ import type { ProviderKind } from "./url.js";
 const CREDENTIAL_FIELD = "api_key";
 
 /**
+ * The config shape a caller is allowed to see.
+ *
+ * Identical to `ProviderConfig` except that `headers` becomes `headerNames`. Header
+ * values are configuration rather than secrets, but echoing them back widens the
+ * surface for no benefit: nothing in the dashboard needs to read one, and an operator
+ * who has to change a header retypes it. The *names* are kept, because otherwise the
+ * operator cannot see which headers are configured at all.
+ */
+export type ProviderConfigView = Omit<ProviderConfig, "headers"> & {
+  headerNames?: string[];
+};
+
+/**
  * What callers are allowed to see.
  *
  * `credentialPresent` is a boolean on purpose: there is no accessor anywhere in
@@ -42,7 +55,7 @@ export type ProviderView = {
   displayName: string;
   baseUrl: string;
   enabled: boolean;
-  config: ProviderConfig;
+  config: ProviderConfigView;
   credentialPresent: boolean;
   createdAt: string;
   updatedAt: string;
@@ -95,6 +108,16 @@ export interface ProviderManager {
   detectCapabilities(id: string): Promise<ProviderCapabilities>;
   /** Probe reachability. Never throws for an upstream failure; reports it. */
   testConnection(id: string): Promise<ConnectionResult>;
+  /**
+   * The full stored config, including header **values**, for building a request.
+   *
+   * Separate from `getProvider` on purpose. `ProviderView.config` withholds header
+   * values because it is what the HTTP API serializes, and echoing them back widens
+   * the surface for no benefit. The router is in-process and genuinely needs the
+   * values to put them on the wire, so it asks for them explicitly — which also means
+   * every consumer of the header values is greppable.
+   */
+  requestConfig(id: string): ProviderConfig;
   close(): void;
 }
 
@@ -121,13 +144,22 @@ export function createProviderManager(
 
   const present = (id: string): boolean => readCredential(id) !== undefined;
 
+  /** Replace header values with their names. See `ProviderConfigView`. */
+  const toConfigView = (config: ProviderConfig): ProviderConfigView => {
+    const { headers, ...rest } = config;
+    return {
+      ...rest,
+      ...(headers === undefined ? {} : { headerNames: Object.keys(headers).sort() }),
+    };
+  };
+
   const toView = (record: ProviderRecord): ProviderView => ({
     id: record.id,
     kind: record.kind,
     displayName: record.displayName,
     baseUrl: record.baseUrl,
     enabled: record.enabled,
-    config: record.config,
+    config: toConfigView(record.config),
     credentialPresent: present(record.id),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -303,6 +335,15 @@ export function createProviderManager(
         }),
       );
       return entries;
+    },
+
+    requestConfig(id: string): ProviderConfig {
+      // A fresh copy, so a caller cannot mutate the row's parsed config in place.
+      const { config } = repository.require(id);
+      return {
+        ...config,
+        ...(config.headers === undefined ? {} : { headers: { ...config.headers } }),
+      };
     },
 
     close(): void {

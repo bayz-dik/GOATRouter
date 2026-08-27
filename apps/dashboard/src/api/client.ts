@@ -1,8 +1,11 @@
 import type {
   ChatRequestBody,
+  ConnectionResult,
   CreateIdentityBody,
   IdentityView,
   IdentityWithKey,
+  ModelCatalogueEntry,
+  ProviderCapabilities,
   UpdateIdentityBody,
   ChatResult,
   CreateProviderBody,
@@ -182,6 +185,24 @@ export function createApiClient(options: CreateApiClientOptions) {
     discoverModels: async (id: string): Promise<string[]> =>
       (await send<{ models: string[] }>("POST", `/api/providers/${segment(id)}/discover`))
         .models ?? [],
+    /** Models with their economics. Separate endpoint; see the server's route. */
+    discoverModelCatalogue: async (id: string): Promise<ModelCatalogueEntry[]> =>
+      (
+        await send<{ models: ModelCatalogueEntry[] }>(
+          "POST",
+          `/api/providers/${segment(id)}/catalogue`,
+        )
+      ).models ?? [],
+    /**
+     * Test whether a provider answers.
+     *
+     * A failed test is a 200 with `ok: false`, not an HTTP error, so this resolves
+     * rather than throwing when the *provider* is unreachable.
+     */
+    testProviderConnection: (id: string): Promise<ConnectionResult> =>
+      send("POST", `/api/providers/${segment(id)}/test`),
+    detectProviderCapabilities: (id: string): Promise<ProviderCapabilities> =>
+      send("POST", `/api/providers/${segment(id)}/capabilities`),
 
     listProxies: async (): Promise<ProxyView[]> =>
       (await send<{ proxies: ProxyView[] }>("GET", "/api/proxies")).proxies ?? [],

@@ -32,15 +32,44 @@ const MESSAGES: Record<ProviderErrorCode, string> = {
   discovery_failed: "discovery_failed: the model list could not be interpreted",
 };
 
+/**
+ * A safe token that may appear in an error message.
+ *
+ * Deliberately narrow: letters, digits, hyphen, underscore, dot, bounded at 64. The
+ * only values passed as a detail are ones that already cleared a strict charset check
+ * (a header name, for instance), and this re-checks rather than trusting the caller —
+ * an error message reaches logs and a UI, so one unvalidated path is one too many.
+ */
+const SAFE_DETAIL_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
 export class ProviderError extends Error {
   readonly code: ProviderErrorCode;
   readonly stage: string | undefined;
+  /**
+   * An operator-supplied identifier that makes the failure actionable.
+   *
+   * Present only where a bare code would leave the operator guessing — "which of my
+   * eight headers was rejected?" is not a question they should have to answer by
+   * bisection. Never a value, only a name, and only one that matched
+   * `SAFE_DETAIL_RE`.
+   */
+  readonly detail: string | undefined;
 
-  constructor(code: ProviderErrorCode, stage?: string) {
-    super(stage ? `${MESSAGES[code]} (stage: ${stage})` : MESSAGES[code]);
+  constructor(code: ProviderErrorCode, stage?: string, detail?: string) {
+    const safeDetail =
+      typeof detail === "string" && SAFE_DETAIL_RE.test(detail) ? detail : undefined;
+    const parts = [MESSAGES[code]];
+    if (stage !== undefined) {
+      parts.push(`(stage: ${stage})`);
+    }
+    if (safeDetail !== undefined) {
+      parts.push(`(detail: ${safeDetail})`);
+    }
+    super(parts.join(" "));
     this.name = "ProviderError";
     this.code = code;
     this.stage = stage;
+    this.detail = safeDetail;
   }
 }
 

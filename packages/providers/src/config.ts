@@ -104,7 +104,13 @@ function parseCustomHeaders(value: unknown, stage: string): Record<string, strin
       DENIED_HEADERS.has(name) ||
       DENIED_PREFIXES.some((prefix) => name.startsWith(prefix))
     ) {
-      throw new ProviderError("invalid_provider_config", "config-header-denied");
+      // The rejected header's *name* rides along, because "invalid config" would leave
+      // an operator bisecting eight headers to find the one at fault. Never the value.
+      throw new ProviderError(
+        "invalid_provider_config",
+        "config-header-denied",
+        name,
+      );
     }
     if (Object.hasOwn(headers, name)) {
       // Two spellings of one header: keeping either would make the winner depend on

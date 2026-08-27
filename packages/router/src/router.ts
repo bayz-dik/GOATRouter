@@ -162,16 +162,20 @@ export function createRouter(options: CreateRouterOptions): Router {
     provider: ProviderView,
     request: ChatRequest,
   ): Promise<ChatResponse> => {
+    // Header *values* come from `requestConfig` rather than the view: the view
+    // withholds them because it is what the HTTP API serializes, and the router is the
+    // one caller that legitimately needs them on the wire.
+    const requestConfig = providers.requestConfig(provider.id);
     const transportProvider = {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
       // The provider's own opt-ins travel with the attempt. Without this the
       // transport's deny-by-default would refuse every legitimate local runtime.
-      egress: egressPolicyOf(provider.config),
-      ...(provider.config.headers === undefined
+      egress: egressPolicyOf(requestConfig),
+      ...(requestConfig.headers === undefined
         ? {}
-        : { headers: provider.config.headers }),
+        : { headers: requestConfig.headers }),
       ...(provider.config.supportsTools === undefined
         ? {}
         : { supportsTools: provider.config.supportsTools }),
@@ -227,14 +231,15 @@ export function createRouter(options: CreateRouterOptions): Router {
     first: IteratorResult<ChatChunk>;
     agent: HttpAgent | HttpsAgent | undefined;
   }> => {
+    const requestConfig = providers.requestConfig(provider.id);
     const transportProvider = {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
-      egress: egressPolicyOf(provider.config),
-      ...(provider.config.headers === undefined
+      egress: egressPolicyOf(requestConfig),
+      ...(requestConfig.headers === undefined
         ? {}
-        : { headers: provider.config.headers }),
+        : { headers: requestConfig.headers }),
       ...(provider.config.supportsTools === undefined
         ? {}
         : { supportsTools: provider.config.supportsTools }),

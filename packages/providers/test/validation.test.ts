@@ -48,6 +48,42 @@ test("ProviderError carries a fixed message and discards the cause", () => {
   assert.equal(error.cause, undefined, "cause must never be attached");
 });
 
+test("a safe detail is appended and an unsafe one is dropped", () => {
+  const named = new ProviderError(
+    "invalid_provider_config",
+    "config-header-denied",
+    "authorization",
+  );
+  assert.equal(named.detail, "authorization");
+  assert.match(named.message, /\(detail: authorization\)$/);
+
+  // The detail is re-validated rather than trusted, because an error message reaches
+  // logs and a UI. The charset stops markup, CRLF, and unbounded length.
+  for (const hostile of [
+    "a b",
+    "<script>alert(1)</script>",
+    "line\nbreak",
+    "value: with colon",
+    "x".repeat(65),
+    "",
+    "héader",
+  ]) {
+    const error = new ProviderError("invalid_provider_config", "stage", hostile);
+    assert.equal(error.detail, undefined, JSON.stringify(hostile).slice(0, 24));
+    assert.ok(!error.message.includes(hostile) || hostile.length === 0);
+  }
+
+  // Note the honest limit: a credential-shaped token would pass this charset. The
+  // guarantee is therefore "the charset stops injection", plus the separate rule that
+  // call sites pass a *name* they have already validated — never a value. The
+  // `config-header-denied` site is the only producer today, and it passes the header
+  // name it just rejected.
+  assert.equal(
+    new ProviderError("invalid_provider_config", "stage", "sk-looks-like-a-key").detail,
+    "sk-looks-like-a-key",
+  );
+});
+
 test("every provider error code has a distinct fixed message", () => {
   const codes = [
     "invalid_provider_id",

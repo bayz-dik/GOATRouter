@@ -118,4 +118,50 @@ export function registerProviderRoutes(
         models: await runtime.providers.discoverModels(validId(request.params.id)),
       })),
   );
+
+  /**
+   * Discover models with their economics.
+   *
+   * Separate from `/discover` rather than a flag on it: the existing endpoint's
+   * `{ models: string[] }` contract is what several clients read, and widening it in
+   * place would break them for a feature they did not ask for.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/api/providers/:id/catalogue",
+    async (request, reply) =>
+      requireScope(request, reply, "providers.write") ??
+      handleDomain(request, reply, async () => ({
+        models: await runtime.providers.discoverModelCatalogue(
+          validId(request.params.id),
+        ),
+      })),
+  );
+
+  /**
+   * Test whether a provider answers.
+   *
+   * `providers.write` rather than `read`: the call dials an upstream, which is a
+   * write-shaped side effect even though it stores nothing. A read-scoped key must not
+   * be able to make BAYZ originate traffic.
+   *
+   * Always 200 on a completed test. The *test* succeeded even when its subject failed,
+   * and a 502 here would make "we could not reach your provider" indistinguishable
+   * from "the test endpoint is broken".
+   */
+  app.post<{ Params: { id: string } }>("/api/providers/:id/test", async (request, reply) =>
+    requireScope(request, reply, "providers.write") ??
+    handleDomain(request, reply, async () =>
+      runtime.providers.testConnection(validId(request.params.id)),
+    ),
+  );
+
+  /** Report capabilities. `unknown` is a real answer; see `ProviderCapabilities`. */
+  app.post<{ Params: { id: string } }>(
+    "/api/providers/:id/capabilities",
+    async (request, reply) =>
+      requireScope(request, reply, "providers.write") ??
+      handleDomain(request, reply, async () =>
+        runtime.providers.detectCapabilities(validId(request.params.id)),
+      ),
+  );
 }

@@ -13,10 +13,78 @@ export type ProviderKind =
   | "codex-oauth"
   | "custom-openai";
 
+/**
+ * Provider configuration as the API *returns* it.
+ *
+ * `headerNames` rather than `headers`: the server never sends a configured header
+ * value back. Nothing in the dashboard needs one, and an operator changing a header
+ * retypes it.
+ */
 export type ProviderConfig = {
   timeoutMs: number;
   discoveryPath: string;
   modelLimit: number;
+  supportsTools?: boolean;
+  headerNames?: string[];
+  allowLoopback?: boolean;
+  allowPrivate?: boolean;
+};
+
+/** Provider configuration as a create or update *sends* it. */
+export type ProviderConfigInput = {
+  timeoutMs?: number;
+  discoveryPath?: string;
+  modelLimit?: number;
+  supportsTools?: boolean;
+  headers?: Record<string, string>;
+  allowLoopback?: boolean;
+  allowPrivate?: boolean;
+};
+
+/** Every failure code the connection test can report. */
+export type ConnectionFailureCode =
+  | "invalid_provider_config"
+  | "credential_missing"
+  | "unsupported_operation"
+  | "unreachable"
+  | "auth_failed"
+  | "rate_limited"
+  | "upstream_error"
+  | "discovery_failed";
+
+export type ConnectionResult = {
+  ok: boolean;
+  latencyMs: number;
+  modelCount?: number;
+  capped?: boolean;
+  failureCode?: ConnectionFailureCode;
+};
+
+/** `unknown` is a real value: see the server's `ProviderCapabilities`. */
+export type CapabilityState = "unknown" | "yes" | "no";
+
+export type ProviderCapabilities = {
+  models: boolean;
+  modelCount: number;
+  capped: boolean;
+  tools: CapabilityState;
+  toolsSource: "declared" | "undetermined";
+  streaming: CapabilityState;
+  streamingSource: "declared" | "undetermined";
+  failureCode?: ConnectionFailureCode;
+};
+
+export type ModelEconomics =
+  | "FREE_VERIFIED"
+  | "FREE_TIER"
+  | "FREE_PREVIEW"
+  | "LOCAL"
+  | "PAID"
+  | "UNKNOWN";
+
+export type ModelCatalogueEntry = {
+  id: string;
+  economics: ModelEconomics;
 };
 
 export type ProviderView = {
@@ -37,14 +105,14 @@ export type CreateProviderBody = {
   displayName: string;
   baseUrl?: string;
   enabled?: boolean;
-  config?: Partial<ProviderConfig>;
+  config?: ProviderConfigInput;
 };
 
 export type UpdateProviderBody = {
   displayName?: string;
   baseUrl?: string;
   enabled?: boolean;
-  config?: Partial<ProviderConfig>;
+  config?: ProviderConfigInput;
 };
 
 export type ProxyKind = "socks5" | "http";

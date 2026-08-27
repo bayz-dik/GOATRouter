@@ -96,6 +96,7 @@ export {
 export {
   createProviderManager,
   type CreateProviderManagerOptions,
+  type ProviderConfigView,
   type ProviderLogger,
   type ProviderManager,
   type ProviderView,

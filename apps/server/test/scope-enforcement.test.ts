@@ -90,6 +90,12 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   { method: "PUT", url: "/api/providers/p1/credential", scope: "providers.write" },
   { method: "DELETE", url: "/api/providers/p1/credential", scope: "providers.write" },
   { method: "POST", url: "/api/providers/p1/discover", scope: "providers.write" },
+  // 9D. All three dial an upstream, which is a write-shaped side effect even though
+  // none of them stores anything: a read-scoped key must not make BAYZ originate
+  // traffic.
+  { method: "POST", url: "/api/providers/p1/catalogue", scope: "providers.write" },
+  { method: "POST", url: "/api/providers/p1/test", scope: "providers.write" },
+  { method: "POST", url: "/api/providers/p1/capabilities", scope: "providers.write" },
   { method: "GET", url: "/api/proxies", scope: "proxies.read" },
   { method: "POST", url: "/api/proxies", scope: "proxies.write" },
   { method: "GET", url: "/api/proxies/x1", scope: "proxies.read" },
@@ -148,12 +154,11 @@ test("every registered API route is covered by this suite", async (t) => {
     .filter((label) => !covered.has(label));
 
   assert.deepEqual(uncovered, [], `uncovered routes: ${uncovered.join(", ")}`);
-  // 30 = 26 management + chat + models + health + the health HEAD Fastify adds.
   // Pinned as a floor so a route quietly disappearing is visible too.
-  assert.ok(registered.length >= 26, `only ${registered.length} routes found`);
+  assert.ok(registered.length >= 29, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    34,
+    37,
     "the management surface changed size without a scope decision",
   );
 });

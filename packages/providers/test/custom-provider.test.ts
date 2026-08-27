@@ -66,7 +66,10 @@ test("a public custom-openai provider is created and persisted", (t) => {
   });
   assert.equal(created.kind, "custom-openai");
   assert.equal(created.baseUrl, "https://relay.example.com/v1");
-  assert.deepEqual(created.config.headers, { "x-relay-token": "abc" });
+  // The view carries header *names*, not values: echoing a configured value back
+  // widens the surface for no benefit. See `ProviderConfigView`.
+  assert.deepEqual(created.config.headerNames, ["x-relay-token"]);
+  assert.ok(!JSON.stringify(created).includes("abc"));
 
   // Survives a reopen, which is what proves the CHECK constraint accepts the kind.
   assert.equal(manager.getProvider("relay")?.kind, "custom-openai");

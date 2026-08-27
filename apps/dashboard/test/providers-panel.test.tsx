@@ -30,6 +30,11 @@ function api(overrides: Partial<Parameters<typeof ProvidersPanel>[0]["api"]> = {
     setProviderCredential: vi.fn(async () => undefined),
     clearProviderCredential: vi.fn(async () => undefined),
     discoverModels: vi.fn(async () => ["gpt-4o", "gpt-4o-mini"]),
+    testProviderConnection: vi.fn(async () => ({
+      ok: true,
+      latencyMs: 12,
+      modelCount: 2,
+    })),
     ...overrides,
   };
 }
