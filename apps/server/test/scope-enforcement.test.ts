@@ -107,6 +107,15 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   { method: "GET", url: "/api/usage/requests", scope: "usage.read" },
   { method: "GET", url: "/api/usage/providers", scope: "usage.read" },
   { method: "DELETE", url: "/api/usage/requests", scope: "admin" },
+  // Identity management mints credentials and grants scopes, so every route is
+  // admin-only without exception. A lesser scope here would be an escalation path.
+  { method: "GET", url: "/api/identities", scope: "admin" },
+  { method: "POST", url: "/api/identities", scope: "admin" },
+  { method: "GET", url: "/api/identities/i1", scope: "admin" },
+  { method: "PATCH", url: "/api/identities/i1", scope: "admin" },
+  { method: "DELETE", url: "/api/identities/i1", scope: "admin" },
+  { method: "POST", url: "/api/identities/i1/rotate", scope: "admin" },
+  { method: "GET", url: "/api/identities/audit", scope: "admin" },
 ];
 
 test("every registered API route is covered by this suite", async (t) => {
@@ -130,7 +139,9 @@ test("every registered API route is covered by this suite", async (t) => {
     "GET /api/health",
     "POST /v1/chat/completions",
     "GET /v1/models",
-    ...MANAGEMENT_ROUTES.map((route) => `${route.method} ${route.url.replace(/p1|x1|r1/g, ":id")}`),
+    ...MANAGEMENT_ROUTES.map(
+      (route) => `${route.method} ${route.url.replace(/\b(p1|x1|r1|i1)\b/g, ":id")}`,
+    ),
   ]);
   const uncovered = registered
     .map((route) => `${route.method} ${route.url}`)
@@ -142,7 +153,7 @@ test("every registered API route is covered by this suite", async (t) => {
   assert.ok(registered.length >= 26, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    27,
+    34,
     "the management surface changed size without a scope decision",
   );
 });

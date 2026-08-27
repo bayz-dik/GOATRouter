@@ -8,6 +8,7 @@ import type { IdentityResolver } from "./principal.js";
 import { requireScope } from "./scopes.js";
 import { installSecurityHeaders } from "./security-headers.js";
 import { registerChatRoutes } from "./routes/chat.js";
+import { registerIdentityRoutes } from "./routes/identities.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProxyRoutes } from "./routes/proxies.js";
 import { registerRouteRoutes } from "./routes/routes.js";
@@ -97,6 +98,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       // any need for.
       requireScope(request, reply, "providers.read") ?? runtime.describe(),
     );
+    registerIdentityRoutes(app, runtime);
     registerProviderRoutes(app, runtime);
     registerProxyRoutes(app, runtime);
     registerRouteRoutes(app, runtime);

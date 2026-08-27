@@ -19,6 +19,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   invalid_proxy_config: 400,
   invalid_route_id: 400,
   invalid_route_config: 400,
+  invalid_identity_id: 400,
+  invalid_identity_config: 400,
+  invalid_scope: 400,
   invalid_request: 400,
   invalid_model: 400,
   invalid_response: 502,
@@ -29,16 +32,24 @@ const STATUS_BY_CODE: Record<string, number> = {
   // Auth / access
   unauthorized: 401,
   forbidden: 403,
+  // A revoked or expired identity reached a route it would otherwise be allowed on.
+  // 403 rather than 401: the presented credential authenticated as far as the guard
+  // is concerned, and the refusal is about the identity's state.
+  identity_revoked: 403,
+  identity_expired: 403,
+  key_invalid: 401,
   forbidden_host: 403,
   forbidden_origin: 403,
 
   // Existence
+  identity_not_found: 404,
   provider_not_found: 404,
   proxy_not_found: 404,
   route_not_found: 404,
   secret_not_found: 404,
 
   // Conflict
+  identity_already_exists: 409,
   provider_already_exists: 409,
   proxy_already_exists: 409,
   route_already_exists: 409,
