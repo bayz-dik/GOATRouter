@@ -5,6 +5,7 @@ import { IdentityError } from "./errors.js";
 import {
   createIdentityRepository,
   type CreateIdentityInput,
+  type IdentityAuditInput,
   type IdentityAuditRecord,
   type IdentityRepository,
   type IdentityView,
@@ -40,6 +41,17 @@ export interface IdentityManager {
   /** Resolve a presented key to its identity, or `undefined`. */
   verifyKey(presented: unknown): IdentityView | undefined;
   recentAudit(limit?: number): IdentityAuditRecord[];
+  /**
+   * Record an authorization decision the server made about a request.
+   *
+   * Exposed on the manager because the audit table's `identity_id` is a foreign key
+   * into `client_identities`, so a caller cannot safely write a row for an identity
+   * that may not exist — notably the Phase 6 bootstrap token, which is a principal
+   * without a registry row. Unknown ids are dropped rather than throwing: failing an
+   * operator's route change because its audit row could not be attributed would be a
+   * worse outcome than an unattributed change.
+   */
+  recordDecision(input: IdentityAuditInput): boolean;
 }
 
 function digest(value: string): Buffer {
@@ -246,6 +258,14 @@ export function createIdentityManager(
 
     recentAudit(limit?: number): IdentityAuditRecord[] {
       return repository.recentAudit(limit);
+    },
+
+    recordDecision(input: IdentityAuditInput): boolean {
+      if (repository.get(input.identityId) === undefined) {
+        return false;
+      }
+      repository.audit(input);
+      return true;
     },
   };
 

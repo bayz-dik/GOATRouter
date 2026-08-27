@@ -131,10 +131,40 @@ export function registerProviderRoutes(
     async (request, reply) =>
       requireScope(request, reply, "providers.write") ??
       handleDomain(request, reply, async () => ({
-        models: await runtime.providers.discoverModelCatalogue(
+        models: await runtime.providers.refreshModelCatalogue(
           validId(request.params.id),
         ),
       })),
+  );
+
+  /**
+   * Every model reachable for nothing, aggregated across providers.
+   *
+   * Guarded by `models.read` rather than `providers.read`: this answers "what can I
+   * ask for", which is a client's question, and a client that can list models should
+   * not need authority over provider configuration to learn which are free.
+   */
+  app.get("/api/models/free", async (request, reply) =>
+    requireScope(request, reply, "models.read") ??
+    handleDomain(request, reply, () => {
+      // Collapsed to one entry per model id with the providers that offer it. The
+      // operator's question is "what can I use for nothing", and the same model on
+      // three providers is one answer with three ways to reach it.
+      const byModel = new Map<string, string[]>();
+      for (const row of runtime.providers.listFreeModels()) {
+        const providers = byModel.get(row.model);
+        if (providers === undefined) {
+          byModel.set(row.model, [row.providerId]);
+        } else {
+          providers.push(row.providerId);
+        }
+      }
+      return {
+        models: [...byModel.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([id, providerIds]) => ({ id, providerIds: providerIds.sort() })),
+      };
+    }),
   );
 
   /**

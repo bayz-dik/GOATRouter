@@ -116,6 +116,10 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   { method: "PATCH", url: "/api/routes/r1", scope: "routes.write" },
   { method: "DELETE", url: "/api/routes/r1", scope: "routes.write" },
   { method: "GET", url: "/api/usage/summary", scope: "usage.read" },
+  // 9E free-only amendment. Read-only aggregation over the persisted catalogue, so
+  // `models.read` rather than `providers.read`: it answers "what can I route to for
+  // free", which is a model question, and it dials nothing.
+  { method: "GET", url: "/api/models/free", scope: "models.read" },
   { method: "GET", url: "/api/usage/requests", scope: "usage.read" },
   { method: "GET", url: "/api/usage/providers", scope: "usage.read" },
   { method: "DELETE", url: "/api/usage/requests", scope: "admin" },
@@ -164,7 +168,7 @@ test("every registered API route is covered by this suite", async (t) => {
   assert.ok(registered.length >= 29, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    40,
+    41,
     "the management surface changed size without a scope decision",
   );
 });

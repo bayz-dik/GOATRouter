@@ -302,13 +302,18 @@ free. No hardcoded model name. Flux Core untouched — this is routing metadata.
 
 The table stores an id and a classification. It is **not** content-bearing: no prompt, no completion, no pricing value, no description. A schema-pinning test asserts the four-column set so a later phase cannot add a `description` column.
 
-- [ ] RED `economics-api.test.ts`: `POST /api/providers/:id/discover` persists the catalogue and returns `{ models: [{ id, economics }] }`; the legacy `{ models: string[] }` shape is **also** still available under the existing contract so the Phase 3 smoke does not break — assert both, since silently changing a response shape is how a client breaks in the field; `GET /api/models/free` returns the aggregated free set across every enabled provider with no duplicate model id and no `UNKNOWN` or `PAID` entry; the aggregate requires `models.read`; a provider with no catalogue contributes nothing rather than erroring; deleting a provider cascades its catalogue rows away.
-- [ ] RED same file: a free-only route that cannot be satisfied returns HTTP **409** with the stable envelope and code `no_free_route`, distinct from a 503 `unreachable`, because the operator action differs — one means "add a free provider", the other means "the network is down". The message names no model and no price.
-- [ ] RED same file: `POST /api/routes` accepts `freeOnly` and defaults it to `true` when absent; `PATCH` can set it false; setting it false requires `routes.write` and is recorded in the audit as a metadata-only event, since enabling paid spending is exactly the kind of change an operator will later want to explain.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
-- [ ] Commit — `feat: expose Bayz free model aggregation and free-only routes`
+- [x] RED `economics-api.test.ts`: catalogue discovery persists economics and still returns the legacy `{ models: string[] }`; `GET /api/models/free` aggregates across providers with no duplicates and no `UNKNOWN`/`PAID`; a re-discovery prunes a model the upstream stopped listing; a reclassified model leaves the free set.
+- [x] RED same file: a free-only route with no free candidate returns HTTP **409** `no_free_route`, distinct from **502** on an unreachable provider — the operator action differs, so conflating them is the bug. The message names no model and no price.
+- [x] RED same file: `POST /api/routes` defaults `freeOnly` to `true` when absent; `PATCH` can set it false; that requires `routes.write` and writes a metadata-only audit row. Re-enabling free-only is **not** audited — only the money-spending direction is.
+- [x] Verify RED — 7 of 13 failed for the intended reasons before implementation.
+- [x] GREEN: `refreshModelCatalogue` on the provider manager persists via `CatalogueRepository`; the catalogue route calls it; `GET /api/models/free` reads the persisted rows; `no_free_route → 409` in `http-errors.ts`; `recordDecision` on the identity manager writes the `free_only_disabled` row.
+- [x] Verify: `economics-api.test.ts` **13/13**; `@bayz/server` **252/252**; `@bayz/identity` 69/69; `@bayz/providers` 276/276; `tsc --noEmit -p apps/server` exit 0; smokes api 70/70, stream 63/63, usage 119/119, provider 36/36.
+
+  **Deviations, recorded:**
+  1. The planned "no decimal-looking substring" audit assertion was replaced with an exact key-set pin. The row's own `occurredAt` carries fractional seconds, so that regex either fails on a correct row or has to be loosened until it proves nothing. Pinning `["action","identityId","occurredAt","outcome","route","scope"]` is what actually forbids a price, prompt, or credential field being added later.
+  2. `listFree()` filters in JS over `isFreeEconomics` rather than with a SQL `IN` list. Two places deciding what "free" means is how a classification silently becomes routable; the per-provider catalogue is small enough that the index gains nothing worth that risk.
+  3. `freeModel()` fixtures must publish **all four** priced dimensions as zero. `FREE_VERIFIED` requires proof on every dimension, so a `{prompt, completion}`-only fixture classifies `UNKNOWN` — the classifier being strict, not the fixture being free.
+- [x] Commit — `feat: persist Bayz model economics and expose the free set`
 
 ### Task 6c — Free-first model selection UX
 

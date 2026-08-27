@@ -26,6 +26,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   invalid_model: 400,
   invalid_response: 502,
   no_route: 400,
+  // 409, not 503. A refusal on economics grounds means "add a free provider"; a 503
+  // means "the network is down". One conflates an operator decision with an outage.
+  no_free_route: 409,
   password_missing: 400,
   credential_missing: 400,
 

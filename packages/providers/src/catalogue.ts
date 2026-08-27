@@ -1,5 +1,9 @@
 import type { SqlDatabase } from "@bayz/storage";
-import { MODEL_ECONOMICS, type ModelEconomics } from "./economics.js";
+import {
+  isFreeEconomics,
+  MODEL_ECONOMICS,
+  type ModelEconomics,
+} from "./economics.js";
 import type { ModelCatalogueEntry } from "./model-list.js";
 import { ProviderError } from "./errors.js";
 
@@ -122,10 +126,10 @@ export function createCatalogueRepository(
     },
 
     listFree(): CatalogueRow[] {
-      // Filtered in SQL by the classifications that are free, rather than read-all and
-      // filter in JS: the index is on `economics`, and an operator with forty providers
-      // should not pay for a full scan to answer "what can I use for nothing".
-      const free = ["FREE_VERIFIED", "FREE_TIER", "FREE_PREVIEW", "LOCAL"];
+      // Derived from `isFreeEconomics`, not a second hand-written list: two places
+      // deciding what "free" means is how a classification silently becomes routable
+      // in one layer and not the other.
+      const free = MODEL_ECONOMICS.filter((value) => isFreeEconomics(value));
       const placeholders = free.map(() => "?").join(", ");
       return db
         .prepare(
