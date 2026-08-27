@@ -50,11 +50,15 @@ export {
   type ChatUsage,
 } from "./response.js";
 export {
+  DEFAULT_IDLE_TIMEOUT_MS,
   MAX_RESPONSE_BYTES,
   sendChatRequest,
+  sendChatRequestStreaming,
   type SendChatRequestOptions,
+  type SendChatRequestStreamingOptions,
   type TransportProvider,
 } from "./transport.js";
+export { parseChatChunk, type ChatChunk } from "./chunk.js";
 export {
   MAX_SSE_LINE_BYTES,
   MAX_SSE_MALFORMED,
