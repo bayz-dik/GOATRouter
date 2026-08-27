@@ -20,12 +20,44 @@
 **Create:** `packages/storage/src/keystore/{dpapi,keychain,secret-service}.ts`
 **Test:** `packages/storage/test/os-keystore.test.ts`
 
-- [ ] RED `os-keystore.test.ts`: each provider reports `available` by **probing the platform**, not by reading `process.platform` alone — a Linux box without a Secret Service reports unavailable; on this device all three report `available: false` and `loadKek()` throws `master_key_invalid`; `resolveKeyProvider` with mode `FORTRESS` prefers an available OS provider and falls back to passphrase with a logged reason (metadata only); a provider that claims availability but fails to load raises rather than silently generating a key; no provider shells out through a string-interpolated command (source scan for `exec(` with template literals).
-- [ ] RED same file: the platform matrix is recorded as data — `keystoreSupport()` returns per-platform `IMPLEMENTED | UNVERIFIED | N/A`, and this device yields `UNVERIFIED` for all three.
-- [ ] Verify RED.
-- [ ] GREEN. Use `node:child_process.execFile` with an argument array, never a shell string.
-- [ ] Verify: `npm run test --workspace @bayz/storage` exits 0; `node scripts/storage-smoke.mjs` still 42/42.
-- [ ] Commit — `feat: add OS-backed Bayz key providers with honest availability`
+**Deviation, as built:** four supporting modules were added beside the three named
+adapters — `keystore/exec.ts` (the single `node:child_process` choke point),
+`keystore/adapter.ts` (shared probe/load/store lifecycle), `keystore/material.ts`
+(hex encode/decode with strict rejection), `keystore/support.ts` (the platform
+matrix), and `keystore/index.ts`. The `exec.ts` split is what makes the
+"no interpolated command" rule mechanically checkable: the source scan asserts
+`exec.ts` is the **only** file in the directory importing `node:child_process`, so
+no adapter can quietly grow a shell string later.
+
+- [x] RED `os-keystore.test.ts`: each provider reports `available` by **probing the platform**, not by reading `process.platform` alone — a Linux box without a Secret Service reports unavailable; on this device all three report `available: false` and `loadKek()` throws `master_key_invalid`; `resolveKeyProvider` with mode `FORTRESS` prefers an available OS provider and falls back to passphrase with a logged reason (metadata only); a provider that claims availability but fails to load raises rather than silently generating a key; no provider shells out through a string-interpolated command (source scan for `exec(` with template literals).
+- [x] RED same file: the platform matrix is recorded as data — `keystoreSupport()` returns per-platform `IMPLEMENTED | UNVERIFIED | N/A`, and this device yields `UNVERIFIED` for all three.
+- [x] Verify RED. First run failed to import (`does not provide an export named 'DpapiKeyProvider'`), then 16/17 with the keychain write asserting the wrong stdin shape.
+- [x] GREEN. Use `node:child_process.execFile` with an argument array, never a shell string.
+- [x] Verify: `npm run test --workspace @bayz/storage` exits 0 (**202/202**, up from 185); `node scripts/storage-smoke.mjs` still **42/42**; `tsc --noEmit -p packages/storage` exit 0; `@bayz/providers` 276/276 and `@bayz/server` 252/252 unaffected.
+- [x] Commit — `feat: add OS-backed Bayz key providers with honest availability`
+
+**Findings worth carrying forward:**
+- A store that accepts a write and then holds nothing is the one failure that
+  silently destroys data, so `loadKek()` **reads back and compares** what it just
+  wrote (`*-store-unconfirmed`, `*-store-mismatch` stages) instead of trusting a
+  zero exit status.
+- `secret-tool lookup` signals "no such item" with a non-zero status and *no*
+  output. Treating every non-zero status as "empty store" would mint a fresh key
+  on a transient D-Bus failure and orphan every ciphertext, so only a silent
+  non-zero counts as absent; anything with a diagnostic raises.
+- Secret material never enters argv — `/proc/<pid>/cmdline` and `ps` are readable
+  by other processes — so `secret-tool store` takes it on stdin and the Keychain
+  write goes through `security -i` rather than `-w <password>`.
+- DPAPI is a wrapping API, not a named store, so the sealed blob is written to
+  `master.key.dpapi` at 0600. A blob that exists but will not unwrap (different
+  user, different machine, corruption) **raises**; generating a new key there
+  would leave every existing secret undecryptable.
+- Android is `N/A`, not `UNVERIFIED`: the Keystore is reachable from the Android
+  framework and not from Node, so there is nothing left to verify rather than
+  something written but unproven.
+- The FORTRESS downgrade log is threaded through `openSecretStorage`'s existing
+  `logger`, so the "running on a derived key, not platform custody" signal reaches
+  an operator instead of being swallowed at the resolver.
 
 ### Task 2 — Root-key rotation surface and audit
 

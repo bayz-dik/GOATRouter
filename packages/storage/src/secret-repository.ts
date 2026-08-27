@@ -161,6 +161,9 @@ export function openSecretStorage(
     dataDir: options.dataDir,
     env,
     mode: options.mode,
+    // The FORTRESS keystore-to-passphrase downgrade is metadata only, and must
+    // reach the operator's log rather than being swallowed here.
+    logger: log,
   });
 
   let kek = provider.loadKek();

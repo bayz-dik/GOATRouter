@@ -2,6 +2,14 @@ import { randomBytes, scryptSync } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StorageError, asStorageError } from "./errors.js";
+import {
+  resolveOsKeystore,
+  type KeystoreResolveOptions,
+} from "./keystore/support.js";
+import type {
+  KeystoreBackend,
+  OsKeystoreAdapter,
+} from "./keystore/adapter.js";
 import { ensureDataDir, masterKeyPath } from "./paths.js";
 
 export const KEK_LENGTH = 32;
@@ -234,28 +242,55 @@ export class PassphraseKeyProvider implements KeyProvider {
 }
 
 /**
- * Interface placeholder for OS-backed key custody (DPAPI, macOS Keychain, Linux
- * Secret Service, Android Keystore).
+ * Host-resolved OS-backed key custody (DPAPI, macOS Keychain, Linux Secret
+ * Service).
  *
- * Every option requires a native module or a platform binary, which would break
- * the zero-native-dependency Termux baseline. It is therefore declared
- * unavailable and throws if forced. It is deliberately NOT faked, and must not
- * be described as working until the packaging phase ships per-platform
- * artifacts.
+ * The adapters are real, but availability is a **probe**, not a platform guess:
+ * this class delegates to whichever adapter matches the host and reports exactly
+ * what that adapter found. On the Termux/Android ARM64 target there is no
+ * `secret-tool`, no `security`, and no `keyctl`, so it reports `available: false`
+ * and throws if forced. That is measured, not assumed, and it is deliberately not
+ * faked.
  */
 export class OsKeystoreKeyProvider implements KeyProvider {
   readonly kind = "os-keystore" as const;
-  readonly available = false;
+  readonly #adapter: OsKeystoreAdapter;
+
+  constructor(options: Partial<KeystoreResolveOptions> = {}) {
+    this.#adapter = resolveOsKeystore({
+      ...options,
+      dataDir: options.dataDir ?? process.cwd(),
+    });
+  }
+
+  get backend(): KeystoreBackend {
+    return this.#adapter.backend;
+  }
+
+  get available(): boolean {
+    return this.#adapter.available;
+  }
+
+  /** Metadata-only explanation of the availability verdict. */
+  get reason(): string {
+    return this.#adapter.probe().reason;
+  }
 
   loadKek(): Buffer {
-    throw new StorageError("master_key_invalid", "os-keystore-unavailable");
+    return this.#adapter.loadKek();
   }
 }
+
+/** Metadata-only sink; the same shape `StorageLogger` uses, declared here to keep the module graph acyclic. */
+export type KeyProviderLogger = (payload: Record<string, unknown>) => void;
 
 export type ResolveKeyProviderOptions = {
   dataDir: string;
   env: Record<string, string | undefined>;
   mode?: BayzSecurityMode;
+  /** Test seam and explicit override; defaults to the host adapter. */
+  keystore?: KeyProvider & { readonly backend?: KeystoreBackend };
+  logger?: KeyProviderLogger;
 };
 
 export function resolveKeyProvider(
@@ -263,13 +298,42 @@ export function resolveKeyProvider(
 ): KeyProvider {
   const mode = options.mode ?? "STANDARD";
   const env = options.env;
+  const log: KeyProviderLogger = options.logger ?? (() => {});
 
   switch (mode) {
     case "FORTRESS": {
+      // OS custody first: a key held by the platform store is not readable by
+      // copying the data directory, which a passphrase-derived key is not either,
+      // but which the STANDARD key file plainly is.
+      const keystore =
+        options.keystore ?? new OsKeystoreKeyProvider({ dataDir: options.dataDir });
+      if (keystore.available) {
+        return keystore;
+      }
+
       const passphrase = env.BAYZ_PASSPHRASE;
       if (typeof passphrase !== "string" || passphrase.trim().length === 0) {
+        // Both custody options are gone; FORTRESS must not silently become
+        // STANDARD, so this is fatal.
+        log({
+          event: "key-provider-unavailable",
+          mode,
+          reason: "no OS keystore and no passphrase",
+        });
         throw new StorageError("master_key_invalid", "fortress-passphrase-required");
       }
+      // The downgrade is logged with a reason so an operator can see that FORTRESS
+      // is running on a derived key rather than platform custody. Metadata only:
+      // no passphrase, no key, no derived material.
+      log({
+        event: "key-provider-fallback",
+        from: "os-keystore",
+        to: "passphrase",
+        reason:
+          keystore instanceof OsKeystoreKeyProvider
+            ? keystore.reason
+            : "the configured OS keystore reported unavailable",
+      });
       return new PassphraseKeyProvider(options.dataDir, passphrase);
     }
     case "SECURE": {

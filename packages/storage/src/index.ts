@@ -33,9 +33,31 @@ export {
   type BayzSecurityMode,
   type KeyProvider,
   type KeyProviderKind,
+  type KeyProviderLogger,
   type ResolveKeyProviderOptions,
   type SecureFileOptions,
 } from "./key-provider.js";
+export {
+  OsKeystoreAdapter,
+  type CommandOptions,
+  type CommandResult,
+  type CommandRunner,
+  type KeystoreAdapterOptions,
+  type KeystoreBackend,
+  type KeystoreProbe,
+} from "./keystore/index.js";
+export {
+  DPAPI_BLOB_FILENAME,
+  DpapiKeyProvider,
+  KeychainKeyProvider,
+  SecretServiceKeyProvider,
+  keystoreSupport,
+  resolveOsKeystore,
+  type DpapiOptions,
+  type KeystoreResolveOptions,
+  type KeystoreSupportEntry,
+  type KeystoreSupportStatus,
+} from "./keystore/index.js";
 export {
   ENVELOPE_VERSION,
   SECRET_ALGORITHM,
