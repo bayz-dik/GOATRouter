@@ -67,6 +67,20 @@ export {
   type DiscoverGeminiOptions,
 } from "./discovery-gemini.js";
 export {
+  CONNECTION_FAILURE_CODES,
+  connectionFailureCodeOf,
+  detectCapabilities,
+  isConnectionFailureCode,
+  testConnection,
+  type CapabilitySource,
+  type CapabilityState,
+  type ConnectionFailureCode,
+  type ConnectionResult,
+  type ProbeOptions,
+  type ProbeTarget,
+  type ProviderCapabilities,
+} from "./capabilities.js";
+export {
   createProviderManager,
   type CreateProviderManagerOptions,
   type ProviderLogger,

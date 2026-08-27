@@ -1,5 +1,12 @@
 import { redactSecrets } from "@bayz/security";
 import { scopedSecretStorage, type SecretStorage } from "@bayz/storage";
+import {
+  detectCapabilities as detectProviderCapabilities,
+  testConnection as testProviderConnection,
+  type ConnectionResult,
+  type ProbeTarget,
+  type ProviderCapabilities,
+} from "./capabilities.js";
 import type { ProviderConfig } from "./config.js";
 import { discoverGeminiModels } from "./discovery-gemini.js";
 import { discoverOpenAiModels } from "./discovery-openai.js";
@@ -68,6 +75,16 @@ export interface ProviderManager {
    */
   withCredential<T>(id: string, use: (credential: string) => T): T;
   discoverModels(id: string): Promise<string[]>;
+  /**
+   * Report what a provider can do.
+   *
+   * Throws only for a caller error (unknown id, disabled provider). A failed probe is
+   * *reported* in the result, because "discovery does not work" answers the question
+   * that was asked.
+   */
+  detectCapabilities(id: string): Promise<ProviderCapabilities>;
+  /** Probe reachability. Never throws for an upstream failure; reports it. */
+  testConnection(id: string): Promise<ConnectionResult>;
   close(): void;
 }
 
@@ -105,6 +122,29 @@ export function createProviderManager(
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   });
+
+  /**
+   * Build a probe's inputs from a freshly read row.
+   *
+   * Read per call rather than cached: a cache keyed on the provider id would report
+   * the old endpoint's answer immediately after the operator changed it, which is the
+   * one moment they need the new one.
+   */
+  const probeOptions = (record: ProviderRecord) => {
+    const target: ProbeTarget = {
+      id: record.id,
+      kind: record.kind,
+      baseUrl: record.baseUrl,
+      enabled: record.enabled,
+      config: record.config,
+    };
+    const credential = readCredential(record.id);
+    return {
+      target,
+      ...(credential === undefined ? {} : { credential }),
+      ...(fetcher === undefined ? {} : { fetcher }),
+    };
+  };
 
   const manager: ProviderManager = {
     createProvider(input: CreateProviderInput): ProviderView {
@@ -230,6 +270,46 @@ export function createProviderManager(
 
     close(): void {
       storage.close();
+    },
+
+    async detectCapabilities(id: string): Promise<ProviderCapabilities> {
+      const record = repository.require(id);
+      if (!record.enabled) {
+        throw new ProviderError("unsupported_operation", "capabilities-disabled");
+      }
+      const capabilities = await detectProviderCapabilities(probeOptions(record));
+      log(
+        redactSecrets({
+          event: "provider_capabilities_probed",
+          id: record.id,
+          kind: record.kind,
+          models: capabilities.models,
+          count: capabilities.modelCount,
+          // The code, never a message: an upstream error body is exactly what must
+          // not reach a log line.
+          ...(capabilities.failureCode === undefined
+            ? {}
+            : { failureCode: capabilities.failureCode }),
+        }),
+      );
+      return capabilities;
+    },
+
+    async testConnection(id: string): Promise<ConnectionResult> {
+      const record = repository.require(id);
+      const result = await testProviderConnection(probeOptions(record));
+      log(
+        redactSecrets({
+          event: "provider_connection_tested",
+          id: record.id,
+          ok: result.ok,
+          latencyMs: result.latencyMs,
+          ...(result.failureCode === undefined
+            ? {}
+            : { failureCode: result.failureCode }),
+        }),
+      );
+      return result;
     },
   };
 
