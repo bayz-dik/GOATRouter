@@ -5,6 +5,13 @@ export {
 } from "./errors.js";
 export { assertProviderId, isProviderId } from "./identity.js";
 export {
+  DEFAULT_EGRESS_POLICY,
+  assertEgressAllowed,
+  assertResolvedAddressAllowed,
+  isEgressAllowed,
+  type EgressPolicy,
+} from "./egress.js";
+export {
   PROVIDER_KINDS,
   assertProviderKind,
   defaultBaseUrl,
