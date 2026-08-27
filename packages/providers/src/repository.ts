@@ -13,6 +13,26 @@ import {
 
 const MAX_DISPLAY_NAME_LENGTH = 128;
 
+/**
+ * Ceiling on one bulk proxy assignment.
+ *
+ * Bounded because the statement count is linear in the batch and an unbounded request
+ * would hold the write lock for as long as the caller cared to make it. 200 is far
+ * above any real provider count and far below a problem.
+ */
+export const MAX_PROXY_ASSIGN_BATCH = 200;
+
+/**
+ * The proxy id alphabet.
+ *
+ * Identical to the provider id alphabet, and to `@bayz/proxy`'s own `assertProxyId`.
+ * Duplicated rather than imported because `@bayz/providers` does not depend on
+ * `@bayz/proxy` and adding the dependency to reach one regex would invert the layering
+ * — the router is what composes the two. A test in `@bayz/proxy` pins the alphabet, and
+ * the foreign key is the backstop if the two ever drifted.
+ */
+const PROXY_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
 export type ProviderRecord = {
   id: string;
   kind: ProviderKind;
@@ -20,6 +40,13 @@ export type ProviderRecord = {
   baseUrl: string;
   enabled: boolean;
   config: ProviderConfig;
+  /**
+   * The proxy every route to this provider uses unless the route overrides it.
+   *
+   * `undefined` means direct. There is deliberately no `""` alternative: a second way
+   * to say "direct" would compare truthily somewhere before long.
+   */
+  proxyId?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -31,6 +58,7 @@ export type CreateProviderInput = {
   baseUrl?: string;
   enabled?: boolean;
   config?: unknown;
+  proxyId?: string;
 };
 
 export type UpdateProviderInput = {
@@ -38,6 +66,14 @@ export type UpdateProviderInput = {
   baseUrl?: string;
   enabled?: boolean;
   config?: unknown;
+  /**
+   * `null` sets the provider to direct; `undefined` leaves the assignment alone.
+   *
+   * The two must differ. A patch omits every field it is not changing, so if
+   * `undefined` meant "direct" then renaming a provider would silently drop the
+   * operator's proxy choice.
+   */
+  proxyId?: string | null;
 };
 
 export interface ProviderRepository {
@@ -47,6 +83,15 @@ export interface ProviderRepository {
   list(): ProviderRecord[];
   update(id: string, patch: UpdateProviderInput): ProviderRecord;
   delete(id: string): boolean;
+  /** Provider ids currently defaulting to this proxy, sorted. Empty if unknown. */
+  providersUsingProxy(proxyId: string): string[];
+  /**
+   * Point a batch of providers at one proxy, or at direct with `null`.
+   *
+   * Atomic: one bad id fails the whole call. A partial assignment would leave the
+   * operator with a half-applied change and no way to tell which half.
+   */
+  assignProxy(proxyId: string | null, providerIds: readonly string[]): number;
 }
 
 function parseDisplayName(value: unknown): string {
@@ -126,6 +171,16 @@ function rowToRecord(row: Record<string, unknown>): ProviderRecord {
     throw new ProviderError("invalid_provider_config", "load-config");
   }
 
+  // A stored proxy id that no longer matches the alphabet is dropped to direct rather
+  // than failing the load: the reference is not security-bearing (the foreign key
+  // guarantees the proxy exists) and refusing to load the provider would take its
+  // credential offline over a cosmetic problem.
+  const storedProxy = row.proxy_id;
+  const proxyId =
+    typeof storedProxy === "string" && PROXY_ID_RE.test(storedProxy)
+      ? storedProxy
+      : undefined;
+
   return {
     id: String(row.id),
     kind,
@@ -133,6 +188,7 @@ function rowToRecord(row: Record<string, unknown>): ProviderRecord {
     baseUrl: String(row.base_url),
     enabled: Number(row.enabled) === 1,
     config,
+    ...(proxyId === undefined ? {} : { proxyId }),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -151,6 +207,38 @@ export function createProviderRepository(
   const selectOne = (id: string): Record<string, unknown> | undefined =>
     db.prepare("SELECT * FROM providers WHERE id = ?").get(id);
 
+  /** Validate a proxy id's shape. Pre-SQL, so the id never reaches a statement raw. */
+  const assertProxyIdShape = (value: unknown): string => {
+    if (
+      typeof value !== "string" ||
+      !PROXY_ID_RE.test(value) ||
+      value.includes("..") ||
+      value.endsWith("-")
+    ) {
+      throw new ProviderError("invalid_provider_config", "proxy-id");
+    }
+    return value;
+  };
+
+  /**
+   * Resolve a requested proxy reference to what should be stored.
+   *
+   * Existence is checked here rather than left to the foreign key, so an unknown proxy
+   * is a domain `invalid_provider_config` an API can turn into a 400 — a raw constraint
+   * violation would surface as a driver error and a 500.
+   */
+  const resolveProxyId = (value: unknown): string | undefined => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+    const proxyId = assertProxyIdShape(value);
+    const exists = db.prepare("SELECT 1 FROM proxies WHERE id = ?").get(proxyId);
+    if (exists === undefined) {
+      throw new ProviderError("invalid_provider_config", "proxy-not-found");
+    }
+    return proxyId;
+  };
+
   const repository: ProviderRepository = {
     create(input: CreateProviderInput): ProviderRecord {
       if (typeof input !== "object" || input === null) {
@@ -168,6 +256,7 @@ export function createProviderRepository(
           : parseEnabled(input.enabled, "create-enabled");
       const config = parseProviderConfig(input.config, kind);
       assertStorableBaseUrl(baseUrl, config);
+      const proxyId = resolveProxyId(input.proxyId);
 
       if (selectOne(id) !== undefined) {
         throw new ProviderError("provider_already_exists", "create-provider");
@@ -176,8 +265,8 @@ export function createProviderRepository(
       const timestamp = now();
       db.prepare(
         `INSERT INTO providers
-           (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, kind, display_name, base_url, enabled, config_json, proxy_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         kind,
@@ -185,6 +274,7 @@ export function createProviderRepository(
         baseUrl,
         enabled ? 1 : 0,
         JSON.stringify(config),
+        proxyId ?? null,
         timestamp,
         timestamp,
       );
@@ -196,6 +286,7 @@ export function createProviderRepository(
         baseUrl,
         enabled,
         config,
+        ...(proxyId === undefined ? {} : { proxyId }),
         createdAt: timestamp,
         updatedAt: timestamp,
       };
@@ -249,27 +340,41 @@ export function createProviderRepository(
       // Re-checked against the *resulting* pair, so neither moving the URL nor
       // removing the opt-in can leave a stored state the policy forbids.
       assertStorableBaseUrl(baseUrl, config);
+      // Three cases, and they are genuinely different: absent leaves the assignment
+      // alone, `null` sets direct, a string reassigns.
+      const proxyId =
+        patch.proxyId === undefined
+          ? current.proxyId
+          : resolveProxyId(patch.proxyId);
 
       const timestamp = now();
       db.prepare(
         `UPDATE providers
-            SET display_name = ?, base_url = ?, enabled = ?, config_json = ?, updated_at = ?
+            SET display_name = ?, base_url = ?, enabled = ?, config_json = ?,
+                proxy_id = ?, updated_at = ?
           WHERE id = ?`,
       ).run(
         displayName,
         baseUrl,
         enabled ? 1 : 0,
         JSON.stringify(config),
+        proxyId ?? null,
         timestamp,
         current.id,
       );
 
       return {
-        ...current,
+        id: current.id,
+        kind: current.kind,
         displayName,
         baseUrl,
         enabled,
         config,
+        // The key is omitted rather than set to `undefined`, matching `create` and
+        // `rowToRecord`. A present-but-undefined key serializes differently and shows up
+        // as a spurious field in anything that enumerates the record.
+        ...(proxyId === undefined ? {} : { proxyId }),
+        createdAt: current.createdAt,
         updatedAt: timestamp,
       };
     },
@@ -279,6 +384,56 @@ export function createProviderRepository(
         .prepare("DELETE FROM providers WHERE id = ?")
         .run(assertProviderId(id));
       return result.changes > 0;
+    },
+
+    providersUsingProxy(proxyId: string): string[] {
+      return db
+        .prepare("SELECT id FROM providers WHERE proxy_id = ? ORDER BY id")
+        .all(assertProxyIdShape(proxyId))
+        .map((row) => String(row.id));
+    },
+
+    assignProxy(proxyId: string | null, providerIds: readonly string[]): number {
+      if (!Array.isArray(providerIds) || providerIds.length === 0) {
+        // An empty batch is refused rather than reported as "0 changed": it is almost
+        // always a caller bug, and a success response would hide it.
+        throw new ProviderError("invalid_provider_config", "assign-batch-shape");
+      }
+      if (providerIds.length > MAX_PROXY_ASSIGN_BATCH) {
+        throw new ProviderError("invalid_provider_config", "assign-batch-size");
+      }
+
+      // Validate everything before writing anything. Deduplicated first so a repeated
+      // id is one change rather than N.
+      const unique = [...new Set(providerIds.map((id) => assertProviderId(id)))];
+      const resolved = resolveProxyId(proxyId);
+      for (const id of unique) {
+        if (selectOne(id) === undefined) {
+          throw new ProviderError("provider_not_found", "assign-provider");
+        }
+      }
+
+      const timestamp = now();
+      const statement = db.prepare(
+        "UPDATE providers SET proxy_id = ?, updated_at = ? WHERE id = ?",
+      );
+      // Wrapped so a failure mid-batch leaves no provider reassigned. The validation
+      // above makes that unlikely; the transaction makes it impossible.
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const id of unique) {
+          statement.run(resolved ?? null, timestamp, id);
+        }
+        db.exec("COMMIT");
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Already unwound; the original failure is what matters.
+        }
+        throw error;
+      }
+      return unique.length;
     },
   };
 

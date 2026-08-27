@@ -38,6 +38,7 @@ export {
   type ProviderConfig,
 } from "./config.js";
 export {
+  MAX_PROXY_ASSIGN_BATCH,
   createProviderRepository,
   type CreateProviderInput,
   type CreateProviderRepositoryOptions,

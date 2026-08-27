@@ -56,6 +56,13 @@ export type ProviderView = {
   baseUrl: string;
   enabled: boolean;
   config: ProviderConfigView;
+  /**
+   * The proxy every route to this provider uses unless the route overrides it.
+   *
+   * An id, never a password: the password stays in the encrypted secret store under
+   * `proxy:<id>:password` and has no accessor here at all.
+   */
+  proxyId?: string;
   credentialPresent: boolean;
   createdAt: string;
   updatedAt: string;
@@ -118,6 +125,15 @@ export interface ProviderManager {
    * every consumer of the header values is greppable.
    */
   requestConfig(id: string): ProviderConfig;
+  /** Provider ids currently defaulting to this proxy, sorted. Empty if unknown. */
+  providersUsingProxy(proxyId: string): string[];
+  /**
+   * Point a batch of providers at one proxy, or at direct with `null`.
+   *
+   * One call, atomically. This is the operation that makes "assign one proxy to forty
+   * providers" a single action instead of forty.
+   */
+  assignProxy(proxyId: string | null, providerIds: readonly string[]): number;
   close(): void;
 }
 
@@ -160,6 +176,7 @@ export function createProviderManager(
     baseUrl: record.baseUrl,
     enabled: record.enabled,
     config: toConfigView(record.config),
+    ...(record.proxyId === undefined ? {} : { proxyId: record.proxyId }),
     credentialPresent: present(record.id),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -344,6 +361,25 @@ export function createProviderManager(
         ...config,
         ...(config.headers === undefined ? {} : { headers: { ...config.headers } }),
       };
+    },
+
+    providersUsingProxy(proxyId: string): string[] {
+      return repository.providersUsingProxy(proxyId);
+    },
+
+    assignProxy(proxyId: string | null, providerIds: readonly string[]): number {
+      const changed = repository.assignProxy(proxyId, providerIds);
+      log(
+        redactSecrets({
+          event: "provider_proxy_assigned",
+          // The proxy id and a count. Never the password, and never the provider list —
+          // a bulk assignment of 200 ids would make the log line the largest thing in
+          // the file for no operational benefit.
+          proxyId: proxyId ?? "direct",
+          providerCount: changed,
+        }),
+      );
+      return changed;
     },
 
     close(): void {

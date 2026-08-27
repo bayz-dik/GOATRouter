@@ -599,6 +599,9 @@ test("the providers table holds registry metadata and no credential", () => {
       "enabled",
       "id",
       "kind",
+      // 9E: the provider-level proxy default. A *reference*, not a credential — the
+      // proxy's password stays in the encrypted secret store as it always did.
+      "proxy_id",
       "updated_at",
     ]);
     // A credential column here would bypass envelope encryption entirely.
@@ -940,7 +943,15 @@ test("migration v7 preserves existing provider rows and their routes", () => {
        VALUES ('r1', 'gpt-4o', 'legacy', NULL, 100, 1, '{}', 't', 't')`,
     ).run();
 
-    assert.equal(runMigrations(db), 1);
+    // Scoped to v7 so the assertion is about *that* migration rather than about
+    // however many exist today.
+    assert.equal(
+      runMigrations(
+        db,
+        MIGRATIONS.filter((migration) => migration.version <= 7),
+      ),
+      1,
+    );
 
     const provider = db.prepare("SELECT * FROM providers WHERE id = 'legacy'").get();
     assert.equal(provider?.display_name, "Legacy");
@@ -973,6 +984,171 @@ test("migration v7 leaves no temporary table behind", () => {
     runMigrations(db);
     assert.ok(!tableNames(db).includes("providers_v7"));
     assert.ok(tableNames(db).includes("providers"));
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v8 adds providers.proxy_id as a nullable reference", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const column = db
+      .prepare("SELECT name, type, `notnull`, dflt_value FROM pragma_table_info('providers')")
+      .all()
+      .find((row) => String(row.name) === "proxy_id");
+
+    assert.ok(column !== undefined, "providers.proxy_id must exist");
+    assert.equal(String(column.type).toUpperCase(), "TEXT");
+    // Nullable: "no proxy" is the normal case and has to be representable without a
+    // sentinel value.
+    assert.equal(Number(column.notnull), 0);
+    assert.equal(column.dflt_value, null);
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v8 accepts a provider proxy reference and refuses an unknown one", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.exec("PRAGMA foreign_keys = ON");
+    db.prepare(
+      `INSERT INTO proxies
+         (id, kind, host, port, username, enabled, config_json, created_at, updated_at)
+       VALUES ('tunnel', 'socks5', '127.0.0.1', 1080, NULL, 1, '{}', 't', 't')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, proxy_id, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 'tunnel', 't', 't')`,
+    ).run();
+    assert.equal(
+      db.prepare("SELECT proxy_id FROM providers WHERE id = 'p1'").get()?.proxy_id,
+      "tunnel",
+    );
+
+    // A dangling reference is refused by the foreign key, so a provider can never
+    // point at a proxy that does not exist.
+    assert.throws(() =>
+      db
+        .prepare(
+          `INSERT INTO providers
+             (id, kind, display_name, base_url, enabled, config_json, proxy_id, created_at, updated_at)
+           VALUES ('p2', 'openai-compatible', 'P2', 'https://b.example.com', 1, '{}', 'absent', 't', 't')`,
+        )
+        .run(),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("deleting a proxy degrades its providers to direct rather than removing them", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.exec("PRAGMA foreign_keys = ON");
+    db.prepare(
+      `INSERT INTO proxies
+         (id, kind, host, port, username, enabled, config_json, created_at, updated_at)
+       VALUES ('tunnel', 'http', '127.0.0.1', 8080, 'u', 1, '{}', 't', 't')`,
+    ).run();
+    for (const id of ["p1", "p2"]) {
+      db.prepare(
+        `INSERT INTO providers
+           (id, kind, display_name, base_url, enabled, config_json, proxy_id, created_at, updated_at)
+         VALUES (?, 'openai-compatible', 'P', 'https://a.example.com', 1, '{}', 'tunnel', 't', 't')`,
+      ).run(id);
+    }
+
+    db.prepare("DELETE FROM proxies WHERE id = 'tunnel'").run();
+
+    // ON DELETE SET NULL, matching what `routes.proxy_id` already does. Cascading here
+    // would delete the operator's providers — and their credentials — because they
+    // happened to share a proxy, which is catastrophically wrong for a "remove one
+    // proxy" action.
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS n FROM providers").get()?.n,
+      2,
+      "removing a proxy must never remove a provider",
+    );
+    for (const id of ["p1", "p2"]) {
+      assert.equal(
+        db.prepare("SELECT proxy_id FROM providers WHERE id = ?").get(id)?.proxy_id,
+        null,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v8 leaves existing provider rows intact with a NULL proxy", () => {
+  const db = freshDb();
+  try {
+    // The real upgrade path: migrate to v7, populate, then finish.
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version <= 7),
+    );
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('legacy', 'custom-openai', 'Legacy', 'https://relay.example.com', 1,
+               '{"timeoutMs":30000}', 'created', 'updated')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json, created_at, updated_at)
+       VALUES ('r1', 'gpt-4o', 'legacy', NULL, 100, 1, '{}', 't', 't')`,
+    ).run();
+
+    assert.equal(runMigrations(db), 1);
+
+    const provider = db.prepare("SELECT * FROM providers WHERE id = 'legacy'").get();
+    assert.equal(provider?.display_name, "Legacy");
+    assert.equal(provider?.kind, "custom-openai");
+    assert.equal(provider?.config_json, '{"timeoutMs":30000}');
+    assert.equal(provider?.created_at, "created");
+    // An existing provider keeps working exactly as before: direct, which is what it
+    // was doing already.
+    assert.equal(provider?.proxy_id, null);
+    assert.equal(
+      db.prepare("SELECT provider_id FROM routes WHERE id = 'r1'").get()?.provider_id,
+      "legacy",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("the custom-openai kind still inserts after the v8 rebuild", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    // v8 rebuilds `providers` again, so v7's widened CHECK has to survive. Asserted
+    // because a rebuild that reused the pre-v7 table definition would silently revert
+    // the kind set.
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('relay', 'custom-openai', 'Relay', 'https://relay.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    assert.equal(
+      db.prepare("SELECT kind FROM providers WHERE id = 'relay'").get()?.kind,
+      "custom-openai",
+    );
+    assert.throws(() =>
+      db
+        .prepare(
+          `INSERT INTO providers
+             (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+           VALUES ('bad', 'anthropic', 'Bad', 'https://x.example.com', 1, '{}', 't', 't')`,
+        )
+        .run(),
+    );
   } finally {
     db.close();
   }

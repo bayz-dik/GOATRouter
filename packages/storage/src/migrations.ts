@@ -25,8 +25,9 @@ export type Migration = {
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
  * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
- * telemetry, v6 per-client identities with a metadata-only audit trail, and v7 the
- * `custom-openai` provider kind. None of them holds a credential column, and neither `routes` nor the
+ * telemetry, v6 per-client identities with a metadata-only audit trail, v7 the
+ * `custom-openai` provider kind, and v8 the provider-level proxy default. None of them
+ * holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
  * `secrets` under `provider:<id>:api_key` and proxy passwords under
@@ -269,6 +270,33 @@ export const MIGRATIONS: readonly Migration[] = [
          FROM providers`,
       `DROP TABLE providers`,
       `ALTER TABLE providers_v7 RENAME TO providers`,
+    ],
+  },
+  {
+    version: 8,
+    statements: [
+      /*
+       * Add the provider-level proxy default.
+       *
+       * `ALTER TABLE ... ADD COLUMN` is used rather than a rebuild, and it can be:
+       * SQLite permits adding a column with a REFERENCES clause as long as the default
+       * is NULL, which it is. That keeps every existing row untouched and needs no
+       * foreign-key suspension — unlike v7, which had to rebuild because a CHECK
+       * constraint cannot be altered.
+       *
+       * ON DELETE SET NULL, matching `routes.proxy_id`. Cascading would delete the
+       * operator's providers — and orphan their credentials — because they happened to
+       * share a proxy, which is catastrophically wrong for a "remove one proxy" action.
+       * Degrading to direct keeps every provider working.
+       *
+       * The numbering follows the spec's ledger rule: 9D's kind migration landed first
+       * and took v7, so this takes v8.
+       */
+      `ALTER TABLE providers
+         ADD COLUMN proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL`,
+      // Assignment is a bulk operation over providers sharing one proxy, and the usage
+      // endpoint counts them, so both read by proxy rather than by provider.
+      `CREATE INDEX providers_proxy_idx ON providers (proxy_id)`,
     ],
   },
 ];

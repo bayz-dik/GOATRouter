@@ -23,12 +23,12 @@
 
 **Schema:** migration v8 adds `providers.proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL`
 
-- [ ] RED `packages/storage/test/migrations.test.ts`: fresh `providers` gains `proxy_id` as a 9th column; the pinned column set updates; deleting a proxy sets dependent `providers.proxy_id` to NULL (degrade to direct, never break); existing rows survive the migration with `proxy_id` NULL.
-- [ ] RED `packages/providers/test/provider-proxy.test.ts`: create with `proxyId` validates the proxy exists (pre-SQL, `invalid_provider_config` for unknown); `updateProvider` can set and clear it with `null`; the view exposes `proxyId` and never a password; a provider with no proxy reports `undefined`, not `""`.
-- [ ] Verify RED: `node --import tsx --test packages/storage/test/migrations.test.ts` fails on the column-set assertion.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/storage` and `--workspace @bayz/providers` exit 0; `node scripts/storage-smoke.mjs` still 42/42; `node scripts/provider-smoke.mjs` still 36/36.
-- [ ] Commit — `feat: add a provider-level proxy default`
+- [x] RED `packages/storage/test/migrations.test.ts`: fresh `providers` gains `proxy_id` as a 9th column; the pinned column set updates; deleting a proxy sets dependent `providers.proxy_id` to NULL (degrade to direct, never break); existing rows survive the migration with `proxy_id` NULL.
+- [x] RED `packages/providers/test/provider-proxy.test.ts`: create with `proxyId` validates the proxy exists (pre-SQL, `invalid_provider_config` for unknown); `updateProvider` can set and clear it with `null`; the view exposes `proxyId` and never a password; a provider with no proxy reports `undefined`, not `""`.
+- [x] Verify RED: `node --import tsx --test packages/storage/test/migrations.test.ts` fails on the column-set assertion.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/storage` and `--workspace @bayz/providers` exit 0; `node scripts/storage-smoke.mjs` still 42/42; `node scripts/provider-smoke.mjs` still 36/36.
+- [x] Commit — `feat: add a provider-level proxy default`
 
 ### Task 2 — Proxy resolution order in the router
 

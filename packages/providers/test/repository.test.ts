@@ -364,7 +364,10 @@ test("stored rows contain no credential-like value", () => {
     const serialized = JSON.stringify(row);
     assert.equal(serialized.toLowerCase().includes("bearer"), false);
     assert.equal(serialized.includes("sk-"), false);
-    assert.equal(Object.keys(row).length, 8);
+    // Nine columns after 9E added `proxy_id`. Pinned as an exact count so a column
+    // able to hold a credential cannot be added without this failing.
+    assert.equal(Object.keys(row).length, 9);
+    assert.equal(row.proxy_id, null);
   } finally {
     ctx.close();
   }
