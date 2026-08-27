@@ -205,6 +205,9 @@ describe("dashboard source guarantees", () => {
   });
 });
 
+/** A key-shaped value the identity panel must never render from a list response. */
+const CLIENT_KEY = "c".repeat(64);
+
 describe("dashboard runtime guarantees", () => {
   function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     return {
@@ -214,8 +217,24 @@ describe("dashboard runtime guarantees", () => {
         driver: "node:sqlite",
         keyProvider: "environment",
         keyId: "kek_deadbeefdeadbeefdeadbeefdeadbeef",
-        counts: { providers: 1, proxies: 1, routes: 1 },
+        counts: { providers: 1, proxies: 1, routes: 1, identities: 1 },
       })),
+      listIdentities: vi.fn(async () => [
+        {
+          id: "opencode",
+          displayName: "OpenCode",
+          scopes: ["chat.completions", "models.read"],
+          preset: "opencode",
+          revoked: false,
+          expiresAt: undefined,
+          createdAt: "2026-08-27T00:00:00.000Z",
+          updatedAt: "2026-08-27T00:00:00.000Z",
+          lastUsedAt: undefined,
+          // A hostile or buggy Core returning a key must not be rendered. There is
+          // no field on the view that carries one, so this must be dropped.
+          key: CLIENT_KEY,
+        } as never,
+      ]),
       listProviders: vi.fn(async () => [
         {
           id: "p1",
@@ -281,10 +300,14 @@ describe("dashboard runtime guarantees", () => {
     );
 
     await screen.findByText("P1");
+    await screen.findByText("OpenCode");
     const html = container.innerHTML;
     expect(html).not.toContain(CREDENTIAL);
     expect(html).not.toContain(PASSWORD);
     expect(html).not.toContain(TOKEN);
+    // A client key smuggled into a list response must not reach the DOM either.
+    expect(html).not.toContain(CLIENT_KEY);
+    expect(html).not.toMatch(/[0-9a-f]{64}/);
   });
 
   it("keeps the token out of the DOM while unlocked", async () => {

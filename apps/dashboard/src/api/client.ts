@@ -1,5 +1,9 @@
 import type {
   ChatRequestBody,
+  CreateIdentityBody,
+  IdentityView,
+  IdentityWithKey,
+  UpdateIdentityBody,
   ChatResult,
   CreateProviderBody,
   CreateProxyBody,
@@ -139,6 +143,25 @@ export function createApiClient(options: CreateApiClientOptions) {
 
   return {
     getStatus: (): Promise<RuntimeStatus> => send("GET", "/api/status"),
+
+    listIdentities: async (): Promise<IdentityView[]> =>
+      (await send<{ identities: IdentityView[] }>("GET", "/api/identities")).identities ??
+      [],
+    /**
+     * Create an identity.
+     *
+     * The response is the only place a client key ever appears. It is returned to
+     * the caller and deliberately not cached, stored, or logged anywhere in the
+     * dashboard.
+     */
+    createIdentity: (body: CreateIdentityBody): Promise<IdentityWithKey> =>
+      send("POST", "/api/identities", body),
+    updateIdentity: (id: string, body: UpdateIdentityBody): Promise<IdentityView> =>
+      send("PATCH", `/api/identities/${segment(id)}`, body),
+    revokeIdentity: (id: string): Promise<void> =>
+      send("DELETE", `/api/identities/${segment(id)}`),
+    rotateIdentityKey: (id: string): Promise<IdentityWithKey> =>
+      send("POST", `/api/identities/${segment(id)}/rotate`),
 
     listProviders: async (): Promise<ProviderView[]> =>
       (await send<{ providers: ProviderView[] }>("GET", "/api/providers")).providers ?? [],

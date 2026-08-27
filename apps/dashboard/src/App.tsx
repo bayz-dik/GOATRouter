@@ -7,6 +7,7 @@ import { TokenGate } from "./api/TokenGate";
 import { ChatPanel } from "./panels/ChatPanel";
 import { CoreStatus } from "./CoreStatus";
 import { FluxCoreSlot } from "./FluxCoreSlot";
+import { IdentitiesPanel } from "./panels/IdentitiesPanel";
 import { ProvidersPanel } from "./panels/ProvidersPanel";
 import { ProxiesPanel } from "./panels/ProxiesPanel";
 import { RoutesPanel } from "./panels/RoutesPanel";
@@ -57,6 +58,7 @@ export function App({
 
       <TokenGate store={tokenStore}>
         <StatusPanel load={() => api.getStatus()} />
+        <IdentitiesPanel api={api} />
         <ProvidersPanel api={api} />
         <ProxiesPanel api={api} />
         <RoutesPanel api={api} />

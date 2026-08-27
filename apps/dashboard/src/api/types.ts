@@ -131,7 +131,96 @@ export type RuntimeStatus = {
   driver: string;
   keyProvider: string;
   keyId: string;
-  counts: { providers: number; proxies: number; routes: number };
+  counts: {
+    providers: number;
+    proxies: number;
+    routes: number;
+    identities: number;
+  };
+};
+
+/**
+ * The ten scopes a client identity may hold.
+ *
+ * Duplicated from `@bayz/identity` deliberately: the dashboard must not depend on a
+ * server package, which is the same rule the Flux Core failure categories follow.
+ * Drift surfaces as a scope the UI cannot offer, not as a security hole — the server
+ * revalidates every scope it receives.
+ */
+export const CLIENT_SCOPE_NAMES = [
+  "chat.completions",
+  "models.read",
+  "usage.read",
+  "providers.read",
+  "providers.write",
+  "proxies.read",
+  "proxies.write",
+  "routes.read",
+  "routes.write",
+  "admin",
+] as const;
+
+export type ClientScopeName = (typeof CLIENT_SCOPE_NAMES)[number];
+
+export const CLIENT_PRESET_NAMES = [
+  "opencode",
+  "hermes",
+  "antigravity",
+  "generic-openai",
+] as const;
+
+export type ClientPresetName = (typeof CLIENT_PRESET_NAMES)[number];
+
+/**
+ * Default scopes per preset.
+ *
+ * Data only, exactly as `packages/gateway/src/presets.ts` is. A preset seeds the
+ * create form; it never constrains what the operator can then choose.
+ */
+export const PRESET_SCOPES: Readonly<Record<ClientPresetName, readonly ClientScopeName[]>> = {
+  opencode: ["chat.completions", "models.read"],
+  hermes: ["chat.completions", "models.read"],
+  antigravity: ["chat.completions", "models.read"],
+  "generic-openai": ["chat.completions", "models.read"],
+};
+
+/**
+ * What the API returns for an identity.
+ *
+ * There is no key field, and no fingerprint. A fingerprint would be a verifier for
+ * an offline guessing attack against the key, and the display name already lets an
+ * operator tell two identities apart.
+ */
+export type IdentityView = {
+  id: string;
+  displayName: string;
+  scopes: string[];
+  preset: string | undefined;
+  revoked: boolean;
+  expiresAt: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | undefined;
+};
+
+export type CreateIdentityBody = {
+  id: string;
+  displayName: string;
+  scopes: string[];
+  preset?: string;
+  expiresAt?: string;
+};
+
+export type UpdateIdentityBody = {
+  displayName?: string;
+  scopes?: string[];
+  expiresAt?: string | null;
+};
+
+/** A creation or rotation response. The key appears here and nowhere else. */
+export type IdentityWithKey = {
+  identity: IdentityView;
+  key: string;
 };
 
 export type ChatMessage = {

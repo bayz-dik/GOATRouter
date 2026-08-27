@@ -10,7 +10,7 @@ const STATUS: RuntimeStatus = {
   driver: "node:sqlite",
   keyProvider: "environment",
   keyId: "kek_c8459bb637e8a8108b3e145d28c96e68",
-  counts: { providers: 2, proxies: 1, routes: 3 },
+  counts: { providers: 2, proxies: 1, routes: 3, identities: 0 },
 };
 
 describe("StatusPanel", () => {
