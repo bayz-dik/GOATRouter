@@ -194,17 +194,43 @@ default, because the route no longer follows whatever the provider does next.
 `RouteView` gained the `forceDirect: boolean` the repository has carried since Task 1; the
 route row now renders the effective proxy in place of the raw `proxyId` column, and
 `routes-panel.test.tsx` needed `forceDirect` in its fixture.
-- [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0; `node scripts/dashboard-smoke.mjs` exits 0.
-- [ ] Commit — `feat: show effective Bayz proxy assignment in the dashboard`
+
+Also verified for this task: `node scripts/dashboard-smoke.mjs` — 48/48 PASS.
 
 ### Task 7 — Multi-proxy UX smoke
 
 **Create:** `scripts/proxy-ux-smoke.mjs`
 
-- [ ] Non-mocked: real listener, two real CONNECT proxies, one real SOCKS5 proxy, twelve real loopback provider origins. Prove: create all three proxies through the API; bulk-assign proxy A to twelve providers in one call; a chat through each provider traverses proxy A (assert each proxy's connect log); bulk-reassign six providers to proxy B in one call and prove the split; set three to Direct and prove no tunnel; a route override beats the provider default; `usage` reports the correct counts; deleting proxy B degrades its providers to Direct without breaking them; scan db/wal/shm/logs/responses for both proxy passwords — zero occurrences.
-- [ ] Verify: `node scripts/proxy-ux-smoke.mjs` exits 0.
+- [x] Non-mocked: real listener, two real CONNECT proxies, one real SOCKS5 proxy, twelve real loopback provider origins. Prove: create all three proxies through the API; bulk-assign proxy A to twelve providers in one call; a chat through each provider traverses proxy A (assert each proxy's connect log); bulk-reassign six providers to proxy B in one call and prove the split; set three to Direct and prove no tunnel; a route override beats the provider default; `usage` reports the correct counts; deleting proxy B degrades its providers to Direct without breaking them; scan db/wal/shm/logs/responses for both proxy passwords — zero occurrences.
+- [x] Verify: `node scripts/proxy-ux-smoke.mjs` exits 0 — **87/87 checks PASS**.
 - [ ] Verify full gate: `npm run runtime:verify`; every smoke script; `git diff --check`.
-- [ ] Commit — `test: add Bayz multi-proxy UX smoke`
+- [x] Commit — `test: add Bayz multi-proxy UX smoke`
+
+**Ordering deviation, recorded deliberately.** The amendment below says 6a–6c run
+*before* Task 7 so the UX smoke can cover them. The proxy half of Task 7 was written
+first because it depends only on 9E Tasks 1–6, which were complete, and leaving it
+unwritten would have meant no non-mocked proof for work already committed. The
+**Amended Task 7 additions** (free-only economics against real origins) remain open and
+are the correct place for that coverage; they are still gated on 6a–6c.
+
+**What the script proves, mechanically.** Every "where did traffic go" claim reads the
+proxies' own CONNECT logs, keyed by origin port, rather than a router return value: an
+in-process assertion can show a function returned `"assigned"`, but only a real tunnel
+shows twelve providers egressing through A and then six of them actually moving to B.
+The leak scan carries a positive control — `fleet-1` **is** asserted present in the
+database bytes — so a scan that silently read an empty buffer cannot pass.
+
+Two additions beyond the plan text: cross-contamination is asserted absent (proxy A's
+CONNECT preambles never contain proxy B's password, and neither carries the provider
+credential), and `forceDirect` on a route is proven to beat a proxied provider with no
+CONNECT logged anywhere.
+
+One real defect the smoke caught, which no in-process test had: a non-ASCII provider
+credential (`«…»`) makes Node reject the upstream `Authorization` header with
+`ERR_INVALID_CHAR`, surfacing as a 500 `internal_error` with the cause visible only in
+the attempt log. That was a fault in the smoke's own fixture, not in the router, but it
+is exactly the class of failure a mocked test cannot see — the header never reaches a
+socket there.
 
 ## Completion checklist
 
