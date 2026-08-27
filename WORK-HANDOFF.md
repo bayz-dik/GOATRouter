@@ -16,7 +16,10 @@
   - 9A Universal Client Gateway: **COMPLETE**, Tasks 1–6.
   - 9B Streaming + Tool Calling: **COMPLETE**, Tasks 1–8.
   - 9C Per-Client Security: **COMPLETE**, Tasks 1–8.
-  - 9D–9L: **NOT STARTED.**
+  - 9D Custom Provider Completeness: **COMPLETE**, Tasks 1–7 plus amendment 5a/5b.
+    Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
+    plan texts record it.
+  - 9E–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -28,12 +31,12 @@
   - `docs/superpowers/plans/2026-08-26-bayz-router-http-api.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-dashboard.md`
   - `docs/superpowers/plans/2026-08-26-bayz-router-usage-telemetry.md`
-- Phase 9 plans (approved, **unexecuted**):
-  - `docs/superpowers/plans/2026-08-27-phase9a-universal-client-gateway.md`
-  - `docs/superpowers/plans/2026-08-27-phase9b-streaming-and-tools.md`
-  - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md`
-  - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md`
-  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`
+- Phase 9 plans (approved; 9A–9D **executed**, checkboxes ticked in the plan files):
+  - `docs/superpowers/plans/2026-08-27-phase9a-universal-client-gateway.md` — DONE
+  - `docs/superpowers/plans/2026-08-27-phase9b-streaming-and-tools.md` — DONE
+  - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md` — DONE
+  - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
+  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — NEXT
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
@@ -813,18 +816,60 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9A Universal Client Gateway | COMPLETE | `@bayz/gateway` 74 tests |
 | 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
-| 9D–9L | NOT STARTED | — |
+| 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
+| 9E–9L | NOT STARTED | — |
 
-### Measured totals after 9C
+### Measured totals after 9D
 
-- `@bayz/contracts` 3 · `@bayz/security` 6 · `@bayz/storage` 166 · `@bayz/telemetry` 55
-- `@bayz/identity` 69 · `@bayz/gateway` 74 · `@bayz/providers` 111 · `@bayz/proxy` 105
-- `@bayz/router` 245 · `@bayz/server` 212 · `@bayz/dashboard` 269 across 18 files
+- `@bayz/contracts` 3 · `@bayz/security` 6 · `@bayz/storage` 170 · `@bayz/telemetry` 55
+- `@bayz/identity` 69 · `@bayz/gateway` 74 · `@bayz/providers` **256** · `@bayz/proxy` 105
+- `@bayz/router` 245 · `@bayz/server` **227** · `@bayz/dashboard` **286** across 19 files
 - `npm run runtime:verify` exits 0; 11 build targets.
-- Smokes: storage 42/42 · provider 36/36 · proxy 39/39 · router 46/46 · api **70/70**
-  · usage 119/119 · dashboard 48/48 · **stream 63/63** · **identity 74/74**.
-- Schema is **v6** (`client_identities`, `identity_audit`). Read from
-  `TARGET_SCHEMA_VERSION` — no test hardcodes it any more.
+- Smokes: storage 42/42 · provider 36/36 · proxy 39/39 · router 46/46 · api 70/70
+  · usage 119/119 · dashboard 48/48 · stream 63/63 · identity 74/74 ·
+  **custom-provider 73/73**.
+- Schema is **v7** (`providers.kind` CHECK gains `custom-openai`). Read from
+  `TARGET_SCHEMA_VERSION` — no test hardcodes it.
+
+### 9D as built
+
+- `packages/providers/src/egress.ts` — the SSRF classifier. Parses every numeric IPv4
+  form a resolver accepts (decimal, octal, hex, short), IPv4-mapped IPv6, and the
+  metadata names. Loopback and private are **opt-in per provider**; link-local,
+  metadata, multicast, and reserved are refused with no flag able to permit them.
+- `assertRequestEgressAllowed` is the pre-connect check: classify the name, then resolve
+  and classify **every** returned address. Documented as *narrowing* the DNS-rebinding
+  window, not closing it — Node offers no hook between a socket's own resolution and its
+  connect, so the honest guarantee is "an address BAYZ has seen is checked".
+- Enforced at storage write time (create *and* update, against the resulting URL/config
+  pair) and at request time on both discovery paths and the chat transport. Loading a row
+  is deliberately **not** checked, so a pre-9D install with a loopback URL still starts.
+- Custom headers: allowlist by charset, then denylist on the lowercased name. A denied
+  header is a 400 that **names** the header — `ProviderError.detail`, re-validated
+  against a narrow charset rather than trusted. `safeCustomHeaders` filters again at send
+  time, and custom headers are spread *first* so credential and framing headers always
+  win.
+- `custom-openai` kind via migration v7, which rebuilds `providers` because SQLite cannot
+  alter a CHECK. The rebuild needs foreign keys suspended: `DROP TABLE providers` with
+  enforcement on cascades every dependent route away. Found by a failing test. The runner
+  gained `suspendForeignKeys` and verifies the end state with `PRAGMA foreign_key_check`
+  before committing.
+- `capabilities.ts` — `detectCapabilities` and `testConnection`. `unknown` is a real
+  value: `tools` is `yes`/`no` only from the operator's declaration, `streaming` is
+  always `unknown`, and `capped` is reported separately from `modelCount`.
+- `economics.ts` — six values, four free. Free requires *proof*; `UNKNOWN` and `PAID` are
+  not free. A missing priced dimension is `UNKNOWN`, prices are matched strictly rather
+  than `parseFloat`-ed, a negative price is `UNKNOWN`, and a `:free` id suffix alone
+  never yields free. A source-scan test forbids any price literal or model-name table.
+- `discoverModelCatalogue` is additive; `discoverModels` keeps `string[]`. Both share one
+  fetch, validator, filter, and collector, so they cannot disagree about which models
+  exist.
+- `ProviderView.config` carries `headerNames`, not `headers`. `ProviderManager.
+  requestConfig(id)` is the one explicit, greppable way to reach header values, used only
+  by the router.
+- Three new routes, all `providers.write` because each dials an upstream: `/test`,
+  `/capabilities`, `/catalogue`. A failed test is `200 { ok: false, failureCode }`.
+
 
 ### New packages
 
