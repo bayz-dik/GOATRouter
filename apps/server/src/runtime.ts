@@ -1,4 +1,5 @@
 import { redactSecrets } from "@bayz/security";
+import { createIdentityManager, type IdentityManager } from "@bayz/identity";
 import { createProviderManager, type ProviderManager } from "@bayz/providers";
 import { createProxyManager, type ProxyManager } from "@bayz/proxy";
 import { createRouter, type Router } from "@bayz/router";
@@ -22,10 +23,16 @@ export type BayzRuntimeStatus = {
   driver: string;
   keyProvider: string;
   keyId: string;
-  counts: { providers: number; proxies: number; routes: number };
+  counts: {
+    providers: number;
+    proxies: number;
+    routes: number;
+    identities: number;
+  };
 };
 
 export type BayzRuntime = {
+  readonly identities: IdentityManager;
   readonly providers: ProviderManager;
   readonly proxies: ProxyManager;
   readonly router: Router;
@@ -101,6 +108,10 @@ export function createBayzRuntime(
       );
     }
 
+    const identities = createIdentityManager({
+      storage,
+      ...(options.logger === undefined ? {} : { logger: options.logger }),
+    });
     const providers = createProviderManager({
       storage,
       ...(options.logger === undefined ? {} : { logger: options.logger }),
@@ -138,6 +149,7 @@ export function createBayzRuntime(
     });
 
     return {
+      identities,
       providers,
       proxies,
       router,
@@ -158,6 +170,7 @@ export function createBayzRuntime(
             providers: providers.listProviders().length,
             proxies: proxies.listProxies().length,
             routes: router.listRoutes().length,
+            identities: identities.list().length,
           },
         }) as BayzRuntimeStatus;
       },

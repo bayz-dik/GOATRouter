@@ -5,6 +5,7 @@ import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
 import type { IdentityResolver } from "./principal.js";
+import { requireScope } from "./scopes.js";
 import { installSecurityHeaders } from "./security-headers.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerProviderRoutes } from "./routes/providers.js";
@@ -58,15 +59,26 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
 
   if (options.apiToken !== undefined) {
+    // When a runtime is present its identity manager is the resolver, so client
+    // keys work without any caller wiring them up. An explicit `resolveIdentity`
+    // still wins, which is what lets a test present a synthetic principal.
+    const resolveIdentity =
+      options.resolveIdentity ??
+      (options.runtime === undefined
+        ? undefined
+        : (presented: string) => {
+            const identity = options.runtime!.identities.verifyKey(presented);
+            return identity === undefined
+              ? undefined
+              : { id: identity.id, scopes: new Set(identity.scopes) };
+          });
     installApiGuards(app, {
       apiToken: options.apiToken,
+      ...(resolveIdentity === undefined ? {} : { resolveIdentity }),
       ...(options.rateLimit === undefined ? {} : { rateLimit: options.rateLimit }),
       ...(options.allowedHosts === undefined
         ? {}
         : { allowedHosts: options.allowedHosts }),
-      ...(options.resolveIdentity === undefined
-        ? {}
-        : { resolveIdentity: options.resolveIdentity }),
     });
   }
   installContentTypeGuard(app);
@@ -79,7 +91,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   if (options.runtime !== undefined) {
     const runtime = options.runtime;
-    app.get("/api/status", async () => runtime.describe());
+    app.get("/api/status", async (request, reply) =>
+      // Status reports schema version, driver, key fingerprint, and counts. That is
+      // operational shape, not content, but it is still more than a chat client has
+      // any need for.
+      requireScope(request, reply, "providers.read") ?? runtime.describe(),
+    );
     registerProviderRoutes(app, runtime);
     registerProxyRoutes(app, runtime);
     registerRouteRoutes(app, runtime);

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { errorEnvelope, handleDomain } from "../http-errors.js";
+import { requireScope } from "../scopes.js";
 import type { BayzRuntime } from "../runtime.js";
 
 /**
@@ -47,6 +48,10 @@ export function registerUsageRoutes(app: FastifyInstance, runtime: BayzRuntime):
   app.get<{ Querystring: { period?: string } }>(
     "/api/usage/summary",
     async (request, reply) => {
+      const denied = requireScope(request, reply, "usage.read");
+      if (denied !== undefined) {
+        return denied;
+      }
       const period = parsePeriod(request.query.period);
       if (period === undefined) {
         return reply
@@ -88,6 +93,10 @@ export function registerUsageRoutes(app: FastifyInstance, runtime: BayzRuntime):
   app.get<{ Querystring: { limit?: string } }>(
     "/api/usage/requests",
     async (request, reply) => {
+      const denied = requireScope(request, reply, "usage.read");
+      if (denied !== undefined) {
+        return denied;
+      }
       const limit = parseLimit(request.query.limit);
       if (limit === undefined) {
         return reply
@@ -124,6 +133,10 @@ export function registerUsageRoutes(app: FastifyInstance, runtime: BayzRuntime):
   app.get<{ Querystring: { period?: string } }>(
     "/api/usage/providers",
     async (request, reply) => {
+      const denied = requireScope(request, reply, "usage.read");
+      if (denied !== undefined) {
+        return denied;
+      }
       const period = parsePeriod(request.query.period);
       if (period === undefined) {
         return reply
@@ -186,7 +199,10 @@ export function registerUsageRoutes(app: FastifyInstance, runtime: BayzRuntime):
     },
   );
 
+  // Purging usage history is a destructive management action, not a read. A
+  // `usage.read` client must not be able to erase an operator's audit trail.
   app.delete("/api/usage/requests", async (request, reply) =>
+    requireScope(request, reply, "admin") ??
     handleDomain(request, reply, () => {
       runtime.usage.purge();
       // 204 either way: idempotent, and identical whether or not rows existed, so

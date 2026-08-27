@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { assertProviderId } from "@bayz/providers";
 import { errorEnvelope, handleDomain, sendDomainError } from "../http-errors.js";
+import { requireScope } from "../scopes.js";
 import type { BayzRuntime } from "../runtime.js";
 
 /**
@@ -29,12 +30,14 @@ export function registerProviderRoutes(
   const validId = (id: string): string => assertProviderId(id);
 
   app.get("/api/providers", async (request, reply) =>
+    requireScope(request, reply, "providers.read") ??
     handleDomain(request, reply, () => ({
       providers: runtime.providers.listProviders(),
     })),
   );
 
   app.post("/api/providers", async (request, reply) =>
+    requireScope(request, reply, "providers.write") ??
     handleDomain(request, reply, () => {
       const created = runtime.providers.createProvider(request.body as never);
       void reply.code(201);
@@ -43,18 +46,21 @@ export function registerProviderRoutes(
   );
 
   app.get<{ Params: { id: string } }>("/api/providers/:id", async (request, reply) =>
+    requireScope(request, reply, "providers.read") ??
     handleDomain(request, reply, () =>
       runtime.providers.requireProvider(validId(request.params.id)),
     ),
   );
 
   app.patch<{ Params: { id: string } }>("/api/providers/:id", async (request, reply) =>
+    requireScope(request, reply, "providers.write") ??
     handleDomain(request, reply, () =>
       runtime.providers.updateProvider(validId(request.params.id), request.body as never),
     ),
   );
 
   app.delete<{ Params: { id: string } }>("/api/providers/:id", async (request, reply) =>
+    requireScope(request, reply, "providers.write") ??
     handleDomain(request, reply, () => {
       runtime.providers.deleteProvider(validId(request.params.id));
       // 204 whether or not a row existed: a caller learns nothing about which ids
@@ -67,6 +73,10 @@ export function registerProviderRoutes(
   app.put<{ Params: { id: string } }>(
     "/api/providers/:id/credential",
     async (request, reply) => {
+      const denied = requireScope(request, reply, "providers.write");
+      if (denied !== undefined) {
+        return denied;
+      }
       const value = readSecretValue(request.body);
       if (value === undefined) {
         return reply
@@ -92,6 +102,7 @@ export function registerProviderRoutes(
   app.delete<{ Params: { id: string } }>(
     "/api/providers/:id/credential",
     async (request, reply) =>
+      requireScope(request, reply, "providers.write") ??
       handleDomain(request, reply, () => {
         runtime.providers.deleteCredential(validId(request.params.id));
         void reply.code(204);
@@ -102,6 +113,7 @@ export function registerProviderRoutes(
   app.post<{ Params: { id: string } }>(
     "/api/providers/:id/discover",
     async (request, reply) =>
+      requireScope(request, reply, "providers.write") ??
       handleDomain(request, reply, async () => ({
         models: await runtime.providers.discoverModels(validId(request.params.id)),
       })),

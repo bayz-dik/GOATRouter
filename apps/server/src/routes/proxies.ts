@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { assertProxyId } from "@bayz/proxy";
 import { errorEnvelope, handleDomain, sendDomainError } from "../http-errors.js";
+import { requireScope } from "../scopes.js";
 import type { BayzRuntime } from "../runtime.js";
 
 /**
@@ -25,10 +26,12 @@ export function registerProxyRoutes(app: FastifyInstance, runtime: BayzRuntime):
   const validId = (id: string): string => assertProxyId(id);
 
   app.get("/api/proxies", async (request, reply) =>
+    requireScope(request, reply, "proxies.read") ??
     handleDomain(request, reply, () => ({ proxies: runtime.proxies.listProxies() })),
   );
 
   app.post("/api/proxies", async (request, reply) =>
+    requireScope(request, reply, "proxies.write") ??
     handleDomain(request, reply, () => {
       const created = runtime.proxies.createProxy(request.body as never);
       void reply.code(201);
@@ -37,16 +40,19 @@ export function registerProxyRoutes(app: FastifyInstance, runtime: BayzRuntime):
   );
 
   app.get<{ Params: { id: string } }>("/api/proxies/:id", async (request, reply) =>
+    requireScope(request, reply, "proxies.read") ??
     handleDomain(request, reply, () => runtime.proxies.requireProxy(validId(request.params.id))),
   );
 
   app.patch<{ Params: { id: string } }>("/api/proxies/:id", async (request, reply) =>
+    requireScope(request, reply, "proxies.write") ??
     handleDomain(request, reply, () =>
       runtime.proxies.updateProxy(validId(request.params.id), request.body as never),
     ),
   );
 
   app.delete<{ Params: { id: string } }>("/api/proxies/:id", async (request, reply) =>
+    requireScope(request, reply, "proxies.write") ??
     handleDomain(request, reply, () => {
       runtime.proxies.deleteProxy(validId(request.params.id));
       // Idempotent, and identical whether or not the id existed, so a delete
@@ -57,6 +63,10 @@ export function registerProxyRoutes(app: FastifyInstance, runtime: BayzRuntime):
   );
 
   app.put<{ Params: { id: string } }>("/api/proxies/:id/password", async (request, reply) => {
+    const denied = requireScope(request, reply, "proxies.write");
+    if (denied !== undefined) {
+      return denied;
+    }
     const value = readSecretValue(request.body);
     if (value === undefined) {
       return reply
@@ -77,6 +87,7 @@ export function registerProxyRoutes(app: FastifyInstance, runtime: BayzRuntime):
   app.delete<{ Params: { id: string } }>(
     "/api/proxies/:id/password",
     async (request, reply) =>
+      requireScope(request, reply, "proxies.write") ??
       handleDomain(request, reply, () => {
         runtime.proxies.deletePassword(validId(request.params.id));
         void reply.code(204);
@@ -85,6 +96,7 @@ export function registerProxyRoutes(app: FastifyInstance, runtime: BayzRuntime):
   );
 
   app.post<{ Params: { id: string } }>("/api/proxies/:id/check", async (request, reply) =>
+    requireScope(request, reply, "proxies.write") ??
     handleDomain(request, reply, () => runtime.proxies.checkProxy(validId(request.params.id))),
   );
 }

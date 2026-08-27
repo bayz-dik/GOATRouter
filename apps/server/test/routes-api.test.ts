@@ -259,7 +259,8 @@ test("the status endpoint reports counts and no key material", async (t) => {
   assert.equal(response.statusCode, 200);
   const body = response.json();
   assert.equal(body.schemaVersion, TARGET_SCHEMA_VERSION);
-  assert.deepEqual(body.counts, { providers: 1, proxies: 0, routes: 1 });
+  // `identities` added in 9C. A count is operational shape, not credential data.
+  assert.deepEqual(body.counts, { providers: 1, proxies: 0, routes: 1, identities: 0 });
   assert.equal(response.body.includes("sk-status-endpoint-secret"), false);
   assert.equal(response.body.includes(KEY), false);
   assert.equal(response.body.includes(TOKEN), false);

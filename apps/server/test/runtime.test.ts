@@ -91,7 +91,7 @@ test("the status summary reports operational facts and no key material", () => {
     assert.equal(status.driver, "node:sqlite");
     assert.equal(status.keyProvider, "environment");
     assert.match(String(status.keyId), /^kek_[0-9a-f]{32}$/);
-    assert.deepEqual(status.counts, { providers: 1, proxies: 1, routes: 1 });
+    assert.deepEqual(status.counts, { providers: 1, proxies: 1, routes: 1, identities: 0 });
 
     const serialized = JSON.stringify(status);
     assert.equal(serialized.includes("sk-status-secret"), false);
