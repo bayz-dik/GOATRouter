@@ -202,33 +202,41 @@ export function createIdentityManager(
         return undefined;
       }
 
-      for (const identity of repository.list()) {
-        // Usability is checked before the comparison so a revoked or expired key
-        // cannot match at all, rather than matching and then being filtered.
-        if (!repository.isUsable(identity.id)) {
+      // Ids, not views. `list()` interprets `scopes_json` and throws on a corrupt
+      // row, so walking views here would let one tampered record lock every client
+      // out of authentication. Each identity is resolved individually and fails
+      // closed on its own.
+      for (const id of repository.listIds()) {
+        if (!repository.isUsable(id)) {
+          // Checked before the comparison so a revoked or expired key cannot match
+          // at all, rather than matching and then being filtered.
           continue;
         }
         let stored: string | undefined;
         try {
-          stored = readKeyForComparison(identity.id);
+          stored = readKeyForComparison(id);
         } catch {
-          // A corrupt key cannot authenticate. Failing closed for this identity
-          // rather than for the whole request keeps one damaged row from locking
-          // every client out.
+          // A corrupt key cannot authenticate.
           continue;
         }
         if (stored === undefined) {
           continue;
         }
-        if (keysMatch(stored, presented)) {
-          repository.touch(identity.id);
-          repository.audit({
-            identityId: identity.id,
-            action: "authenticated",
-            outcome: "allowed",
-          });
-          return identity;
+        if (!keysMatch(stored, presented)) {
+          continue;
         }
+        let identity: IdentityView;
+        try {
+          identity = repository.require(id);
+        } catch {
+          // The key matched but the row cannot be interpreted, so there is no
+          // trustworthy scope set to authorize with. Failing closed is the only
+          // safe answer.
+          return undefined;
+        }
+        repository.touch(id);
+        repository.audit({ identityId: id, action: "authenticated", outcome: "allowed" });
+        return identity;
       }
       // No audit row: attributing a rejection to an identity would require guessing
       // which one was being targeted, and a wrong guess pollutes that identity's

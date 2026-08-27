@@ -93,6 +93,15 @@ export interface IdentityRepository {
   get(id: string): IdentityView | undefined;
   require(id: string): IdentityView;
   list(): IdentityView[];
+  /**
+   * Ids only, with no scope interpretation.
+   *
+   * The auth path needs this rather than `list()`: one row with a corrupt
+   * `scopes_json` makes `list()` throw, and if authentication walked the full list
+   * a single tampered row would lock every client out. Iterating ids lets each
+   * identity fail closed on its own.
+   */
+  listIds(): string[];
   update(id: string, patch: UpdateIdentityInput): IdentityView;
   revoke(id: string): IdentityView;
   delete(id: string): boolean;
@@ -283,6 +292,14 @@ export function createIdentityRepository(
           .prepare("SELECT * FROM client_identities ORDER BY id")
           .all() as Record<string, unknown>[]
       ).map(toView);
+    },
+
+    listIds(): string[] {
+      return (
+        db
+          .prepare("SELECT id FROM client_identities ORDER BY id")
+          .all() as Record<string, unknown>[]
+      ).map((row) => String(row.id));
     },
 
     update(id: string, patch: UpdateIdentityInput): IdentityView {
