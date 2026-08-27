@@ -19,7 +19,9 @@
   - 9D Custom Provider Completeness: **COMPLETE**, Tasks 1–7 plus amendment 5a/5b.
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
-  - 9E–9L: **NOT STARTED.**
+  - 9E Multi-Proxy Easy UX: **IN PROGRESS.** Tasks 1–2 **COMPLETE**. Task 3 is next
+    and **NOT STARTED**. See "Phase 9E resume point" below for the exact next step.
+  - 9F–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -36,7 +38,8 @@
   - `docs/superpowers/plans/2026-08-27-phase9b-streaming-and-tools.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
-  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — NEXT
+  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — **IN PROGRESS,
+    Tasks 1–2 done, Task 3 next**
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
@@ -817,7 +820,122 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
-| 9E–9L | NOT STARTED | — |
+| 9E Multi-Proxy Easy UX | **Tasks 1–2 COMPLETE** | `@bayz/router` 261 tests, migrations v8 + v9 |
+| 9F–9L | NOT STARTED | — |
+
+## Phase 9E resume point
+
+**This is the authoritative next-step section. Read it before anything else.**
+
+### State
+
+- **Last completed task:** 9E Task 2 — proxy resolution order in the router.
+  Committed at `16c6a47`.
+- **Exact current task:** none in progress. The tree is **clean and fully GREEN**.
+- **RED/GREEN/DIRTY:** **GREEN, committed, nothing dirty.** `git status --short` is
+  empty and `git diff --check` is clean.
+- **Last command result:** `@bayz/router` 261 pass / 0 fail, `@bayz/storage` 178 pass,
+  `@bayz/server` 227 pass; `tsc --noEmit` clean for router, storage, server, providers;
+  `router-smoke` 46/46, `api-smoke` 70/70, `stream-smoke` 63/63, `usage-smoke` 119/119.
+- **Exact next step:** start **9E Task 3 — bulk assignment API**, per
+  `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
+  `apps/server/test/proxy-bulk-api.test.ts` RED first.
+
+### What Tasks 1–2 built, and the decisions behind it
+
+**Migration v8** — `providers.proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL`,
+plus `providers_proxy_idx`. Added with `ALTER TABLE ... ADD COLUMN`, which SQLite permits
+for a REFERENCES column when the default is NULL, so no rebuild and no foreign-key
+suspension were needed (unlike v7, which had to rebuild to widen a CHECK). `SET NULL` not
+`CASCADE`: cascading would delete the operator's providers, and orphan their credentials,
+because they happened to share a proxy.
+
+**Migration v9** — `routes.force_direct INTEGER NOT NULL DEFAULT 0 CHECK (force_direct IN
+(0,1))`.
+
+> **Plan deviation, already recorded in the 9E plan text.** The plan proposed expressing
+> force-direct as `proxyId: null` on the route. That does not work: an inheriting route
+> already stores `proxy_id IS NULL`, so the two states would be the same row and
+> indistinguishable after a reload. Hence a separate column. A sentinel `proxy_id` value
+> was the other option and was rejected — it would break the foreign key and put a magic
+> string in a reference column. On the API, `proxyId: null` in an update keeps its old
+> meaning (return to inheriting) and `forceDirect: true` is the new, distinct request.
+
+**Provider repository** (`packages/providers/src/repository.ts`):
+
+- `proxyId?: string` on the record; `undefined` means direct. No `""` alternative — a
+  second way to say "direct" would compare truthily somewhere.
+- On update, `null` = set direct, `undefined` = leave alone. Collapsing them would make
+  renaming a provider silently drop its proxy.
+- Proxy existence is checked with a query, not left to the foreign key, so an unknown
+  proxy is a domain `invalid_provider_config` (→ 400) rather than a driver error (→ 500).
+- `providersUsingProxy(id)` and `assignProxy(id | null, ids)`. Assign validates and
+  deduplicates everything before writing, then writes in a transaction: one bad id fails
+  the whole call. Bounded at `MAX_PROXY_ASSIGN_BATCH = 200`; an empty batch is refused
+  rather than reported as "0 changed".
+- The proxy id alphabet is **duplicated** from `@bayz/proxy` rather than imported.
+  `@bayz/providers` does not depend on `@bayz/proxy`, and adding the dependency to reach
+  one regex would invert the layering — the router composes the two. The foreign key is
+  the backstop.
+- A stored proxy id that no longer matches the alphabet loads as direct rather than
+  failing the row: the reference is not security-bearing, and refusing to load would take
+  the provider's credential offline over a cosmetic problem.
+
+**Router** (`packages/router/src/router.ts`): one pure
+`effectiveProxyId(route, provider)` — `forceDirect ? undefined : route.proxyId ??
+provider.proxyId`. Every consumer reads it: the agent, all telemetry fields, the
+`x-bayz-proxy` header, and the streamed chunk metadata. The provider is read **per
+attempt**, not cached, so a bulk reassignment is live on the next request.
+
+**Behavioural rule worth not re-litigating:** deleting a proxy degrades its providers to
+direct, but *disabling* one **fails the attempt**. An operator who disabled a proxy has
+not consented to their traffic leaving directly — that would be an unannounced
+deanonymisation. This matches what a route-level proxy already did.
+
+### Two test-expectation corrections made during Task 2
+
+Recorded so the next executor does not repeat them:
+
+- Telemetry events are keyed `kind`, not `event`.
+- `proxied` is a **log** field, not a telemetry field. The telemetry boundary
+  (`packages/telemetry/src/events.ts`) carries `proxyId` and derives the boolean, so
+  `proxied` must be asserted on the logger output.
+
+### Files touched by Tasks 1–2 (all committed)
+
+`packages/storage/src/migrations.ts` · `packages/storage/test/migrations.test.ts` ·
+`packages/providers/src/repository.ts` · `packages/providers/src/manager.ts` ·
+`packages/providers/src/index.ts` · `packages/providers/test/provider-proxy.test.ts`
+(new) · `packages/providers/test/repository.test.ts` ·
+`packages/router/src/repository.ts` · `packages/router/src/router.ts` ·
+`packages/router/test/proxy-resolution.test.ts` (new) ·
+`packages/router/test/repository.test.ts` · `packages/router/test/selection.test.ts` ·
+`docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`
+
+### Pinned counts a later change will trip
+
+Both are deliberately **exact**, so a content-bearing or credential-bearing column
+cannot be added silently:
+
+- `providers` row key count = **9** (`packages/providers/test/repository.test.ts`).
+- `routes` row key count = **10** (`packages/router/test/repository.test.ts`).
+- Plus the sorted column-set assertions in `packages/storage/test/migrations.test.ts`.
+
+### Not yet done in 9E
+
+Tasks 3–7 and the free-only amendment (6a/6b/6c) are untouched. Note that 6a/6b add a
+further migration — it takes the **next free version, v10** — and depend on 9D Tasks 5a
+and 5b, which are complete.
+
+### Measured totals after 9E Task 2
+
+- `@bayz/router` **261** · `@bayz/storage` **178** · `@bayz/server` 227 ·
+  `@bayz/providers` 276 · `@bayz/dashboard` 286
+- Schema head is **v9**. Read from `TARGET_SCHEMA_VERSION`; no test hardcodes it.
+- Smokes re-run after Task 2: router 46/46 · api 70/70 · stream 63/63 · usage 119/119 ·
+  storage 42/42 · provider 36/36.
+
+---
 
 ### Measured totals after 9D
 
