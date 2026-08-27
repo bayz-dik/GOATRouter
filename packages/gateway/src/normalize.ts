@@ -16,6 +16,8 @@ export type NormalizedChatRequest = {
   maxTokens?: unknown;
   topP?: unknown;
   stop?: unknown[];
+  tools?: unknown;
+  toolChoice?: unknown;
 };
 
 export type ChatResultForClient = {
@@ -24,6 +26,7 @@ export type ChatResultForClient = {
   content: string;
   finishReason: string | undefined;
   model: string | undefined;
+  toolCalls?: unknown;
   usage:
     | {
         promptTokens: number | undefined;
@@ -50,7 +53,12 @@ const FIELD_MAP = new Map<string, keyof NormalizedChatRequest | null>([
   ["max_tokens", "maxTokens"],
   ["top_p", "topP"],
   ["stop", "stop"],
+  ["tools", "tools"],
+  ["tool_choice", "toolChoice"],
   ["stream", null],
+  // Consumed by the profile, which already recorded whether parallel calls were
+  // requested. Forwarding it would duplicate one decision in two places.
+  ["parallel_tool_calls", null],
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -157,7 +165,11 @@ export function denormalizeResponse(
   model: string | null;
   choices: Array<{
     index: number;
-    message: { role: string; content: string };
+    message: {
+      role: string;
+      content: string | null;
+      tool_calls?: unknown;
+    };
     finish_reason: string | null;
   }>;
   usage?: {
@@ -180,7 +192,16 @@ export function denormalizeResponse(
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: result.content },
+        message: {
+          role: "assistant",
+          // `null` when the assistant only called tools, matching the OpenAI wire
+          // format. An empty string would make a client render a blank reply.
+          content:
+            result.toolCalls !== undefined && result.content.length === 0
+              ? null
+              : result.content,
+          ...(result.toolCalls === undefined ? {} : { tool_calls: result.toolCalls }),
+        },
         finish_reason: result.finishReason ?? null,
       },
     ],

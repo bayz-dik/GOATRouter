@@ -51,6 +51,10 @@ const STATUS_BY_CODE: Record<string, number> = {
 
   // Not implemented
   unsupported_operation: 501,
+  // The request was well-formed and the capability is real, but the provider this
+  // model routes to cannot do it. 501 matches `unsupported_operation`: the remedy is
+  // to configure a capable provider, not to fix the request.
+  tools_unsupported: 501,
 
   // Upstream / transport
   unreachable: 502,

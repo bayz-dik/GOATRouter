@@ -202,6 +202,7 @@ export function registerChatRoutes(app: FastifyInstance, runtime: BayzRuntime): 
         finishReason: result.finishReason,
         model: result.model,
         usage: result.usage,
+        ...(result.toolCalls === undefined ? {} : { toolCalls: result.toolCalls }),
       });
     });
   });
