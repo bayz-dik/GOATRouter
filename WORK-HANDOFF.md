@@ -19,7 +19,7 @@
   - 9D Custom Provider Completeness: **COMPLETE**, Tasks 1–7 plus amendment 5a/5b.
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
-  - 9E Multi-Proxy Easy UX: **IN PROGRESS.** Tasks 1–2 **COMPLETE**. Task 3 is next
+  - 9E Multi-Proxy Easy UX: **IN PROGRESS.** Tasks 1–3 **COMPLETE**. Task 4 is next
     and **NOT STARTED**. See "Phase 9E resume point" below for the exact next step.
   - 9F–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -820,7 +820,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9B Streaming + Tool Calling | COMPLETE | `@bayz/router` 245 tests, `stream-smoke` 63/63 |
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
-| 9E Multi-Proxy Easy UX | **Tasks 1–2 COMPLETE** | `@bayz/router` 261 tests, migrations v8 + v9 |
+| 9E Multi-Proxy Easy UX | **Tasks 1–3 COMPLETE** | `@bayz/router` 261 tests, `@bayz/server` 239 tests, migrations v8 + v9 |
 | 9F–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -829,17 +829,41 @@ Authoritative resume point. Everything below is measured, not asserted.
 
 ### State
 
-- **Last completed task:** 9E Task 2 — proxy resolution order in the router.
-  Committed at `16c6a47`.
+- **Last completed task:** 9E Task 3 — bulk proxy assignment API.
 - **Exact current task:** none in progress. The tree is **clean and fully GREEN**.
-- **RED/GREEN/DIRTY:** **GREEN, committed, nothing dirty.** `git status --short` is
-  empty and `git diff --check` is clean.
-- **Last command result:** `@bayz/router` 261 pass / 0 fail, `@bayz/storage` 178 pass,
-  `@bayz/server` 227 pass; `tsc --noEmit` clean for router, storage, server, providers;
-  `router-smoke` 46/46, `api-smoke` 70/70, `stream-smoke` 63/63, `usage-smoke` 119/119.
-- **Exact next step:** start **9E Task 3 — bulk assignment API**, per
-  `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
-  `apps/server/test/proxy-bulk-api.test.ts` RED first.
+- **RED/GREEN/DIRTY:** **GREEN, committed, nothing dirty.**
+- **Last command result:** `@bayz/server` 239 pass / 0 fail; `tsc --noEmit -p apps/server`
+  clean; `api-smoke` 70/70.
+- **Exact next step:** start **9E Task 4 — proxy panel lifecycle and test connection**,
+  per `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md`. Write
+  `apps/dashboard/test/proxies-panel-ux.test.tsx` RED first.
+
+### Task 3 as built
+
+Three routes on `apps/server/src/routes/proxies.ts`: `POST /api/proxies/:id/assign`,
+`POST /api/proxies/:id/unassign`, `GET /api/proxies/:id/usage`. The domain work was
+already done in Task 1 (`assignProxy`, `providersUsingProxy`, `MAX_PROXY_ASSIGN_BATCH`
+= 200), so this task is the HTTP boundary and its two undecided questions:
+
+- An unknown provider **inside the batch** answers `invalid_request` (400). Letting the
+  domain's `provider_not_found` through would answer 404, and on this URL 404 already
+  means *the proxy* is missing — the operator would check the wrong resource. Exactly
+  one code is translated; every other domain error passes through untouched.
+- `usage.routeCount` counts routes **pinned** to the proxy (`routes.proxy_id`), not
+  routes inheriting it via their provider. An inheriting route follows its provider, so
+  counting it would double-count what `providerCount` already reports.
+- `assign` echoes `proxyEnabled` and `notes: ["proxy_disabled"]` when the proxy is off —
+  staging config before enabling is legitimate, but a route through a disabled proxy
+  **fails** rather than going direct, so the operator is told.
+- `unassign` reports `detachedFromProxy`: after the write nothing distinguishes "was on
+  this proxy" from "was already direct".
+- Body shape is exactly `{ providerIds: string[] }`, extra keys refused. Id alphabet
+  validation stays in `@bayz/providers` — duplicating it at the route would give two
+  places to keep in step.
+
+`scope-enforcement.test.ts` gained the three routes and its exact `/api/` route count
+moved **37 → 40**. That count is deliberately exact: a route added without a scope
+decision must fail there.
 
 ### What Tasks 1–2 built, and the decisions behind it
 
@@ -923,7 +947,7 @@ cannot be added silently:
 
 ### Not yet done in 9E
 
-Tasks 3–7 and the free-only amendment (6a/6b/6c) are untouched. Note that 6a/6b add a
+Tasks 4–7 and the free-only amendment (6a/6b/6c) are untouched. Note that 6a/6b add a
 further migration — it takes the **next free version, v10** — and depend on 9D Tasks 5a
 and 5b, which are complete.
 

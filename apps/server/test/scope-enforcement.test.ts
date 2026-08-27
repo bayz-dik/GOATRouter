@@ -104,6 +104,12 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   { method: "PUT", url: "/api/proxies/x1/password", scope: "proxies.write" },
   { method: "DELETE", url: "/api/proxies/x1/password", scope: "proxies.write" },
   { method: "POST", url: "/api/proxies/x1/check", scope: "proxies.write" },
+  // 9E. Bulk assignment writes to `providers.proxy_id`, so it needs `proxies.write`
+  // rather than `providers.write`: the operator's intent is "put this fleet behind
+  // this proxy", and the proxy is the resource being spent.
+  { method: "POST", url: "/api/proxies/x1/assign", scope: "proxies.write" },
+  { method: "POST", url: "/api/proxies/x1/unassign", scope: "proxies.write" },
+  { method: "GET", url: "/api/proxies/x1/usage", scope: "proxies.read" },
   { method: "GET", url: "/api/routes", scope: "routes.read" },
   { method: "POST", url: "/api/routes", scope: "routes.write" },
   { method: "GET", url: "/api/routes/r1", scope: "routes.read" },
@@ -158,7 +164,7 @@ test("every registered API route is covered by this suite", async (t) => {
   assert.ok(registered.length >= 29, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    37,
+    40,
     "the management surface changed size without a scope decision",
   );
 });

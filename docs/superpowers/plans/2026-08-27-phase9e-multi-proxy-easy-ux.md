@@ -65,11 +65,27 @@ POST /api/proxies/:id/unassign   { providerIds: string[] }
 GET  /api/proxies/:id/usage
 ```
 
-- [ ] RED `proxy-bulk-api.test.ts`: assign accepts up to 200 ids and refuses more; every id is validated pre-SQL and one bad id fails the whole call **atomically** (assert no partial assignment); assigning to an unknown provider is `400`, not a silent skip; unassign sets those providers to direct; `usage` returns `{ providerCount, routeCount, providerIds }` with ids but no password and no credential; all three require `proxies.write` (or `proxies.read` for usage); assigning a disabled proxy is allowed but the response notes it (an operator may stage config before enabling); a duplicate id in the array is deduplicated rather than applied twice.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
-- [ ] Commit — `feat: add Bayz bulk proxy assignment API`
+- [x] RED `proxy-bulk-api.test.ts`: assign accepts up to 200 ids and refuses more; every id is validated pre-SQL and one bad id fails the whole call **atomically** (assert no partial assignment); assigning to an unknown provider is `400`, not a silent skip; unassign sets those providers to direct; `usage` returns `{ providerCount, routeCount, providerIds }` with ids but no password and no credential; all three require `proxies.write` (or `proxies.read` for usage); assigning a disabled proxy is allowed but the response notes it (an operator may stage config before enabling); a duplicate id in the array is deduplicated rather than applied twice.
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
+- [x] Commit — `feat: add Bayz bulk proxy assignment API`
+
+**As built — two decisions the plan did not settle.**
+
+1. **An unknown provider in the batch is `invalid_request` (400), not `provider_not_found`
+   (404).** The plan asked for 400 without saying how. `assignProxy` raises
+   `provider_not_found`, which maps to 404 — but on `/api/proxies/:id/assign` a 404
+   already means *the proxy* is missing, so passing it through would point the operator
+   at the wrong resource. The route translates that one code and leaves every other
+   domain error alone.
+2. **`usage.routeCount` counts only routes *pinned* to the proxy** (`routes.proxy_id`),
+   not routes that reach it by inheriting from their provider. An inheriting route
+   follows whatever its provider is assigned, so counting it would double-count the
+   provider already reported in `providerCount` and would change without the route
+   changing. `unassign` also reports `detachedFromProxy` — how many of the submitted
+   ids were actually on this proxy — because after the write nothing distinguishes
+   "was on this proxy" from "was already direct".
 
 ### Task 4 — Proxy panel: full lifecycle and test connection
 
