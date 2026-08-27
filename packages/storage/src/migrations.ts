@@ -26,8 +26,9 @@ export type Migration = {
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
  * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
  * telemetry, v6 per-client identities with a metadata-only audit trail, v7 the
- * `custom-openai` provider kind, v8 the provider-level proxy default, and v9 the
- * route-level force-direct flag. None of them
+ * `custom-openai` provider kind, v8 the provider-level proxy default, v9 the
+ * route-level force-direct flag, and v10 free-only routing plus the model
+ * catalogue. None of them
  * holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
@@ -317,6 +318,44 @@ export const MIGRATIONS: readonly Migration[] = [
        */
       `ALTER TABLE routes
          ADD COLUMN force_direct INTEGER NOT NULL DEFAULT 0 CHECK (force_direct IN (0, 1))`,
+    ],
+  },
+  {
+    version: 10,
+    statements: [
+      /*
+       * FREE-FIRST becomes enforceable (spec §25).
+       *
+       * Two changes, one version, because they are one decision: a route may refuse to
+       * spend money, and the router needs somewhere to read the evidence from.
+       *
+       * `free_only` DEFAULTS TO 1 — ON. §25 rule 6 makes paid routing opt-in, and a
+       * default of 0 would invert that: every route created by an older client, and
+       * every row migrated from v9, would silently be allowed to spend. Existing rows
+       * take the default too, asserted explicitly in the migration tests rather than
+       * left to SQLite's documented behaviour.
+       *
+       * `model_catalogue` holds an id and a classification. It is deliberately NOT
+       * content-bearing: no prompt, no completion, no pricing value, no description. A
+       * pinning test asserts the four-column set so a later phase cannot quietly add a
+       * `description` column and turn this into a cache of upstream prose.
+       *
+       * ON DELETE CASCADE is right here, unlike `providers.proxy_id`: a catalogue row is
+       * *about* a provider and means nothing without it, whereas a provider means plenty
+       * without a proxy.
+       */
+      `ALTER TABLE routes
+         ADD COLUMN free_only INTEGER NOT NULL DEFAULT 1 CHECK (free_only IN (0, 1))`,
+      `CREATE TABLE model_catalogue (
+         provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+         model TEXT NOT NULL,
+         economics TEXT NOT NULL,
+         discovered_at TEXT NOT NULL,
+         PRIMARY KEY (provider_id, model)
+       )`,
+      // The free aggregate reads by classification across providers, so that is what is
+      // indexed. Reading by provider is already served by the primary key.
+      `CREATE INDEX model_catalogue_economics_idx ON model_catalogue (economics)`,
     ],
   },
 ];

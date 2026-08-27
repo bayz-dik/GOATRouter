@@ -30,7 +30,12 @@ export {
   type RouteRepository,
   type UpdateRouteInput,
 } from "./repository.js";
-export { resolveCandidates, selectRoute } from "./selection.js";
+export {
+  filterFreeCandidates,
+  isFreeCandidate,
+  resolveCandidates,
+  selectRoute,
+} from "./selection.js";
 export {
   MAX_CONTENT_CHARS,
   MAX_MESSAGES,

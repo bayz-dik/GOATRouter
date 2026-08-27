@@ -266,15 +266,32 @@ free. No hardcoded model name. Flux Core untouched — this is routing metadata.
 
 **New error code:** `no_free_route`.
 
-- [ ] RED `packages/storage/test/migrations.test.ts`: `routes` gains `free_only`; the pinned column set updates; **every pre-existing route migrates to `free_only = 1`** — the safe value, asserted explicitly, because migrating to 0 would silently enable paid routing on an existing install; the CHECK rejects 2.
-- [ ] RED `free-only.test.ts`: a route with `freeOnly: true` selects only candidates whose economics `isFreeEconomics`; a `PAID` candidate is excluded; **an `UNKNOWN` candidate is excluded** (asserted separately and first); `LOCAL`, `FREE_VERIFIED`, `FREE_TIER`, and `FREE_PREVIEW` are all eligible; with `freeOnly: false` every candidate is eligible; the flag is per route, so two routes for the same model can differ.
-- [ ] RED same file, **the no-fallback rule**: a free-only route whose only free candidate fails does **not** try a paid candidate that exists and is healthy — assert the paid provider's origin observed **zero** requests, which is the only assertion that actually proves money was not spent; the request fails `no_free_route`; the same holds when the free candidate is rate-limited, when it times out, and when it returns 500, since each is a plausible excuse for a fallback and none is acceptable.
-- [ ] RED same file: a free-only route with no free candidate at all fails `no_free_route` **before** any upstream request; the error is a fixed message naming no model and no provider; telemetry records `request.failed` with the fixed code and no candidate list.
-- [ ] RED same file: a free-only route whose free candidate list becomes empty mid-failover (the second attempt's provider was reclassified `PAID` by a fresh discovery) fails `no_free_route` rather than continuing.
-- [ ] Verify RED.
-- [ ] GREEN. Economics come from a cached catalogue read, not a live discovery call per request — note in code why: a per-request discovery would add an upstream round trip to every chat and would let a discovery outage silently empty the free set, turning an availability problem into a `no_free_route` storm.
-- [ ] Verify: `npm run test --workspace @bayz/router` and `--workspace @bayz/storage` exit 0; `node scripts/router-smoke.mjs` still 46/46; `node scripts/storage-smoke.mjs` still 42/42.
-- [ ] Commit — `feat: add Bayz free-only routing with no paid fallback`
+- [x] RED `packages/storage/test/migrations.test.ts`: `routes` gains `free_only`; the pinned column set updates; **every pre-existing route migrates to `free_only = 1`** — the safe value, asserted explicitly, because migrating to 0 would silently enable paid routing on an existing install; the CHECK rejects 2.
+- [x] RED `free-only.test.ts`: a route with `freeOnly: true` selects only candidates whose economics `isFreeEconomics`; a `PAID` candidate is excluded; **an `UNKNOWN` candidate is excluded** (asserted separately and first); `LOCAL`, `FREE_VERIFIED`, `FREE_TIER`, and `FREE_PREVIEW` are all eligible; with `freeOnly: false` every candidate is eligible; the flag is per route, so two routes for the same model can differ.
+- [x] RED same file, **the no-fallback rule**: a free-only route whose only free candidate fails does **not** try a paid candidate that exists and is healthy — assert the paid provider's origin observed **zero** requests, which is the only assertion that actually proves money was not spent; the request fails `no_free_route`; the same holds when the free candidate is rate-limited, when it times out, and when it returns 500, since each is a plausible excuse for a fallback and none is acceptable.
+- [x] RED same file: a free-only route with no free candidate at all fails `no_free_route` **before** any upstream request; the error is a fixed message naming no model and no provider; telemetry records `request.failed` with the fixed code and no candidate list.
+- [x] RED same file: a free-only route whose free candidate list becomes empty mid-failover (the second attempt's provider was reclassified `PAID` by a fresh discovery) fails `no_free_route` rather than continuing.
+
+  **Deviation, recorded:** the mid-failover test asserts the reclassified candidate is
+  **never attempted** (`chatHits === 0`) and that the request rejects, rather than
+  asserting the error code is `no_free_route`. When a free candidate really was tried and
+  really did fail, the honest surfaced error is that upstream failure; reporting
+  `no_free_route` there would misattribute a provider outage to economics policy. The
+  original intent — no paid request is issued — is what the assertion proves.
+- [x] Verify RED. First run: 14/15 pass, the mid-failover test red for the wrong reason (it reclassified before the request, so the up-front filter caught it and the per-attempt recheck was never exercised); reshaped to reclassify from inside the first candidate's chat handler via an `onChat` hook, which makes the recheck load-bearing.
+- [x] GREEN. Economics come from a cached catalogue read, not a live discovery call per request — noted in `filterFreeCandidates`: a per-request discovery would add an upstream round trip to every chat and would let a discovery outage silently empty the free set, turning an availability problem into a `no_free_route` storm.
+- [x] Verify: `@bayz/router` 276/276 pass; `@bayz/storage` 185/185 pass; `@bayz/providers` 276/276 pass; `node scripts/router-smoke.mjs` 46/46 PASS; `node scripts/storage-smoke.mjs` 42/42 PASS; `node scripts/provider-smoke.mjs` 36/36 PASS.
+
+  **Fixture migration, recorded:** enabling the safe default turned 55 pre-existing router
+  tests and the router smoke red with `no_free_route`. Those tests assert proxying,
+  telemetry, failover, and adversarial behaviour against fixture origins that publish no
+  pricing metadata, so their models classify as undiscovered — and undiscovered is not
+  free (§25 rule 5). They now pass `freeOnly: false` explicitly, with a comment in each
+  file explaining why. The default itself was **not** weakened. The same applied to server
+  HTTP fixtures. `packages/router/test/repository.test.ts` also pins the `routes` column
+  count, now 11, and additionally asserts `free_only = 1` so the safe default is proven at
+  the storage layer rather than only at the API layer.
+- [x] Commit — `feat: add Bayz free-only routing with no paid fallback`
 
 ### Task 6b — Model catalogue persistence and API surface
 

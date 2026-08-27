@@ -10,6 +10,17 @@ import { createProxyManager } from "@bayz/proxy";
 import { openSecretStorage } from "@bayz/storage";
 import { RouterError, createRouter, type ChatChunk, type Router } from "../src/index.js";
 
+/*
+ * Every route in this file sets `freeOnly: false`.
+ *
+ * These tests predate free-only routing and assert proxying, telemetry, failover, and
+ * adversarial behaviour — not economics. Their fixture origins serve chat responses
+ * without a catalogue, so every model here classifies as undiscovered, and an
+ * undiscovered model is not free (spec §25 rule 5). Leaving the schema default of
+ * free-only ON would make all of them fail `no_free_route` for a reason none of them is
+ * about. Free-only enforcement itself is covered in `free-only.test.ts`.
+ */
+
 const KEY = Buffer.alloc(32, 0x31).toString("hex");
 const PROMPT = "ROUTER-STREAM-PROMPT-must-never-be-recorded";
 const CREDENTIAL = "sk-router-stream-credential";
@@ -94,6 +105,7 @@ function seedProvider(
   });
   router.providers.setCredential(id, CREDENTIAL);
   router.createRoute({
+    freeOnly: false,
     id: `route-${id}`,
     model: "stream-model",
     providerId: id,

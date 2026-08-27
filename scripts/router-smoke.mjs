@@ -243,6 +243,12 @@ async function main() {
       });
 
       const route = router.createRoute({
+        // This smoke proves transport, proxying, and failover against fixture origins
+        // that publish no pricing metadata, so every model here is undiscovered — and
+        // undiscovered is not free (spec §25 rule 5). Free-only routing has its own
+        // coverage in `packages/router/test/free-only.test.ts`; leaving the default on
+        // here would fail every chat below for a reason this smoke is not about.
+        freeOnly: false,
         id: "direct",
         model: "gpt-4o",
         providerId: "primary",
@@ -285,6 +291,7 @@ async function main() {
       // A distinct model, because (model, provider_id) is unique by design: the
       // same pair cannot be bound twice, which is what the registry enforces.
       router.createRoute({
+        freeOnly: false,
         id: "viaproxy",
         model: "gpt-4o-mini",
         providerId: "primary",
@@ -307,12 +314,14 @@ async function main() {
 
       section("4. Failover advances past a failing provider");
       router.createRoute({
+        freeOnly: false,
         id: "r-flaky",
         model: "gpt-4o",
         providerId: "flaky",
         priority: 900,
       });
       router.createRoute({
+        freeOnly: false,
         id: "r-backup",
         model: "gpt-4o",
         providerId: "backup",
@@ -328,6 +337,7 @@ async function main() {
       router.updateRoute("r-flaky", { enabled: false });
       router.updateRoute("r-backup", { enabled: false });
       router.createRoute({
+        freeOnly: false,
         id: "r-denied",
         model: "gpt-4o",
         providerId: "denied",

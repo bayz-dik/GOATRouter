@@ -400,10 +400,14 @@ test("stored rows contain no prompt-like or credential-like value", () => {
     ctx.repo.create({ id: "clean", ...BASE });
     const row = ctx.db.prepare("SELECT * FROM routes WHERE id = ?").get("clean");
     assert.ok(row !== undefined);
-    // Ten columns after 9E added `force_direct`. Pinned as an exact count so a column
-    // able to hold a prompt or a credential cannot be added without this failing.
-    assert.equal(Object.keys(row).length, 10);
+    // Eleven columns after 9E added `force_direct` and then `free_only`. Pinned as an
+    // exact count so a column able to hold a prompt or a credential cannot be added
+    // without this failing.
+    assert.equal(Object.keys(row).length, 11);
     assert.equal(row.force_direct, 0);
+    // Free-only is on by default in storage, not just in the API layer: a route
+    // inserted by any path must default to refusing to spend money.
+    assert.equal(row.free_only, 1);
     const serialized = JSON.stringify(row).toLowerCase();
     for (const forbidden of ["bearer", "sk-", "prompt", "message"]) {
       assert.equal(serialized.includes(forbidden), false);

@@ -1,3 +1,4 @@
+import { isFreeEconomics, type ModelEconomics } from "@bayz/providers";
 import { RouterError } from "./errors.js";
 import { assertModelId, matchesModelPattern, patternSpecificity } from "./model.js";
 import type { RouteRecord } from "./repository.js";
@@ -52,4 +53,38 @@ export function selectRoute(
     throw new RouterError("no_route", "select-route");
   }
   return best;
+}
+
+/**
+ * Whether a candidate is eligible for a free-only route.
+ *
+ * Split out and exported so the router, the API layer, and the tests all read the same
+ * rule. The `undefined` case — the provider has no catalogue row for this model — is
+ * **not free**: an undiscovered model is unproven, and treating "we never checked" as
+ * free is exactly the mistake that produces a bill.
+ */
+export function isFreeCandidate(
+  economics: ModelEconomics | undefined,
+): boolean {
+  return economics === undefined ? false : isFreeEconomics(economics);
+}
+
+/**
+ * Narrow candidates to those a free-only route may use.
+ *
+ * A route that is not free-only keeps every candidate: free-only is a per-route
+ * decision, so two routes for the same model can legitimately disagree.
+ *
+ * `lookup` reads a *cached* classification rather than performing discovery. A
+ * per-request discovery call would add an upstream round trip to every chat, and worse,
+ * a discovery outage would empty the free set and turn an availability problem into a
+ * `no_free_route` storm.
+ */
+export function filterFreeCandidates(
+  candidates: readonly RouteRecord[],
+  lookup: (route: RouteRecord) => ModelEconomics | undefined,
+): RouteRecord[] {
+  return candidates.filter(
+    (route) => !route.freeOnly || isFreeCandidate(lookup(route)),
+  );
 }

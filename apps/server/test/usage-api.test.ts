@@ -113,6 +113,15 @@ async function seed(
       id: options.routeId ?? "r1",
       model: options.model ?? "gpt-4o",
       providerId: id,
+      /*
+       * Not free-only.
+       *
+       * This file asserts usage accounting against fixture origins that publish no
+       * pricing metadata, so every model here is undiscovered — and undiscovered is not
+       * free (spec §25 rule 5). The schema's free-only default would refuse every chat
+       * below with `no_free_route`, which is not what these tests measure.
+       */
+      freeOnly: false,
     },
   });
 }

@@ -39,6 +39,15 @@ export type RouteRecord = {
    * NULL column, so the flag is the only thing that can distinguish them.
    */
   forceDirect: boolean;
+  /**
+   * Whether this route may spend money.
+   *
+   * `true` — the default — restricts selection to candidates whose economics are
+   * proven free. It is not a preference: there is no paid fallback when the free
+   * candidates fail, because a fallback would spend money precisely when the operator
+   * was least watching.
+   */
+  freeOnly: boolean;
   priority: number;
   enabled: boolean;
   config: RouteConfig;
@@ -53,6 +62,8 @@ export type CreateRouteInput = {
   proxyId?: string;
   /** Mutually exclusive with `proxyId`: setting both is contradictory intent. */
   forceDirect?: boolean;
+  /** Defaults to `true`. Paid routing is opt-in, per spec §25 rule 6. */
+  freeOnly?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: unknown;
@@ -69,6 +80,14 @@ export type UpdateRouteInput = {
    * one decision.
    */
   forceDirect?: boolean;
+  /**
+   * Turn free-only off (or back on).
+   *
+   * Setting this to `false` is the one patch in this repository that can start costing
+   * the operator money, which is why the server records it as an audit event rather
+   * than treating it as an ordinary field update.
+   */
+  freeOnly?: boolean;
   priority?: number;
   enabled?: boolean;
   config?: unknown;
@@ -200,6 +219,10 @@ function rowToRecord(row: Record<string, unknown>): RouteRecord {
         ? undefined
         : String(row.proxy_id),
     forceDirect: Number(row.force_direct) === 1,
+    // Anything other than an explicit 0 reads as free-only. The CHECK constraint makes
+    // a third value impossible, and defaulting the unreadable case to "may spend" would
+    // be the wrong direction to fail.
+    freeOnly: Number(row.free_only) !== 0,
     priority: Number(row.priority),
     enabled: Number(row.enabled) === 1,
     config,
@@ -273,6 +296,12 @@ export function createRouteRepository(
         input.forceDirect === undefined
           ? false
           : parseEnabled(input.forceDirect, "create-force-direct");
+      // Absent means free-only. §25 rule 6: an older client that knows nothing about
+      // this field must not thereby create a route that can spend money.
+      const freeOnly =
+        input.freeOnly === undefined
+          ? true
+          : parseEnabled(input.freeOnly, "create-free-only");
       if (forceDirect && proxyId !== undefined) {
         // Contradictory: "use this proxy" and "never use a proxy". Picking a winner
         // silently would make the stored config do something the operator did not ask
@@ -308,8 +337,8 @@ export function createRouteRepository(
       db.prepare(
         `INSERT INTO routes
            (id, model, provider_id, proxy_id, priority, enabled, config_json,
-            force_direct, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            force_direct, free_only, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         model,
@@ -319,6 +348,7 @@ export function createRouteRepository(
         enabled ? 1 : 0,
         JSON.stringify(config),
         forceDirect ? 1 : 0,
+        freeOnly ? 1 : 0,
         timestamp,
         timestamp,
       );
@@ -329,6 +359,7 @@ export function createRouteRepository(
         providerId,
         proxyId,
         forceDirect,
+        freeOnly,
         priority,
         enabled,
         config,
@@ -381,6 +412,10 @@ export function createRouteRepository(
       if (forceDirect && proxyId !== undefined) {
         throw new RouterError("invalid_route_config", "proxy-and-force-direct");
       }
+      const freeOnly =
+        patch.freeOnly === undefined
+          ? current.freeOnly
+          : parseEnabled(patch.freeOnly, "update-free-only");
       const priority =
         patch.priority === undefined
           ? current.priority
@@ -401,7 +436,7 @@ export function createRouteRepository(
       db.prepare(
         `UPDATE routes
             SET proxy_id = ?, priority = ?, enabled = ?, config_json = ?,
-                force_direct = ?, updated_at = ?
+                force_direct = ?, free_only = ?, updated_at = ?
           WHERE id = ?`,
       ).run(
         proxyId ?? null,
@@ -409,6 +444,7 @@ export function createRouteRepository(
         enabled ? 1 : 0,
         JSON.stringify(config),
         forceDirect ? 1 : 0,
+        freeOnly ? 1 : 0,
         timestamp,
         current.id,
       );
@@ -417,6 +453,7 @@ export function createRouteRepository(
         ...current,
         proxyId,
         forceDirect,
+        freeOnly,
         priority,
         enabled,
         config,

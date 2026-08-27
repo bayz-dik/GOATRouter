@@ -10,6 +10,17 @@ import { createProxyManager } from "@bayz/proxy";
 import { openSecretStorage, type SecretStorage } from "@bayz/storage";
 import { createRouter, type Router } from "../src/index.js";
 
+/*
+ * Every route in this file sets `freeOnly: false`.
+ *
+ * These tests predate free-only routing and assert proxying, telemetry, failover, and
+ * adversarial behaviour — not economics. Their fixture origins serve chat responses
+ * without a catalogue, so every model here classifies as undiscovered, and an
+ * undiscovered model is not free (spec §25 rule 5). Leaving the schema default of
+ * free-only ON would make all of them fail `no_free_route` for a reason none of them is
+ * about. Free-only enforcement itself is covered in `free-only.test.ts`.
+ */
+
 /**
  * Router telemetry emission.
  *
@@ -127,7 +138,7 @@ test("a successful chat emits an attempt and a completion event", async (t) => {
 
   seedProvider(ctx, "p1", origin.port);
   ctx.router.providers.setCredential("p1", CREDENTIAL);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   await ctx.router.chat(REQUEST);
 
@@ -156,7 +167,7 @@ test("no sentinel appears in any emitted event", async (t) => {
 
   seedProvider(ctx, "p1", origin.port);
   ctx.router.providers.setCredential("p1", CREDENTIAL);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const serialized = JSON.stringify(ctx.events);
@@ -179,7 +190,7 @@ test("every emitted event carries only metadata keys", async (t) => {
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const allowed = new Set([
@@ -214,7 +225,7 @@ test("unknown token counts stay unknown rather than becoming zero", async (t) =>
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const completed = ctx.events.find((event) => event.kind === "request.completed")!;
@@ -237,7 +248,7 @@ test("a malformed upstream usage block degrades to unknown, not zero", async (t)
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const completed = ctx.events.find((event) => event.kind === "request.completed")!;
@@ -263,7 +274,7 @@ test("a genuine zero token count is reported as zero", async (t) => {
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const completed = ctx.events.find((event) => event.kind === "request.completed")!;
@@ -282,7 +293,7 @@ test("a total failure emits a normalized category and no upstream body", async (
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await assert.rejects(ctx.router.chat(REQUEST));
 
   const failed = ctx.events.find((event) => event.kind === "request.failed");
@@ -305,7 +316,7 @@ test("an auth failure is categorized without leaking the credential", async (t) 
 
   seedProvider(ctx, "p1", origin.port);
   ctx.router.providers.setCredential("p1", CREDENTIAL);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await assert.rejects(ctx.router.chat(REQUEST));
 
   const attempt = ctx.events.find((event) => event.kind === "provider.failed")!;
@@ -325,8 +336,8 @@ test("failover emits a failed attempt, a failover marker, and a completion", asy
 
   seedProvider(ctx, "bad", bad.port);
   seedProvider(ctx, "good", good.port);
-  ctx.router.createRoute({ id: "r-bad", model: "gpt-4o", providerId: "bad", priority: 900 });
-  ctx.router.createRoute({ id: "r-good", model: "gpt-4o", providerId: "good", priority: 100 });
+  ctx.router.createRoute({ freeOnly: false, id: "r-bad", model: "gpt-4o", providerId: "bad", priority: 900 });
+  ctx.router.createRoute({ freeOnly: false, id: "r-good", model: "gpt-4o", providerId: "good", priority: 100 });
 
   await ctx.router.chat(REQUEST);
 
@@ -369,6 +380,7 @@ test("combo participation is emitted per provider by safe id", async (t) => {
   origins.forEach((origin, index) => {
     seedProvider(ctx, `p${index}`, origin.port);
     ctx.router.createRoute({
+      freeOnly: false,
       id: `r${index}`,
       model: "gpt-4o",
       providerId: `p${index}`,
@@ -377,6 +389,7 @@ test("combo participation is emitted per provider by safe id", async (t) => {
   });
   seedProvider(ctx, "p-final", good.port);
   ctx.router.createRoute({
+    freeOnly: false,
     id: "r-final",
     model: "gpt-4o",
     providerId: "p-final",
@@ -412,7 +425,7 @@ test("a proxy-bound route reports the proxy by safe id only", async (t) => {
     username: "bayz",
   });
   ctx.router.proxies.setPassword("x1", "proxy-password-sentinel");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1", proxyId: "x1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1", proxyId: "x1" });
 
   // The dial will fail because the origin is not a CONNECT proxy; what matters is
   // that the emitted event names the proxy by id and carries no password.
@@ -437,7 +450,7 @@ test("no route emits a request.failed with the no_route category", async (t) => 
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "claude-3", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "claude-3", providerId: "p1" });
   await assert.rejects(ctx.router.chat(REQUEST));
 
   const failed = ctx.events.find((event) => event.kind === "request.failed");
@@ -455,7 +468,7 @@ test("an invalid request emits no telemetry at all", async (t) => {
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await assert.rejects(ctx.router.chat({ ...REQUEST, stream: true } as never));
 
   // A request that never entered routing produced no routing facts to observe.
@@ -490,7 +503,7 @@ test("a throwing recorder never breaks the chat request", async (t) => {
     baseUrl: `http://127.0.0.1:${origin.port}/v1`,
     config: { allowLoopback: true },
   });
-  router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   // Telemetry is observational: it must never become part of routing correctness.
   const result = await router.chat(REQUEST);
@@ -517,7 +530,7 @@ test("a router with no recorder behaves exactly as before", async (t) => {
     baseUrl: `http://127.0.0.1:${origin.port}/v1`,
     config: { allowLoopback: true },
   });
-  router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   const result = await router.chat(REQUEST);
   assert.equal(result.content, COMPLETION);
@@ -533,7 +546,7 @@ test("logs remain free of prompt, completion, and credential", async (t) => {
 
   seedProvider(ctx, "p1", origin.port);
   ctx.router.providers.setCredential("p1", CREDENTIAL);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST);
 
   const logs = ctx.logs.join("\n");
@@ -551,7 +564,7 @@ test("every event shares the request id of its chat call", async (t) => {
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST, { requestId: "req_supplied_1" });
 
   assert.ok(ctx.events.length >= 2);
@@ -569,7 +582,7 @@ test("a hostile supplied request id is refused rather than recorded", async (t) 
   });
 
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await ctx.router.chat(REQUEST, { requestId: `req ${PROMPT}` } as never);
 
   // A caller-supplied id that is not a safe slug is replaced, never stored.

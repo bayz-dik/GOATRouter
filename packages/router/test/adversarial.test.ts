@@ -10,6 +10,17 @@ import { createProxyManager } from "@bayz/proxy";
 import { databasePath, openSecretStorage, type SecretStorage } from "@bayz/storage";
 import { RouterError, createRouter, type Router } from "../src/index.js";
 
+/*
+ * Every route in this file sets `freeOnly: false`.
+ *
+ * These tests predate free-only routing and assert proxying, telemetry, failover, and
+ * adversarial behaviour — not economics. Their fixture origins serve chat responses
+ * without a catalogue, so every model here classifies as undiscovered, and an
+ * undiscovered model is not free (spec §25 rule 5). Leaving the schema default of
+ * free-only ON would make all of them fail `no_free_route` for a reason none of them is
+ * about. Free-only enforcement itself is covered in `free-only.test.ts`.
+ */
+
 /**
  * Adversarial suite for the router.
  *
@@ -159,7 +170,7 @@ test("prompt and completion bytes are absent from the database files", async () 
       config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     const result = await ctx.router.chat(REQUEST);
     assert.equal(result.content, "COMPLETION-ADVERSARIAL");
   } finally {
@@ -201,7 +212,7 @@ test("logs carry no prompt, completion, or credential", async () => {
       config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     await ctx.router.chat(REQUEST);
 
     const serialized = JSON.stringify(ctx.logs);
@@ -231,7 +242,7 @@ test("a model name cannot escape into the request URL", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4*", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4*", providerId: "p1" });
 
     for (const model of [
       "gpt-4/../../admin",
@@ -284,7 +295,7 @@ test("an upstream cannot inject extra fields into the router result", async () =
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     const result = await ctx.router.chat(REQUEST);
 
     // Router-owned fields win; upstream keys are discarded entirely.
@@ -317,7 +328,7 @@ test("a prototype-polluting upstream payload cannot poison Object.prototype", as
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     const result = await ctx.router.chat(REQUEST);
     assert.equal(result.content, "hi");
     assert.equal(
@@ -348,7 +359,7 @@ test("an enormous upstream response is refused rather than buffered", async () =
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     await assert.rejects(ctx.router.chat(REQUEST), (error: unknown) => {
       const code = (error as { code?: unknown }).code;
       assert.ok(
@@ -377,7 +388,7 @@ test("a route row rewritten with a hostile model fails closed", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     ctx.storage.sql
       .prepare("UPDATE routes SET model = ? WHERE id = ?")
       .run("../../etc/passwd", "r1");
@@ -408,7 +419,7 @@ test("a route row rewritten with a hostile config fails closed", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     ctx.storage.sql
       .prepare("UPDATE routes SET config_json = ? WHERE id = ?")
       .run('{"requestTimeoutMs":1}', "r1");
@@ -455,12 +466,14 @@ test("one provider's credential is never sent to another provider", async () => 
       config: { allowLoopback: true },
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r1",
       model: "gpt-4o",
       providerId: "with-key",
       priority: 900,
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r2",
       model: "gpt-4o",
       providerId: "no-key",
@@ -499,7 +512,7 @@ test("a tampered credential fails closed instead of sending an unauthenticated r
       config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     ctx.storage.corruptForTest("provider:p1:api_key", "ciphertext");
 
     await assert.rejects(ctx.router.chat(REQUEST), (error: unknown) => {
@@ -531,7 +544,7 @@ test("the buffered chat path still refuses a stream flag", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
     await assert.rejects(
       ctx.router.chat({ ...REQUEST, stream: true } as never),

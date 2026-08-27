@@ -8,7 +8,12 @@ import {
   type ProviderCapabilities,
 } from "./capabilities.js";
 import type { ProviderConfig } from "./config.js";
-import { isFreeEconomics } from "./economics.js";
+import {
+  createCatalogueRepository,
+  type CatalogueRepository,
+  type CatalogueRow,
+} from "./catalogue.js";
+import { isFreeEconomics, type ModelEconomics } from "./economics.js";
 import { discoverGeminiCatalogue, discoverGeminiModels } from "./discovery-gemini.js";
 import { discoverOpenAiCatalogue, discoverOpenAiModels } from "./discovery-openai.js";
 import { ProviderError } from "./errors.js";
@@ -106,6 +111,17 @@ export interface ProviderManager {
    */
   discoverModelCatalogue(id: string): Promise<ModelCatalogueEntry[]>;
   /**
+   * Discover, persist, and return the catalogue.
+   *
+   * Separate from `discoverModelCatalogue` so a caller can still probe without writing:
+   * the API's discover endpoint persists, and a capability probe should not.
+   */
+  refreshModelCatalogue(id: string): Promise<ModelCatalogueEntry[]>;
+  /** The cached classification for one model, or `undefined` if never discovered. */
+  modelEconomics(providerId: string, model: string): ModelEconomics | undefined;
+  /** Every free (provider, model) pair known, sorted by model then provider. */
+  listFreeModels(): CatalogueRow[];
+  /**
    * Report what a provider can do.
    *
    * Throws only for a caller error (unknown id, disabled provider). A failed probe is
@@ -143,6 +159,9 @@ export function createProviderManager(
   const { storage, fetcher, now } = options;
   const log: ProviderLogger = options.logger ?? (() => {});
   const repository: ProviderRepository = createProviderRepository(storage.sql, {
+    ...(now === undefined ? {} : { now }),
+  });
+  const catalogue: CatalogueRepository = createCatalogueRepository(storage.sql, {
     ...(now === undefined ? {} : { now }),
   });
 
@@ -352,6 +371,27 @@ export function createProviderManager(
         }),
       );
       return entries;
+    },
+
+    async refreshModelCatalogue(id: string): Promise<ModelCatalogueEntry[]> {
+      const entries = await manager.discoverModelCatalogue(id);
+      const stored = catalogue.replace(assertProviderId(id), entries);
+      log(
+        redactSecrets({
+          event: "provider_catalogue_stored",
+          id,
+          count: stored,
+        }),
+      );
+      return entries;
+    },
+
+    modelEconomics(providerId: string, model: string): ModelEconomics | undefined {
+      return catalogue.get(assertProviderId(providerId), model)?.economics;
+    },
+
+    listFreeModels(): CatalogueRow[] {
+      return catalogue.listFree();
     },
 
     requestConfig(id: string): ProviderConfig {

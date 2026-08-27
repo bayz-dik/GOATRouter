@@ -10,6 +10,17 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { createBayzRuntime, type BayzRuntime } from "../src/runtime.js";
 
+/*
+ * Route fixtures in this file set `freeOnly: false`.
+ *
+ * These tests assert HTTP surface behaviour — status codes, headers, streaming frames,
+ * error envelopes, usage accounting — against fixture origins that publish no pricing
+ * metadata. An undiscovered model is not free (spec §25 rule 5), so the schema's
+ * free-only default would refuse every chat below with `no_free_route` for a reason none
+ * of these tests is about. Free-only enforcement has its own coverage in the router
+ * package and in `economics-api.test.ts`.
+ */
+
 const KEY = Buffer.alloc(32, 0x99).toString("hex");
 const TOKEN = "chat-api-token-0123456789";
 const AUTH = { authorization: `Bearer ${TOKEN}` };
@@ -164,6 +175,7 @@ async function seed(
       id: "r1",
       model: "gpt-4o",
       providerId: "p1",
+      freeOnly: false,
       ...(options.proxyId === undefined ? {} : { proxyId: options.proxyId }),
     },
   });
@@ -411,7 +423,7 @@ test("GET /v1/models lists models from enabled routes only", async (t) => {
     method: "POST",
     url: "/api/routes",
     headers: JSON_AUTH,
-    payload: { id: "r2", model: "gpt-4o-mini", providerId: "p1" },
+    payload: { id: "r2", model: "gpt-4o-mini", providerId: "p1", freeOnly: false },
   });
   await app.inject({
     method: "POST",
@@ -423,7 +435,7 @@ test("GET /v1/models lists models from enabled routes only", async (t) => {
     method: "POST",
     url: "/api/routes",
     headers: JSON_AUTH,
-    payload: { id: "r4", model: "wildcard-*", providerId: "p1" },
+    payload: { id: "r4", model: "wildcard-*", providerId: "p1", freeOnly: false },
   });
 
   const response = await app.inject({ method: "GET", url: "/v1/models", headers: AUTH });

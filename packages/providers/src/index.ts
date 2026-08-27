@@ -81,6 +81,12 @@ export {
   type ModelEconomics,
 } from "./economics.js";
 export {
+  createCatalogueRepository,
+  type CatalogueRepository,
+  type CatalogueRow,
+  type CreateCatalogueRepositoryOptions,
+} from "./catalogue.js";
+export {
   CONNECTION_FAILURE_CODES,
   connectionFailureCodeOf,
   detectCapabilities,

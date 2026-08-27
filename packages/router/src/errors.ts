@@ -6,6 +6,7 @@ export type RouterErrorCode =
   | "route_already_exists"
   | "route_not_found"
   | "no_route"
+  | "no_free_route"
   | "all_routes_failed"
   | "invalid_response"
   | "response_too_large"
@@ -26,6 +27,10 @@ const MESSAGES: Record<RouterErrorCode, string> = {
   route_already_exists: "route_already_exists: that model is already bound to this provider",
   route_not_found: "route_not_found: no route is registered with that id",
   no_route: "no_route: no enabled route matches the requested model",
+  // Names no model, no provider, and no price: the operator needs to know the refusal
+  // was deliberate, and anything more specific would put routing detail into logs.
+  no_free_route:
+    "no_free_route: no free model was available and this route may not spend money",
   all_routes_failed: "all_routes_failed: every candidate route failed",
   invalid_response: "invalid_response: the upstream response could not be interpreted",
   response_too_large: "response_too_large: the upstream response exceeded the byte cap",

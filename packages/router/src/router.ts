@@ -20,7 +20,11 @@ import {
   type RouteRepository,
   type UpdateRouteInput,
 } from "./repository.js";
-import { resolveCandidates } from "./selection.js";
+import {
+  filterFreeCandidates,
+  isFreeCandidate,
+  resolveCandidates,
+} from "./selection.js";
 import { sendChatRequest, sendChatRequestStreaming } from "./transport.js";
 import type { ChatChunk } from "./chunk.js";
 
@@ -393,20 +397,54 @@ export function createRouter(options: CreateRouterOptions): Router {
         throw new RouterError("no_route", "chat-select");
       }
 
+      // Free-only filtering happens here, before any socket is opened, so a route that
+      // may not spend money never reaches a paid provider even once. Refusing after an
+      // attempt would already have cost the operator the request.
+      const eligible = filterFreeCandidates(candidates, (route) =>
+        providers.modelEconomics(route.providerId, route.model),
+      );
+      if (eligible.length === 0) {
+        emit({
+          kind: "request.failed",
+          routingMode: "direct",
+          // The fixed code and nothing else: no candidate list, no model, no price.
+          failureCategory: "no_free_route",
+          latencyMs: 0,
+          attempts: 0,
+        });
+        throw new RouterError("no_free_route", "chat-free-only");
+      }
+
       // Mode is a routing fact: more than one candidate means the request could
       // legitimately land elsewhere, and a second attempt makes it a failover.
-      const baseMode = candidates.length >= 2 ? "combo" : "direct";
+      const baseMode = eligible.length >= 2 ? "combo" : "direct";
       let attempts = 0;
       let lastFailure: unknown;
       let skipped = 0;
 
-      for (const route of candidates) {
+      for (const route of eligible) {
         const provider = providers.getProvider(route.providerId);
         if (provider === undefined || !provider.enabled) {
           // A disabled provider is a configuration state, not a failed attempt,
           // so it is skipped without consuming an attempt or a network call.
           skipped += 1;
           continue;
+        }
+        // Re-checked per attempt, not just once up front: a fresh discovery can
+        // reclassify a model to PAID between the first attempt and the failover, and
+        // continuing on the stale reading is how a free-only route ends up spending.
+        if (
+          route.freeOnly &&
+          !isFreeCandidate(providers.modelEconomics(route.providerId, route.model))
+        ) {
+          emit({
+            kind: "request.failed",
+            routingMode: attempts > 0 ? "failover" : baseMode,
+            failureCategory: "no_free_route",
+            latencyMs: 0,
+            attempts,
+          });
+          throw new RouterError("no_free_route", "chat-free-only-recheck");
         }
         // Resolved once per candidate and used for every telemetry field below, so
         // what an operator reads is what the socket did. `attempt` calls the same pure
@@ -584,16 +622,46 @@ export function createRouter(options: CreateRouterOptions): Router {
         throw new RouterError("no_route", "chat-stream-select");
       }
 
-      const baseMode = candidates.length >= 2 ? "combo" : "direct";
+      // The streaming path enforces free-only identically. A gap here would be the
+      // easier one to miss and the more expensive one to have: streaming is what a
+      // chat client uses by default.
+      const eligible = filterFreeCandidates(candidates, (route) =>
+        providers.modelEconomics(route.providerId, route.model),
+      );
+      if (eligible.length === 0) {
+        emit({
+          kind: "request.failed",
+          routingMode: "direct",
+          failureCategory: "no_free_route",
+          latencyMs: 0,
+          attempts: 0,
+        });
+        throw new RouterError("no_free_route", "chat-stream-free-only");
+      }
+
+      const baseMode = eligible.length >= 2 ? "combo" : "direct";
       let attempts = 0;
       let lastFailure: unknown;
       let skipped = 0;
 
-      for (const route of candidates) {
+      for (const route of eligible) {
         const provider = providers.getProvider(route.providerId);
         if (provider === undefined || !provider.enabled) {
           skipped += 1;
           continue;
+        }
+        if (
+          route.freeOnly &&
+          !isFreeCandidate(providers.modelEconomics(route.providerId, route.model))
+        ) {
+          emit({
+            kind: "request.failed",
+            routingMode: attempts > 0 ? "failover" : baseMode,
+            failureCategory: "no_free_route",
+            latencyMs: 0,
+            attempts,
+          });
+          throw new RouterError("no_free_route", "chat-stream-free-only-recheck");
         }
         // Same resolver as the buffered path, for the same reason: the header written
         // before the first body byte has to match what the socket did.

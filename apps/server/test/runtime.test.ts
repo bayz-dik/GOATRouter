@@ -6,6 +6,17 @@ import test from "node:test";
 import { TARGET_SCHEMA_VERSION } from "@bayz/storage";
 import { createBayzRuntime } from "../src/runtime.js";
 
+/*
+ * Route fixtures in this file set `freeOnly: false`.
+ *
+ * These tests assert HTTP surface behaviour — status codes, headers, streaming frames,
+ * error envelopes — against fixture origins that publish no pricing metadata. An
+ * undiscovered model is not free (spec §25 rule 5), so the schema's free-only default
+ * would refuse every chat below with `no_free_route` for a reason none of these tests is
+ * about. Free-only enforcement has its own coverage in the router package and in
+ * `economics-api.test.ts`.
+ */
+
 const KEY = Buffer.alloc(32, 0x55).toString("hex");
 
 function freshDir(): string {
@@ -34,7 +45,7 @@ test("one storage handle is shared by all three managers", () => {
       baseUrl: "http://127.0.0.1:1/v1",
       config: { allowLoopback: true },
     });
-    runtime.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    runtime.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.equal(runtime.router.listRoutes().length, 1);
     assert.equal(runtime.providers.listProviders().length, 1);
     assert.equal(runtime.router.providers, runtime.providers);
@@ -86,7 +97,7 @@ test("the status summary reports operational facts and no key material", () => {
     });
     runtime.providers.setCredential("p1", "sk-status-secret");
     runtime.proxies.createProxy({ id: "x1", kind: "socks5", host: "127.0.0.1", port: 1080 });
-    runtime.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    runtime.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
     const status = runtime.describe();
     assert.equal(status.schemaVersion, TARGET_SCHEMA_VERSION);

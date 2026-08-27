@@ -56,6 +56,8 @@ test("a fresh database gains exactly the tables of the current schema", () => {
     assert.deepEqual(tableNames(db), [
       "client_identities",
       "identity_audit",
+      // 9E free-only amendment: model economics, keyed by provider and model.
+      "model_catalogue",
       "providers",
       "proxies",
       "routes",
@@ -357,6 +359,8 @@ test("the routes table binds a model to a provider and stores no prompt", () => 
       // 9E: separates "inherit the provider's proxy" from "never proxy this route".
       // Both have a NULL `proxy_id`, so a flag is the only way to tell them apart.
       "force_direct",
+      // 9E free-only amendment (spec §25): whether this route may spend money.
+      "free_only",
       "id",
       "model",
       "priority",
@@ -1228,7 +1232,15 @@ test("migration v9 migrates every existing route to inherit", () => {
        VALUES ('legacy', 'gpt-4o', 'p1', NULL, 100, 1, '{}', 'created', 'updated')`,
     ).run();
 
-    assert.equal(runMigrations(db), 1);
+    // Pinned to v9 rather than to head: this test is about what v9 does to an existing
+    // row, so a later migration must not change the count it asserts.
+    assert.equal(
+      runMigrations(
+        db,
+        MIGRATIONS.filter((migration) => migration.version <= 9),
+      ),
+      1,
+    );
 
     const route = db.prepare("SELECT * FROM routes WHERE id = 'legacy'").get();
     // Inherit, not force-direct. Migrating to 1 would silently opt every existing route
@@ -1236,6 +1248,188 @@ test("migration v9 migrates every existing route to inherit", () => {
     assert.equal(Number(route?.force_direct), 0);
     assert.equal(route?.created_at, "created");
     assert.equal(route?.priority, 100);
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v10 adds routes.free_only defaulting to ON", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const column = db
+      .prepare("SELECT name, type, `notnull`, dflt_value FROM pragma_table_info('routes')")
+      .all()
+      .find((row) => String(row.name) === "free_only");
+
+    assert.ok(column !== undefined, "routes.free_only must exist");
+    assert.equal(Number(column.notnull), 1);
+    // 1, not 0. Spec §25 rule 6 makes paid routing opt-in; a default of 0 would invert
+    // the requirement and let every route created by an older client spend money.
+    assert.equal(Number(column.dflt_value), 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("routes.free_only is boolean-constrained", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json,
+          force_direct, free_only, created_at, updated_at)
+       VALUES (?, ?, 'p1', NULL, 100, 1, '{}', 0, ?, 't', 't')`,
+    );
+    insert.run("r0", "m0", 0);
+    insert.run("r1", "m1", 1);
+    // A third state would make "may this route spend money" ambiguous, and the
+    // ambiguous reading is the expensive one.
+    assert.throws(() => insert.run("r2", "m2", 2));
+    assert.throws(() => insert.run("r3", "m3", null));
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v10 migrates every existing route to free-only", () => {
+  const db = freshDb();
+  try {
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version <= 9),
+    );
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json,
+          force_direct, created_at, updated_at)
+       VALUES ('legacy', 'gpt-4o', 'p1', NULL, 100, 1, '{}', 0, 'created', 'updated')`,
+    ).run();
+
+    assert.equal(runMigrations(db), 1);
+
+    const route = db.prepare("SELECT * FROM routes WHERE id = 'legacy'").get();
+    // The safe value, asserted explicitly. An upgrade that migrated existing rows to 0
+    // would enable paid routing on an install that never asked for it — the exact
+    // failure §25 exists to prevent, and it would be invisible until the bill arrived.
+    assert.equal(Number(route?.free_only), 1);
+    assert.equal(route?.created_at, "created");
+    assert.equal(Number(route?.force_direct), 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("the model_catalogue table holds a classification and no content", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('model_catalogue')")
+      .all()
+      .map((row) => String(row.name))
+      .sort();
+
+    // Pinned at exactly four. The table exists to answer "is this model free"; a fifth
+    // column would make it a cache of upstream prose, and pricing values or
+    // descriptions are precisely what BAYZ must not become the authority on.
+    assert.deepEqual(columns, ["discovered_at", "economics", "model", "provider_id"]);
+    for (const forbidden of [
+      "prompt",
+      "messages",
+      "content",
+      "body",
+      "completion",
+      "response",
+      "description",
+      "price",
+      "pricing",
+      "cost",
+    ]) {
+      assert.equal(
+        columns.includes(forbidden),
+        false,
+        `model_catalogue must never store ${forbidden}`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("model_catalogue rows are unique per provider and model", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    const insert = db.prepare(
+      `INSERT INTO model_catalogue (provider_id, model, economics, discovered_at)
+       VALUES (?, ?, ?, 't')`,
+    );
+    insert.run("p1", "gpt-4o", "PAID");
+    // A second row for the same pair would let two classifications coexist, and a
+    // reader would get whichever the query happened to return first.
+    assert.throws(() => insert.run("p1", "gpt-4o", "FREE_VERIFIED"));
+    insert.run("p1", "gpt-4o-mini", "FREE_VERIFIED");
+  } finally {
+    db.close();
+  }
+});
+
+test("deleting a provider cascades its catalogue away", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('p1', 'openai-compatible', 'P1', 'https://a.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO model_catalogue (provider_id, model, economics, discovered_at)
+       VALUES ('p1', 'gpt-4o', 'PAID', 't')`,
+    ).run();
+
+    db.prepare("DELETE FROM providers WHERE id = 'p1'").run();
+
+    // CASCADE, unlike `providers.proxy_id`'s SET NULL: a catalogue row is *about* a
+    // provider and means nothing without one, whereas a provider means plenty without
+    // a proxy. Leaving orphans would let a deleted provider's models appear in the
+    // free aggregate.
+    const rows = db.prepare("SELECT * FROM model_catalogue").all();
+    assert.equal(rows.length, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test("a catalogue row requires a provider that exists", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    assert.throws(() =>
+      db
+        .prepare(
+          `INSERT INTO model_catalogue (provider_id, model, economics, discovered_at)
+           VALUES ('ghost', 'gpt-4o', 'PAID', 't')`,
+        )
+        .run(),
+    );
   } finally {
     db.close();
   }

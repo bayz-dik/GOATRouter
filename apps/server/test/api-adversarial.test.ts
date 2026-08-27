@@ -10,6 +10,17 @@ import { databasePath } from "@bayz/storage";
 import { buildApp } from "../src/app.js";
 import { createBayzRuntime, type BayzRuntime } from "../src/runtime.js";
 
+/*
+ * Route fixtures in this file set `freeOnly: false`.
+ *
+ * These tests assert HTTP surface behaviour — status codes, headers, streaming frames,
+ * error envelopes — against fixture origins that publish no pricing metadata. An
+ * undiscovered model is not free (spec §25 rule 5), so the schema's free-only default
+ * would refuse every chat below with `no_free_route` for a reason none of these tests is
+ * about. Free-only enforcement has its own coverage in the router package and in
+ * `economics-api.test.ts`.
+ */
+
 /**
  * Adversarial suite for the HTTP surface.
  *
@@ -221,7 +232,7 @@ test("no response body in a full exercise contains a stored secret", async (t) =
     username: "bayz",
   });
   await call("PUT", "/api/proxies/x1/password", { value: PASSWORD });
-  await call("POST", "/api/routes", { id: "r1", model: "gpt-4o", providerId: "p1" });
+  await call("POST", "/api/routes", { freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   await call("GET", "/api/providers");
   await call("GET", "/api/providers/p1");
   await call("GET", "/api/proxies");
@@ -300,7 +311,10 @@ test("no prompt or secret reaches the database or the logs", async (t) => {
     method: "POST",
     url: "/api/routes",
     headers: JSON_AUTH,
-    payload: { id: "r1", model: "gpt-4o", providerId: "p1" },
+    // Not free-only: this fixture origin publishes no pricing metadata, so the model is
+    // undiscovered, and undiscovered is not free (spec §25 rule 5). The chat below has to
+    // actually reach the upstream for the leak scan that follows to mean anything.
+    payload: { id: "r1", model: "gpt-4o", providerId: "p1", freeOnly: false },
   });
   const chat = await h.app.inject({
     method: "POST",

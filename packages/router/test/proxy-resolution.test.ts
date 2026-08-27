@@ -11,6 +11,17 @@ import { createProxyManager } from "@bayz/proxy";
 import { openSecretStorage, type SecretStorage } from "@bayz/storage";
 import { createRouter, type Router } from "../src/index.js";
 
+/*
+ * Every route in this file sets `freeOnly: false`.
+ *
+ * These tests predate free-only routing and assert proxying, telemetry, failover, and
+ * adversarial behaviour — not economics. Their fixture origins serve chat responses
+ * without a catalogue, so every model here classifies as undiscovered, and an
+ * undiscovered model is not free (spec §25 rule 5). Leaving the schema default of
+ * free-only ON would make all of them fail `no_free_route` for a reason none of them is
+ * about. Free-only enforcement itself is covered in `free-only.test.ts`.
+ */
+
 /**
  * Proxy resolution order: route override → provider default → direct.
  *
@@ -175,6 +186,7 @@ test("a route override beats the provider default", async (t) => {
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
   ctx.router.createRoute({
+    freeOnly: false,
     id: "r1",
     model: "gpt-4o",
     providerId: "p1",
@@ -205,7 +217,7 @@ test("a route with no proxy inherits the provider default", async (t) => {
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   const result = await ctx.router.chat(REQUEST);
   assert.equal(result.proxyId, "provider-proxy");
@@ -229,7 +241,7 @@ test("neither set means direct", async (t) => {
     port: unusedProxy.port,
   });
   seedProvider(ctx, "p1", origin.port);
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   const result = await ctx.router.chat(REQUEST);
   assert.equal(result.proxyId, undefined);
@@ -257,6 +269,7 @@ test("a route forced to direct beats the provider default", async (t) => {
   // clearing a route's `proxyId` would mean "inherit", so an operator could not opt a
   // single route out of a proxied provider at all.
   ctx.router.createRoute({
+    freeOnly: false,
     id: "r1",
     model: "gpt-4o",
     providerId: "p1",
@@ -287,8 +300,9 @@ test("forceDirect and an inherited proxy are distinguishable on the record", (t)
     proxyId: "tunnel",
   });
 
-  const inheriting = ctx.router.createRoute({ id: "r1", model: "a", providerId: "p1" });
+  const inheriting = ctx.router.createRoute({ freeOnly: false, id: "r1", model: "a", providerId: "p1" });
   const forced = ctx.router.createRoute({
+    freeOnly: false,
     id: "r2",
     model: "b",
     providerId: "p1",
@@ -326,6 +340,7 @@ test("forceDirect and an explicit route proxy cannot both be set", (t) => {
   assert.throws(
     () =>
       ctx.router.createRoute({
+        freeOnly: false,
         id: "r1",
         model: "a",
         providerId: "p1",
@@ -347,7 +362,7 @@ test("forceDirect can be set and cleared through update", (t) => {
     displayName: "P1",
     baseUrl: "https://api.example.com/v1",
   });
-  ctx.router.createRoute({ id: "r1", model: "a", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "a", providerId: "p1" });
 
   assert.equal(ctx.router.updateRoute("r1", { forceDirect: true }).forceDirect, true);
   assert.equal(ctx.router.updateRoute("r1", { forceDirect: false }).forceDirect, false);
@@ -372,7 +387,7 @@ test("setting a route proxy clears forceDirect rather than conflicting", (t) => 
     displayName: "P1",
     baseUrl: "https://api.example.com/v1",
   });
-  ctx.router.createRoute({ id: "r1", model: "a", providerId: "p1", forceDirect: true });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "a", providerId: "p1", forceDirect: true });
 
   // Assigning a proxy is unambiguous intent, so it wins and the flag goes. Refusing
   // here would make the operator issue two calls to express one decision.
@@ -397,7 +412,7 @@ test("telemetry records the effective proxy, not the route's raw value", async (
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   await ctx.router.chat(REQUEST);
 
@@ -431,6 +446,7 @@ test("telemetry reports direct for a force-direct route on a proxied provider", 
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
   ctx.router.createRoute({
+    freeOnly: false,
     id: "r1",
     model: "gpt-4o",
     providerId: "p1",
@@ -464,7 +480,7 @@ test("the streaming path resolves the same way", async (t) => {
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   // The origin here answers JSON rather than SSE, so the stream fails — but it fails
   // *after* dialling, which is what this asserts. Two resolution implementations, one
@@ -493,8 +509,8 @@ test("a provider default applies to every route to that provider", async (t) => 
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "model-a", providerId: "p1" });
-  ctx.router.createRoute({ id: "r2", model: "model-b", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "model-a", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r2", model: "model-b", providerId: "p1" });
 
   // This is the whole point of a provider-level default: one decision, every route.
   for (const model of ["model-a", "model-b"]) {
@@ -527,7 +543,7 @@ test("reassigning the provider's proxy takes effect on the next request", async 
     port: second.port,
   });
   seedProvider(ctx, "p1", origin.port, "first");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   await ctx.router.chat(REQUEST);
   ctx.router.providers.assignProxy("second", ["p1"]);
@@ -555,7 +571,7 @@ test("deleting the provider's proxy degrades to direct rather than failing", asy
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   ctx.router.proxies.deleteProxy("provider-proxy");
   const result = await ctx.router.chat(REQUEST);
@@ -581,7 +597,7 @@ test("a disabled provider proxy fails the attempt rather than silently going dir
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", origin.port, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
   ctx.router.proxies.updateProxy("provider-proxy", { enabled: false });
 
   // An operator who disabled a proxy has *not* consented to their traffic leaving
@@ -626,7 +642,7 @@ test("the effective proxy rides on every streamed chunk", async (t) => {
     port: providerProxy.port,
   });
   seedProvider(ctx, "p1", ssePort, "provider-proxy");
-  ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+  ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
   const seen: Array<string | undefined> = [];
   for await (const chunk of ctx.router.chatStream(REQUEST)) {

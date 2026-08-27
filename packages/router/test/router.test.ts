@@ -11,6 +11,17 @@ import { createProxyManager } from "@bayz/proxy";
 import { openSecretStorage, type SecretStorage } from "@bayz/storage";
 import { RouterError, createRouter, type Router } from "../src/index.js";
 
+/*
+ * Every route in this file sets `freeOnly: false`.
+ *
+ * These tests predate free-only routing and assert proxying, telemetry, failover, and
+ * adversarial behaviour — not economics. Their fixture origins serve chat responses
+ * without a catalogue, so every model here classifies as undiscovered, and an
+ * undiscovered model is not free (spec §25 rule 5). Leaving the schema default of
+ * free-only ON would make all of them fail `no_free_route` for a reason none of them is
+ * about. Free-only enforcement itself is covered in `free-only.test.ts`.
+ */
+
 const KEY = Buffer.alloc(32, 0x61).toString("hex");
 const PROMPT = "PROMPT-SENTINEL-must-never-be-persisted-or-logged";
 const CREDENTIAL = "sk-router-credential-must-never-leak";
@@ -137,7 +148,7 @@ test("a chat request completes end to end through a registered route", async () 
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    const route = ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    const route = ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.equal(route.providerId, "p1");
 
     const result = await ctx.router.chat(REQUEST);
@@ -171,7 +182,7 @@ test("the stored credential is attached without ever being returned", async () =
       config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
     const result = await ctx.router.chat(REQUEST);
     assert.equal(result.content, "ok");
@@ -208,6 +219,7 @@ test("a proxy-bound route really traverses the proxy", async () => {
       },
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r1",
       model: "gpt-4o",
       providerId: "p1",
@@ -251,12 +263,14 @@ test("failover advances past an unreachable provider to a working one", async ()
       config: { allowLoopback: true },
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r-dead",
       model: "gpt-4o",
       providerId: "dead",
       priority: 900,
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r-live",
       model: "gpt-4o",
       providerId: "live",
@@ -293,8 +307,8 @@ test("failover advances on rate_limited and on upstream_error", async () => {
         baseUrl: `http://127.0.0.1:${second.port}/v1`,
         config: { allowLoopback: true },
       });
-      ctx.router.createRoute({ id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
-      ctx.router.createRoute({ id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
+      ctx.router.createRoute({ freeOnly: false, id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
+      ctx.router.createRoute({ freeOnly: false, id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
 
       const result = await ctx.router.chat(REQUEST);
       assert.equal(result.content, "recovered", `status ${status} must fail over`);
@@ -326,8 +340,8 @@ test("auth_failed stops immediately instead of trying another provider", async (
       baseUrl: `http://127.0.0.1:${backup.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "denied", priority: 900 });
-    ctx.router.createRoute({ id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "denied", priority: 900 });
+    ctx.router.createRoute({ freeOnly: false, id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
 
     await assert.rejects(
       ctx.router.chat(REQUEST),
@@ -365,8 +379,8 @@ test("an invalid response stops immediately rather than failing over", async () 
       baseUrl: `http://127.0.0.1:${backup.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "broken", priority: 900 });
-    ctx.router.createRoute({ id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "broken", priority: 900 });
+    ctx.router.createRoute({ freeOnly: false, id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
 
     await assert.rejects(
       ctx.router.chat(REQUEST),
@@ -400,8 +414,8 @@ test("when every candidate fails the last real failure is raised", async () => {
       baseUrl: `http://127.0.0.1:${second.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
-    ctx.router.createRoute({ id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
+    ctx.router.createRoute({ freeOnly: false, id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
+    ctx.router.createRoute({ freeOnly: false, id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
 
     await assert.rejects(ctx.router.chat(REQUEST), (error: unknown) => {
       // The real upstream code is preserved instead of being flattened into a
@@ -428,7 +442,7 @@ test("a model with no route is no_route and makes no request", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "claude-3*", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "claude-3*", providerId: "p1" });
 
     await assert.rejects(
       ctx.router.chat(REQUEST),
@@ -453,6 +467,7 @@ test("a disabled route is skipped", async () => {
       config: { allowLoopback: true },
     });
     ctx.router.createRoute({
+      freeOnly: false,
       id: "r1",
       model: "gpt-4o",
       providerId: "p1",
@@ -481,7 +496,7 @@ test("a route whose provider is disabled is skipped", async () => {
       config: { allowLoopback: true },
       enabled: false,
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
     await assert.rejects(
       ctx.router.chat(REQUEST),
@@ -506,7 +521,7 @@ test("an invalid request is refused before any route is consulted", async () => 
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
 
     for (const bad of [
       { ...REQUEST, stream: true },
@@ -542,7 +557,7 @@ test("logs record routing metadata but never the prompt or completion", async ()
       config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     await ctx.router.chat(REQUEST);
 
     const serialized = JSON.stringify(ctx.logs);
@@ -582,7 +597,7 @@ test("a failed attempt is logged with its code and no body", async () => {
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     await assert.rejects(ctx.router.chat(REQUEST));
 
     const attempt = ctx.logs.find(
@@ -608,7 +623,7 @@ test("the prompt is absent from the database after a completed request", async (
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     await ctx.router.chat(REQUEST);
 
     // Nothing anywhere in the schema may hold the prompt.
@@ -642,7 +657,7 @@ test("route management is exposed and delegates to the repository", () => {
       baseUrl: "http://127.0.0.1:1/v1",
       config: { allowLoopback: true },
     });
-    ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
+    ctx.router.createRoute({ freeOnly: false, id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.deepEqual(
       ctx.router.listRoutes().map((route) => route.id),
       ["r1"],

@@ -18,6 +18,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/*
+ * Route creations in this smoke pass `freeOnly: false`.
+ *
+ * The fixture origins here publish no pricing metadata, so their models classify as
+ * undiscovered — and undiscovered is not free (spec §25 rule 5). Free-only is ON by
+ * default in the schema, so leaving it out would refuse every chat below with
+ * `no_free_route`, which is not what this smoke proves. Free-only routing has its own
+ * dedicated coverage in packages/router/test/free-only.test.ts.
+ */
+
 if (!process.env.BAYZ_STREAM_SMOKE_LOADER) {
   const relaunch = spawnSync(
     process.execPath,
@@ -371,7 +381,7 @@ async function main() {
     });
     check("the credential write returned 204", credentialed.status === 204);
     const routed = await call("/api/routes", {
-      body: { id: "sr", model: "smoke-model", providerId: "sse" },
+      body: { id: "sr", model: "smoke-model", providerId: "sse", freeOnly: false },
     });
     check("the streaming route was created", routed.status === 201);
 
@@ -548,7 +558,7 @@ async function main() {
       },
     });
     await call("/api/routes", {
-      body: { id: "dr", model: "smoke-model", providerId: "dead", priority: 900 },
+      body: { id: "dr", model: "smoke-model", providerId: "dead", freeOnly: false, priority: 900 },
     });
 
     const failoverResponse = await call("/v1/chat/completions", {
@@ -636,7 +646,7 @@ async function main() {
       body: { value: CREDENTIAL },
     });
     await call("/api/routes", {
-      body: { id: "tr", model: "tool-model", providerId: "tool" },
+      body: { id: "tr", model: "tool-model", providerId: "tool", freeOnly: false },
     });
 
     const toolDefinitions = [

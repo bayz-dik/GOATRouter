@@ -9,6 +9,17 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { createBayzRuntime, type BayzRuntime } from "../src/runtime.js";
 
+/*
+ * Route fixtures in this file set `freeOnly: false`.
+ *
+ * These tests assert HTTP surface behaviour — status codes, headers, streaming frames,
+ * error envelopes — against fixture origins that publish no pricing metadata. An
+ * undiscovered model is not free (spec §25 rule 5), so the schema's free-only default
+ * would refuse every chat below with `no_free_route` for a reason none of these tests is
+ * about. Free-only enforcement has its own coverage in the router package and in
+ * `economics-api.test.ts`.
+ */
+
 const KEY = Buffer.alloc(32, 0x2c).toString("hex");
 const TOKEN = "tools-api-token-0123456789";
 const AUTH = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
@@ -113,7 +124,7 @@ function seed(runtime: BayzRuntime, port: number, supportsTools?: boolean): void
     },
   });
   runtime.providers.setCredential("tp", CREDENTIAL);
-  runtime.router.createRoute({ id: "tr", model: "tool-model", providerId: "tp" });
+  runtime.router.createRoute({ freeOnly: false, id: "tr", model: "tool-model", providerId: "tp" });
 }
 
 const TOOLS = [

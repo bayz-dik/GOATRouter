@@ -10,6 +10,9 @@ function route(overrides: Partial<RouteRecord> & { id: string }): RouteRecord {
     proxyId: undefined,
     // Inherit the provider's proxy, which is what every route does by default.
     forceDirect: false,
+    // Free-only, matching the schema default: a fixture that spends money by default
+    // would let a paid-selection regression pass here.
+    freeOnly: true,
     priority: 100,
     enabled: true,
     config: { maxAttempts: 2, requestTimeoutMs: 60000 },

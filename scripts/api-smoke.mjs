@@ -17,6 +17,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/*
+ * Route creations in this smoke pass `freeOnly: false`.
+ *
+ * The fixture origins here publish no pricing metadata, so their models classify as
+ * undiscovered — and undiscovered is not free (spec §25 rule 5). Free-only is ON by
+ * default in the schema, so leaving it out would refuse every chat below with
+ * `no_free_route`, which is not what this smoke proves. Free-only routing has its own
+ * dedicated coverage in packages/router/test/free-only.test.ts.
+ */
+
 const APP_ENTRY = fileURLToPath(new URL("../apps/server/src/app.ts", import.meta.url));
 const RUNTIME_ENTRY = fileURLToPath(
   new URL("../apps/server/src/runtime.ts", import.meta.url),
@@ -342,7 +352,7 @@ async function main() {
     check("the password write returned 204", proxyPassword.status === 204);
 
     const routeCreated = await call("POST", "/api/routes", {
-      body: { id: "r1", model: "gpt-4o", providerId: "smoke" },
+      body: { id: "r1", model: "gpt-4o", providerId: "smoke", freeOnly: false },
     });
     check("the route was created", routeCreated.status === 201);
 

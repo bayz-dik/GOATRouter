@@ -27,6 +27,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/*
+ * Route creations in this smoke pass `freeOnly: false`.
+ *
+ * The fixture origins here publish no pricing metadata, so their models classify as
+ * undiscovered — and undiscovered is not free (spec §25 rule 5). Free-only is ON by
+ * default in the schema, so leaving it out would refuse every chat below with
+ * `no_free_route`, which is not what this smoke proves. Free-only routing has its own
+ * dedicated coverage in packages/router/test/free-only.test.ts.
+ */
+
 const APP_ENTRY = fileURLToPath(new URL("../apps/server/src/app.ts", import.meta.url));
 const RUNTIME_ENTRY = fileURLToPath(new URL("../apps/server/src/runtime.ts", import.meta.url));
 const ADAPTER_ENTRY = fileURLToPath(
@@ -353,7 +363,7 @@ async function main() {
       body: { value: PROVIDER_CREDENTIAL_SENTINEL },
     });
     await call("POST", "/api/routes", {
-      body: { id: "r-ok", model: "gpt-4o", providerId: "ok" },
+      body: { id: "r-ok", model: "gpt-4o", providerId: "ok", freeOnly: false },
     });
     const okChat = await chat("gpt-4o");
     check("the chat succeeded", okChat.status === 200);
@@ -377,19 +387,19 @@ async function main() {
     section("4. Unknown, zero, and malformed token usage");
     await seedProvider("unknown", unknown.port);
     await call("POST", "/api/routes", {
-      body: { id: "r-unknown", model: "model-unknown", providerId: "unknown" },
+      body: { id: "r-unknown", model: "model-unknown", providerId: "unknown", freeOnly: false },
     });
     check("the unknown-usage chat succeeded", (await chat("model-unknown")).status === 200);
 
     await seedProvider("zero", zero.port);
     await call("POST", "/api/routes", {
-      body: { id: "r-zero", model: "model-zero", providerId: "zero" },
+      body: { id: "r-zero", model: "model-zero", providerId: "zero", freeOnly: false },
     });
     check("the zero-usage chat succeeded", (await chat("model-zero")).status === 200);
 
     await seedProvider("malformed", malformed.port);
     await call("POST", "/api/routes", {
-      body: { id: "r-malformed", model: "model-malformed", providerId: "malformed" },
+      body: { id: "r-malformed", model: "model-malformed", providerId: "malformed", freeOnly: false },
     });
     check("the malformed-usage chat succeeded", (await chat("model-malformed")).status === 200);
 
@@ -416,7 +426,7 @@ async function main() {
     section("5. Hostile upstream error body");
     await seedProvider("hostile", hostile.port);
     await call("POST", "/api/routes", {
-      body: { id: "r-hostile", model: "model-hostile", providerId: "hostile" },
+      body: { id: "r-hostile", model: "model-hostile", providerId: "hostile", freeOnly: false },
     });
     const hostileChat = await chat("model-hostile");
     check("a 500 upstream surfaces as 502", hostileChat.status === 502);
@@ -445,11 +455,12 @@ async function main() {
         id: "r-fail",
         model: "model-failover",
         providerId: "failing",
+        freeOnly: false,
         priority: 900,
       },
     });
     await call("POST", "/api/routes", {
-      body: { id: "r-recover", model: "model-failover", providerId: "ok", priority: 100 },
+      body: { id: "r-recover", model: "model-failover", providerId: "ok", freeOnly: false, priority: 100 },
     });
     // The ok origin has already served its single scripted reply; it repeats the
     // last step, so the failover lands on a working provider.
@@ -509,6 +520,7 @@ async function main() {
         id: "r-proxy",
         model: "model-proxied",
         providerId: "proxied",
+        freeOnly: false,
         proxyId: "tunnel",
       },
     });

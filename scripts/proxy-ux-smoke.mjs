@@ -438,6 +438,17 @@ async function main() {
           id: routeId(index),
           model: `model-${index}`,
           providerId: providerId(index),
+          /*
+           * Not free-only.
+           *
+           * This smoke proves proxy egress: which CONNECT log a request lands in. Its
+           * origins publish no pricing metadata, so every model is undiscovered, and
+           * undiscovered is not free (spec §25 rule 5). With the schema default left on,
+           * every chat below would be refused `no_free_route` before a socket opened and
+           * the proxy assertions would prove nothing. Free-only routing is covered in
+           * packages/router/test/free-only.test.ts.
+           */
+          freeOnly: false,
         },
       });
       if (route.status !== 201) {
