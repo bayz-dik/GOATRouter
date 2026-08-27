@@ -13,3 +13,9 @@ export {
   type ClientCapability,
   type ClientQuirk,
 } from "./capabilities.js";
+export {
+  deriveProfile,
+  type ClientProfile,
+  type ClientProtocol,
+  type DeriveProfileInput,
+} from "./profile.js";
