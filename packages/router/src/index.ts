@@ -56,6 +56,14 @@ export {
   type TransportProvider,
 } from "./transport.js";
 export {
+  MAX_SSE_LINE_BYTES,
+  MAX_SSE_MALFORMED,
+  MAX_SSE_TOTAL_BYTES,
+  SseLineReader,
+  encodeSseDone,
+  encodeSseEvent,
+} from "./sse.js";
+export {
   createRouter,
   type ChatResult,
   type CreateRouterOptions,
