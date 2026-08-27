@@ -26,3 +26,9 @@ export {
   type ClientPreset,
   type ClientPresetName,
 } from "./presets.js";
+export {
+  denormalizeResponse,
+  normalizeRequest,
+  type ChatResultForClient,
+  type NormalizedChatRequest,
+} from "./normalize.js";
