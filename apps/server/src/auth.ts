@@ -1,6 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ApiErrorResponse } from "@bayz/contracts";
 import { verifyApiToken } from "./api-token.js";
+import {
+  bootstrapPrincipal,
+  type BayzPrincipal,
+  type IdentityResolver,
+} from "./principal.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /**
+     * The authenticated caller, set by the guard hook.
+     *
+     * Present on every guarded route and absent on `/api/health`. Deliberately not
+     * the presented key: a handler has no reason to see a credential, and not
+     * carrying one means no handler can leak one.
+     */
+    principal?: BayzPrincipal;
+  }
+}
 
 /** Requests per fixed window for an authenticated caller. */
 export const DEFAULT_RATE_LIMIT_MAX = 120;
@@ -22,6 +40,13 @@ export type InstallApiGuardsOptions = {
   rateLimit?: RateLimitOptions;
   /** Extra hostnames an operator has explicitly bound the listener to. */
   allowedHosts?: readonly string[];
+  /**
+   * Resolve a presented bearer to a scoped principal.
+   *
+   * Tried *after* the bootstrap token, so the Phase 6 token keeps working exactly
+   * as before and a resolver cannot shadow it. 9C supplies the real registry.
+   */
+  resolveIdentity?: IdentityResolver;
 };
 
 type Counter = {
@@ -180,7 +205,7 @@ export function installApiGuards(
     const match = typeof header === "string" ? BEARER_RE.exec(header) : null;
     // A single, exactly-shaped bearer header is the only accepted form: no query
     // parameter, no Basic, no comma-joined duplicate, no trailing junk.
-    if (match === null || !verifyApiToken(options.apiToken, match[1])) {
+    if (match === null) {
       counter.authFailures += 1;
       return reject(
         reply,
@@ -190,5 +215,28 @@ export function installApiGuards(
         "A valid API token is required",
       );
     }
+
+    const presented = match[1]!;
+    // The bootstrap token is checked first and unconditionally, so an identity
+    // resolver can never shadow or weaken the Phase 6 credential.
+    if (verifyApiToken(options.apiToken, presented)) {
+      request.principal = bootstrapPrincipal();
+      return;
+    }
+
+    const identity = options.resolveIdentity?.(presented);
+    if (identity === undefined) {
+      // A failed identity lookup spends the same auth budget as a bad token, so
+      // guessing a client key is throttled identically to guessing the admin one.
+      counter.authFailures += 1;
+      return reject(
+        reply,
+        request,
+        401,
+        "unauthorized",
+        "A valid API token is required",
+      );
+    }
+    request.principal = identity;
   });
 }

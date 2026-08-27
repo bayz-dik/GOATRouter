@@ -4,6 +4,7 @@ import type { HealthResponse } from "@bayz/contracts";
 import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
+import type { IdentityResolver } from "./principal.js";
 import { installSecurityHeaders } from "./security-headers.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerProviderRoutes } from "./routes/providers.js";
@@ -27,6 +28,8 @@ export type BuildAppOptions = {
   allowedHosts?: readonly string[];
   /** When present, the managed API surface is registered. */
   runtime?: BayzRuntime;
+  /** Resolve a non-bootstrap bearer to a scoped principal; 9C supplies the registry. */
+  resolveIdentity?: IdentityResolver;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -61,6 +64,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       ...(options.allowedHosts === undefined
         ? {}
         : { allowedHosts: options.allowedHosts }),
+      ...(options.resolveIdentity === undefined
+        ? {}
+        : { resolveIdentity: options.resolveIdentity }),
     });
   }
   installContentTypeGuard(app);
