@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { TARGET_SCHEMA_VERSION } from "@bayz/storage";
 import { createBayzRuntime } from "../src/runtime.js";
 
 const KEY = Buffer.alloc(32, 0x55).toString("hex");
@@ -86,7 +87,7 @@ test("the status summary reports operational facts and no key material", () => {
     runtime.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 
     const status = runtime.describe();
-    assert.equal(status.schemaVersion, 5);
+    assert.equal(status.schemaVersion, TARGET_SCHEMA_VERSION);
     assert.equal(status.driver, "node:sqlite");
     assert.equal(status.keyProvider, "environment");
     assert.match(String(status.keyId), /^kek_[0-9a-f]{32}$/);

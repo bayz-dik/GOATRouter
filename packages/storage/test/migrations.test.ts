@@ -54,6 +54,8 @@ test("a fresh database gains exactly the tables of the current schema", () => {
   try {
     runMigrations(db);
     assert.deepEqual(tableNames(db), [
+      "client_identities",
+      "identity_audit",
       "providers",
       "proxies",
       "routes",
@@ -720,6 +722,161 @@ test("readSchemaVersion rejects a non-integer target", () => {
       () => runMigrations(db, [{ version: 1.5, statements: ["SELECT 1"] }]),
       (error: unknown) =>
         error instanceof StorageError && error.code === "storage_unavailable",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v6 adds the client identity tables", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const tables = tableNames(db);
+    assert.ok(tables.includes("client_identities"), "client_identities must exist");
+    assert.ok(tables.includes("identity_audit"), "identity_audit must exist");
+  } finally {
+    db.close();
+  }
+});
+
+test("client_identities has its exact column set and holds no secret", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('client_identities')")
+      .all()
+      .map((row) => String(row.name));
+    assert.deepEqual(columns, [
+      "id",
+      "display_name",
+      "scopes_json",
+      "preset",
+      "revoked",
+      "expires_at",
+      "created_at",
+      "updated_at",
+      "last_used_at",
+    ]);
+    // The key lives in the envelope-encrypted `secrets` table under
+    // `client:<id>:key`, never here. A column able to hold it — even a hash —
+    // would put credential material in a table with no encryption.
+    for (const forbidden of ["key", "secret", "token", "hash", "credential", "password"]) {
+      assert.ok(
+        !columns.some((column) => column.toLowerCase().includes(forbidden)),
+        `client_identities must not have a ${forbidden} column`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("identity_audit is metadata only and cannot hold content", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    const columns = db
+      .prepare("SELECT name FROM pragma_table_info('identity_audit')")
+      .all()
+      .map((row) => String(row.name));
+    assert.deepEqual(columns, [
+      "id",
+      "occurred_at",
+      "identity_id",
+      "action",
+      "scope",
+      "route",
+      "outcome",
+    ]);
+    for (const forbidden of [
+      "key",
+      "secret",
+      "token",
+      "credential",
+      "password",
+      "body",
+      "message",
+      "prompt",
+      "content",
+      "detail",
+      "error",
+    ]) {
+      assert.ok(
+        !columns.some((column) => column.toLowerCase().includes(forbidden)),
+        `identity_audit must not have a ${forbidden} column`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test("the identity audit outcome and action are enum-constrained", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO client_identities
+         (id, display_name, scopes_json, preset, revoked, expires_at, created_at, updated_at, last_used_at)
+       VALUES ('c1', 'Client', '["chat.completions"]', NULL, 0, NULL, 't', 't', NULL)`,
+    ).run();
+
+    const insertAudit = (action: string, outcome: string): void => {
+      db.prepare(
+        `INSERT INTO identity_audit (occurred_at, identity_id, action, scope, route, outcome)
+         VALUES ('t', 'c1', ?, NULL, NULL, ?)`,
+      ).run(action, outcome);
+    };
+    insertAudit("authenticated", "allowed");
+
+    // A free-text action or outcome is how arbitrary error prose gets smuggled into
+    // a table that is supposed to be metadata only.
+    assert.throws(() => insertAudit("arbitrary text", "allowed"));
+    assert.throws(() => insertAudit("authenticated", "sk-leaked-credential"));
+  } finally {
+    db.close();
+  }
+});
+
+test("deleting an identity cascades its audit rows away", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO client_identities
+         (id, display_name, scopes_json, preset, revoked, expires_at, created_at, updated_at, last_used_at)
+       VALUES ('c1', 'Client', '["chat.completions"]', NULL, 0, NULL, 't', 't', NULL)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO identity_audit (occurred_at, identity_id, action, scope, route, outcome)
+       VALUES ('t', 'c1', 'authenticated', NULL, NULL, 'allowed')`,
+    ).run();
+
+    db.prepare("DELETE FROM client_identities WHERE id = 'c1'").run();
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS n FROM identity_audit").get()?.n,
+      0,
+      "an orphaned audit row would outlive the identity it describes",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("the revoked flag is boolean-constrained", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    assert.throws(() =>
+      db
+        .prepare(
+          `INSERT INTO client_identities
+             (id, display_name, scopes_json, preset, revoked, expires_at, created_at, updated_at, last_used_at)
+           VALUES ('c2', 'Client', '[]', NULL, 2, NULL, 't', 't', NULL)`,
+        )
+        .run(),
     );
   } finally {
     db.close();

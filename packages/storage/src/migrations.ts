@@ -10,8 +10,8 @@ export type Migration = {
  * Ordered, hand-rolled migrations. Versions are 1..n with no gaps.
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
- * provider registry, v3 the proxy registry, v4 the route registry, and v5 usage
- * telemetry. None of them holds a credential column, and neither `routes` nor the
+ * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
+ * telemetry, and v6 per-client identities with a metadata-only audit trail. None of them holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
  * `secrets` under `provider:<id>:api_key` and proxy passwords under
@@ -159,6 +159,59 @@ export const MIGRATIONS: readonly Migration[] = [
        )`,
       `CREATE INDEX usage_attempts_occurred_idx ON usage_attempts (occurred_at)`,
       `CREATE INDEX usage_attempts_provider_idx ON usage_attempts (provider_id)`,
+    ],
+  },
+  {
+    version: 6,
+    statements: [
+      /*
+       * Per-client identities.
+       *
+       * There is deliberately no column able to hold key material — not the key,
+       * not a hash of it. The key lives in the envelope-encrypted `secrets` table
+       * under `client:<id>:key`, so a client credential gets exactly the same
+       * custody as a provider credential. A `key_hash` column here would be
+       * plaintext-adjacent data in an unencrypted table, and a migrations test
+       * asserts the column set to keep that from being added later.
+       *
+       * `scopes_json` is revalidated on read rather than trusted: a row edited out
+       * of band must not be able to widen a client's authority.
+       */
+      `CREATE TABLE client_identities (
+         id           TEXT    PRIMARY KEY,
+         display_name TEXT    NOT NULL,
+         scopes_json  TEXT    NOT NULL,
+         preset       TEXT,
+         revoked      INTEGER NOT NULL CHECK (revoked IN (0, 1)),
+         expires_at   TEXT,
+         created_at   TEXT    NOT NULL,
+         updated_at   TEXT    NOT NULL,
+         last_used_at TEXT
+       )`,
+      /*
+       * Identity audit: metadata only.
+       *
+       * `action` and `outcome` are enum-constrained so no free-text error prose can
+       * be smuggled through them, which is the same schema-level backstop the usage
+       * tables use behind the telemetry boundary. `scope` and `route` are bounded
+       * vocabulary in practice but stay TEXT because a route path is operator data,
+       * not upstream data.
+       *
+       * ON DELETE CASCADE: an audit row describing a deleted identity would outlive
+       * the thing it describes and could not be interpreted.
+       */
+      `CREATE TABLE identity_audit (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         occurred_at TEXT    NOT NULL,
+         identity_id TEXT    NOT NULL REFERENCES client_identities(id) ON DELETE CASCADE,
+         action      TEXT    NOT NULL CHECK (action IN
+                     ('created','authenticated','rejected','rotated','revoked','updated','deleted','authorized','denied')),
+         scope       TEXT,
+         route       TEXT,
+         outcome     TEXT    NOT NULL CHECK (outcome IN ('allowed','denied','ok','failed'))
+       )`,
+      `CREATE INDEX identity_audit_occurred_idx ON identity_audit (occurred_at)`,
+      `CREATE INDEX identity_audit_identity_idx ON identity_audit (identity_id)`,
     ],
   },
 ];
