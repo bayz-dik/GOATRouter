@@ -35,6 +35,13 @@ function api(overrides: Partial<Parameters<typeof ProxiesPanel>[0]["api"]> = {})
     setProxyPassword: vi.fn(async () => undefined),
     clearProxyPassword: vi.fn(async () => undefined),
     checkProxy: vi.fn(async () => ({ ok: true, kind: "socks5" as const, latencyMs: 42 })),
+    // 9E Task 4: every row reports what uses the proxy, so the stub answers it.
+    proxyUsage: vi.fn(async (id: string) => ({
+      proxyId: id,
+      providerCount: 0,
+      routeCount: 0,
+      providerIds: [],
+    })),
     ...overrides,
   };
 }
@@ -165,7 +172,7 @@ describe("ProxiesPanel", () => {
     expect(alert).toHaveTextContent("refused");
   });
 
-  it("toggles enabled state and deletes", async () => {
+  it("toggles enabled state and deletes after confirming", async () => {
     const client = api();
     render(<ProxiesPanel api={client} />);
     await screen.findByText("127.0.0.1");
@@ -175,7 +182,11 @@ describe("ProxiesPanel", () => {
       expect(client.updateProxy).toHaveBeenCalledWith("tor", { enabled: false }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /delete tor/i }));
+    // 9E Task 4 made delete a two-step action: it silently detaches every provider
+    // using the proxy, so it asks first.
+    fireEvent.click(screen.getByRole("button", { name: /^delete tor$/i }));
+    expect(client.deleteProxy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /confirm delete tor/i }));
     await waitFor(() => expect(client.deleteProxy).toHaveBeenCalledWith("tor"));
   });
 

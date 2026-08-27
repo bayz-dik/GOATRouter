@@ -92,12 +92,33 @@ GET  /api/proxies/:id/usage
 **Modify:** `apps/dashboard/src/panels/ProxiesPanel.tsx`, `apps/dashboard/src/api/client.ts`
 **Test:** `apps/dashboard/test/proxies-panel-ux.test.tsx`
 
-- [ ] RED `proxies-panel-ux.test.tsx`: create supports both `socks5` and `http` with a kind selector; edit changes host, port, username, enabled, and config; delete confirms; the password field is `type="password"`, `autocomplete="off"`, and clears on submit with the value absent from the DOM afterwards; Test Connection shows `ok` with measured latency, or the fixed failure code, or an explicit "not measured" — never a fabricated number; a disabled proxy renders distinctly; a degraded proxy renders distinctly; every row shows "used by N providers, M routes"; a `502 refused` shows the code and message from the envelope.
-- [ ] RED same file: nothing in the panel renders a value from a field matching `/password|credential|secret/`.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/dashboard` exits 0.
-- [ ] Commit — `feat: complete the Bayz proxy panel lifecycle`
+- [x] RED `proxies-panel-ux.test.tsx`: create supports both `socks5` and `http` with a kind selector; edit changes host, port, username, enabled, and config; delete confirms; the password field is `type="password"`, `autocomplete="off"`, and clears on submit with the value absent from the DOM afterwards; Test Connection shows `ok` with measured latency, or the fixed failure code, or an explicit "not measured" — never a fabricated number; a disabled proxy renders distinctly; a degraded proxy renders distinctly; every row shows "used by N providers, M routes"; a `502 refused` shows the code and message from the envelope.
+- [x] RED same file: nothing in the panel renders a value from a field matching `/password|credential|secret/`.
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/dashboard` exits 0.
+- [x] Commit — `feat: complete the Bayz proxy panel lifecycle`
+
+**As built.** Four decisions the plan text left open:
+
+1. **An edit sends only what changed.** A full-object PATCH would rewrite fields the
+   operator never touched and make an accidental save indistinguishable from a
+   deliberate one. Saving an unchanged form is refused with a message rather than
+   issuing a no-op write.
+2. **Clearing a username sends `null`, not `""`.** The API models absence as `null`;
+   an empty string would be a second way to say the same thing.
+3. **"Connection not measured" is the initial state**, and a *failed* check renders the
+   envelope's code and message with **no latency at all** — a failed dial has no
+   meaningful measurement, and printing `0 ms` would be a fabricated one.
+4. **`disabled` outranks `degraded`** on a row's `data-state`. An operator who turned a
+   proxy off already knows why traffic is not flowing.
+
+Usage per row comes from `GET /api/proxies/:id/usage` (Task 3) and renders
+`Usage unavailable` when the call fails — a `proxies.read`-less credential or an older
+Core must not be shown a fabricated `0 providers`.
+
+`proxies-panel.test.tsx` needed two updates: its stub gained `proxyUsage`, and the
+delete assertion became two-step now that delete confirms.
 
 ### Task 5 — Provider multi-select and one-action assignment
 

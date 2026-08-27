@@ -160,6 +160,34 @@ export type ProxyCheckResult = {
   latencyMs: number;
 };
 
+/**
+ * What a proxy is currently used by.
+ *
+ * Ids and counts only — the endpoint returns no password state and nothing about
+ * provider credentials, so there is nothing here the panel could accidentally render.
+ * `routeCount` counts routes *pinned* to the proxy; a route inheriting it follows its
+ * provider and is already represented by `providerCount`.
+ */
+export type ProxyUsage = {
+  proxyId: string;
+  providerCount: number;
+  routeCount: number;
+  providerIds: string[];
+};
+
+export type ProxyAssignResult = {
+  proxyId: string;
+  providerCount: number;
+  proxyEnabled: boolean;
+  notes: string[];
+};
+
+export type ProxyUnassignResult = {
+  proxyId: string;
+  providerCount: number;
+  detachedFromProxy: number;
+};
+
 export type RouteConfig = {
   maxAttempts: number;
   requestTimeoutMs: number;

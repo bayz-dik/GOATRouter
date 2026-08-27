@@ -12,7 +12,10 @@ import type {
   CreateProxyBody,
   CreateRouteBody,
   ProviderView,
+  ProxyAssignResult,
   ProxyCheckResult,
+  ProxyUnassignResult,
+  ProxyUsage,
   ProxyView,
   RouteView,
   RuntimeStatus,
@@ -218,6 +221,25 @@ export function createApiClient(options: CreateApiClientOptions) {
       send("DELETE", `/api/proxies/${segment(id)}/password`),
     checkProxy: (id: string): Promise<ProxyCheckResult> =>
       send("POST", `/api/proxies/${segment(id)}/check`),
+    /**
+     * What a proxy is used by.
+     *
+     * Read with `proxies.read`, so a read-only operator can still answer "what breaks
+     * if I delete this" before being offered a delete.
+     */
+    proxyUsage: (id: string): Promise<ProxyUsage> =>
+      send("GET", `/api/proxies/${segment(id)}/usage`),
+    /**
+     * Put a set of providers behind a proxy in **one** request.
+     *
+     * One call, not one per provider: the server applies the batch in a transaction,
+     * so a failure leaves nothing half-assigned. Splitting it client-side would throw
+     * that guarantee away.
+     */
+    assignProxy: (id: string, providerIds: string[]): Promise<ProxyAssignResult> =>
+      send("POST", `/api/proxies/${segment(id)}/assign`, { providerIds }),
+    unassignProxy: (id: string, providerIds: string[]): Promise<ProxyUnassignResult> =>
+      send("POST", `/api/proxies/${segment(id)}/unassign`, { providerIds }),
 
     listRoutes: async (): Promise<RouteView[]> =>
       (await send<{ routes: RouteView[] }>("GET", "/api/routes")).routes ?? [],
