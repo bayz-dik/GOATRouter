@@ -32,6 +32,7 @@ test("one storage handle is shared by all three managers", () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: "http://127.0.0.1:1/v1",
+      config: { allowLoopback: true },
     });
     runtime.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.equal(runtime.router.listRoutes().length, 1);
@@ -81,6 +82,7 @@ test("the status summary reports operational facts and no key material", () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: "http://127.0.0.1:1/v1",
+      config: { allowLoopback: true },
     });
     runtime.providers.setCredential("p1", "sk-status-secret");
     runtime.proxies.createProxy({ id: "x1", kind: "socks5", host: "127.0.0.1", port: 1080 });

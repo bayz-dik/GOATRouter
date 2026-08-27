@@ -60,6 +60,7 @@ const LOCAL = {
   kind: "openai-compatible",
   displayName: "Local Llama",
   baseUrl: "http://127.0.0.1:11434/v1",
+  config: { allowLoopback: true },
 };
 
 test("a provider can be created and listed through the API", async (t) => {

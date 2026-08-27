@@ -163,7 +163,14 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Smoke Local",
         baseUrl: `${base}/`,
-        config: { discoveryPath: "/v1/models", timeoutMs: 5000, modelLimit: 100 },
+        // The origin is a real loopback server, which 9D's egress policy requires an
+        // explicit opt-in for.
+        config: {
+          allowLoopback: true,
+          discoveryPath: "/v1/models",
+          timeoutMs: 5000,
+          modelLimit: 100,
+        },
       });
       check("provider row created", local.id === "smoke-local");
       check("base url normalized", local.baseUrl === base);
@@ -175,6 +182,7 @@ async function main() {
         kind: "gemini",
         displayName: "Smoke Gemini",
         baseUrl: base,
+        config: { allowLoopback: true },
       });
       check(
         "gemini defaults to the v1beta discovery path",
@@ -229,7 +237,7 @@ async function main() {
 
       section("4. Hostile upstream responses fail closed");
       manager.updateProvider("smoke-local", {
-        config: { discoveryPath: "/unauthorized", timeoutMs: 5000, modelLimit: 100 },
+        config: { allowLoopback: true, discoveryPath: "/unauthorized", timeoutMs: 5000, modelLimit: 100 },
       });
       let authCode;
       let authMessage = "";
@@ -246,13 +254,13 @@ async function main() {
       );
 
       manager.updateProvider("smoke-local", {
-        config: { discoveryPath: "/flood", timeoutMs: 5000, modelLimit: 500 },
+        config: { allowLoopback: true, discoveryPath: "/flood", timeoutMs: 5000, modelLimit: 500 },
       });
       const flooded = await manager.discoverModels("smoke-local");
       check("a 900-entry feed is capped at 500", flooded.length === 500);
 
       manager.updateProvider("smoke-local", {
-        config: { discoveryPath: "/v1/models", timeoutMs: 5000, modelLimit: 100 },
+        config: { allowLoopback: true, discoveryPath: "/v1/models", timeoutMs: 5000, modelLimit: 100 },
       });
 
       section("5. Hostile registration input is refused");
@@ -263,6 +271,7 @@ async function main() {
           kind: "openai-compatible",
           displayName: "Bad",
           baseUrl: base,
+          config: { allowLoopback: true },
         });
       } catch (error) {
         idCode = error instanceof ProviderError ? error.code : "unknown";
@@ -280,7 +289,10 @@ async function main() {
           kind: "openai-compatible",
           displayName: "Smuggle",
           baseUrl: base,
-          config: { headers: { Authorization: `Bearer ${CREDENTIAL}` } },
+          config: {
+            allowLoopback: true,
+            headers: { Authorization: `Bearer ${CREDENTIAL}` },
+          },
         });
       } catch (error) {
         configCode = error instanceof ProviderError ? error.code : "unknown";

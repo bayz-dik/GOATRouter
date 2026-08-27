@@ -80,10 +80,25 @@ export type LiveViewModelInput = {
   requests?: UsageRequestRow[];
 };
 
-/** Provider kind → local icon key. An unknown kind gets the generic mark. */
+/**
+ * Provider kind → local icon key. An unknown kind gets the generic mark.
+ *
+ * The mapping is a fixed local table in both directions: a kind whose name happens to
+ * match an icon key uses it, and everything else is named explicitly here. Nothing in
+ * an API response can introduce a new key, so provider metadata still cannot become an
+ * asset reference or markup.
+ */
+const KIND_ICON_KEYS: Readonly<Record<string, FluxIconKey>> = {
+  "custom-openai": "custom",
+};
+
 function iconFor(kind: unknown): FluxIconKey {
   if (typeof kind !== "string") {
     return "generic";
+  }
+  const mapped = Object.hasOwn(KIND_ICON_KEYS, kind) ? KIND_ICON_KEYS[kind] : undefined;
+  if (mapped !== undefined) {
+    return mapped;
   }
   return (ICON_KEYS as readonly string[]).includes(kind) ? (kind as FluxIconKey) : "generic";
 }

@@ -104,6 +104,7 @@ function seedProvider(ctx: ReturnType<typeof context>, id: string, port: number)
     kind: "openai-compatible",
     displayName: id.toUpperCase(),
     baseUrl: `http://127.0.0.1:${port}/v1`,
+    config: { allowLoopback: true },
   });
 }
 
@@ -487,6 +488,7 @@ test("a throwing recorder never breaks the chat request", async (t) => {
     kind: "openai-compatible",
     displayName: "P1",
     baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+    config: { allowLoopback: true },
   });
   router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 
@@ -513,6 +515,7 @@ test("a router with no recorder behaves exactly as before", async (t) => {
     kind: "openai-compatible",
     displayName: "P1",
     baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+    config: { allowLoopback: true },
   });
   router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 

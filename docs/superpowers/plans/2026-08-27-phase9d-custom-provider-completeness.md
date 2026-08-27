@@ -10,7 +10,7 @@
 
 **Locks:** No provider brand hardcoded beyond an icon key. Provider metadata never becomes markup or a remote dependency. `authorization`, `proxy-authorization`, and `host` can never be set by provider config.
 
-**Migration numbering:** the spec's ledger (§4) labels this subprogram's migration v8, assuming 9C takes v6 and 9E takes v7 from the v5 baseline. 9D and 9E run in **parallel**, so if this migration lands before 9E's it takes v7 and 9E takes v8 — whichever lands second renumbers and updates both plan texts in the same commit. No test hardcodes the head version; every migration test reads the head from the migration table.
+**Migration numbering — SETTLED:** the spec's ledger (§4) provisionally labelled this subprogram's migration v8. **This migration landed first and is v7.** 9E's provider-proxy migration therefore becomes **v8**, and 9E's plan text is updated to match in the same commit. No test hardcodes the head version; every migration test reads the head from the migration table.
 
 ---
 
@@ -52,12 +52,12 @@ export function assertResolvedAddressAllowed(address: string, policy: EgressPoli
 **Modify:** `packages/providers/src/url.ts`, `packages/providers/src/repository.ts`
 **Test:** `packages/providers/test/custom-provider.test.ts`
 
-- [ ] RED `custom-provider.test.ts`: `PROVIDER_KINDS` gains `custom-openai` and keeps the existing four; a `custom-openai` provider requires an explicit base URL; the base URL runs through `assertEgressAllowed` at creation so a metadata-endpoint provider cannot be stored at all; `allowLoopback: true` permits a local runtime; a provider created before this change still loads (backward compatibility); the icon key for `custom-openai` resolves to `custom` in the local table, not to a remote asset.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/providers` exits 0; `npm run test --workspace @bayz/storage` exits 0 (schema untouched — kind is a CHECK constraint, so migration v8 adds the value).
-- [ ] Modify `packages/storage/src/migrations.ts`: migration v8 recreates the `providers` kind CHECK to include `custom-openai`, preserving rows. RED first in `packages/storage/test/migrations.test.ts`: the new kind inserts, an unknown kind still fails, and existing rows survive the migration.
-- [ ] Commit — `feat: add the Bayz custom-openai provider kind`
+- [x] RED `custom-provider.test.ts`: `PROVIDER_KINDS` gains `custom-openai` and keeps the existing four; a `custom-openai` provider requires an explicit base URL; the base URL runs through `assertEgressAllowed` at creation so a metadata-endpoint provider cannot be stored at all; `allowLoopback: true` permits a local runtime; a provider created before this change still loads (backward compatibility); the icon key for `custom-openai` resolves to `custom` in the local table, not to a remote asset.
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/providers` exits 0; `npm run test --workspace @bayz/storage` exits 0 (schema untouched — kind is a CHECK constraint, so migration v7 adds the value).
+- [x] Modify `packages/storage/src/migrations.ts`: migration v7 recreates the `providers` kind CHECK to include `custom-openai`, preserving rows. RED first in `packages/storage/test/migrations.test.ts`: the new kind inserts, an unknown kind still fails, and existing rows survive the migration.
+- [x] Commit — `feat: add the Bayz custom-openai provider kind`
 
 ### Task 4 — Header and egress enforcement in the HTTP path
 

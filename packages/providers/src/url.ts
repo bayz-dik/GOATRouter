@@ -8,6 +8,11 @@ export const PROVIDER_KINDS = [
   "openrouter",
   "gemini",
   "codex-oauth",
+  // First-class generic relay. Distinguished from `openai-compatible` only so the
+  // dashboard can label it and so an operator can see at a glance which providers are
+  // their own endpoints rather than a known service. It is treated as **untrusted** in
+  // exactly the same way as every other kind.
+  "custom-openai",
 ] as const;
 
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
@@ -76,4 +81,20 @@ export function normalizeBaseUrl(raw: unknown): string {
  */
 export function defaultBaseUrl(kind: ProviderKind): string | undefined {
   return kind === "openrouter" ? "https://openrouter.ai/api" : undefined;
+}
+
+/**
+ * The hostname of an already-normalized base URL.
+ *
+ * Brackets are kept for IPv6 so the egress classifier sees the literal form the URL
+ * carried, which is what its bracket handling expects.
+ */
+export function hostnameOfBaseUrl(baseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new ProviderError("invalid_provider_config", "base-url-host");
+  }
+  return url.hostname;
 }

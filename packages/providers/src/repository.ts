@@ -2,9 +2,11 @@ import type { SqlDatabase } from "@bayz/storage";
 import { parseProviderConfig, type ProviderConfig } from "./config.js";
 import { ProviderError } from "./errors.js";
 import { assertProviderId } from "./identity.js";
+import { assertEgressAllowed, type EgressPolicy } from "./egress.js";
 import {
   assertProviderKind,
   defaultBaseUrl,
+  hostnameOfBaseUrl,
   normalizeBaseUrl,
   type ProviderKind,
 } from "./url.js";
@@ -78,6 +80,30 @@ function parseEnabled(value: unknown, stage: string): boolean {
   return value;
 }
 
+function policyOf(config: ProviderConfig): EgressPolicy {
+  return {
+    allowLoopback: config.allowLoopback === true,
+    allowPrivate: config.allowPrivate === true,
+  };
+}
+
+/**
+ * Refuse a base URL the egress policy forbids.
+ *
+ * Enforced at *write* time, so a provider targeting a cloud metadata endpoint cannot
+ * be stored at all — and therefore cannot be dialled even by a future code path that
+ * forgets to check. Applied on update as well as create, or an operator could store a
+ * legitimate provider and then move it.
+ *
+ * Deliberately **not** applied when loading a row: an install created before 9D may
+ * hold a loopback URL with no opt-in, and refusing to load it would brick that
+ * install on upgrade. The connect-time check in the HTTP path is what protects the
+ * request itself.
+ */
+function assertStorableBaseUrl(baseUrl: string, config: ProviderConfig): void {
+  assertEgressAllowed(hostnameOfBaseUrl(baseUrl), policyOf(config));
+}
+
 /**
  * Decode a stored row.
  *
@@ -141,6 +167,7 @@ export function createProviderRepository(
           ? true
           : parseEnabled(input.enabled, "create-enabled");
       const config = parseProviderConfig(input.config, kind);
+      assertStorableBaseUrl(baseUrl, config);
 
       if (selectOne(id) !== undefined) {
         throw new ProviderError("provider_already_exists", "create-provider");
@@ -219,6 +246,9 @@ export function createProviderRepository(
         patch.config === undefined
           ? current.config
           : parseProviderConfig(patch.config, current.kind);
+      // Re-checked against the *resulting* pair, so neither moving the URL nor
+      // removing the opt-in can leave a stored state the policy forbids.
+      assertStorableBaseUrl(baseUrl, config);
 
       const timestamp = now();
       db.prepare(

@@ -233,7 +233,13 @@ test("a read scope cannot write and a write scope cannot read", async (t) => {
     method: "POST",
     url: "/api/providers",
     headers: { authorization: `Bearer ${readKey}`, "content-type": "application/json" },
-    payload: { id: "p2", kind: "openai-compatible", displayName: "P2", baseUrl: "http://127.0.0.1:1" },
+    payload: {
+      id: "p2",
+      kind: "openai-compatible",
+      displayName: "P2",
+      baseUrl: "http://127.0.0.1:1",
+      config: { allowLoopback: true },
+    },
   });
   assert.equal(write.statusCode, 403);
 
@@ -316,6 +322,7 @@ test("a 403 body names the missing scope and nothing about what exists", async (
     kind: "openai-compatible",
     displayName: "Confidential Name",
     baseUrl: "http://127.0.0.1:1",
+    config: { allowLoopback: true },
   });
   runtime.providers.setCredential("secret-provider", "sk-scope-enforcement-secret");
 

@@ -145,6 +145,7 @@ async function seed(
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${originPort}/v1`,
+      config: { allowLoopback: true },
     },
   });
   if (options.credential) {

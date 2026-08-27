@@ -4,6 +4,20 @@ import type { SqlDatabase } from "./sql.js";
 export type Migration = {
   version: number;
   statements: string[];
+  /**
+   * Suspend foreign-key enforcement for the duration of this migration.
+   *
+   * Needed only for a table rebuild. SQLite cannot alter a CHECK constraint, so the
+   * table has to be recreated — and `DROP TABLE providers` with enforcement on
+   * **cascades every dependent route away**. That was found by a failing test, not by
+   * inspection, and it would have silently destroyed an operator's routing on upgrade.
+   *
+   * `PRAGMA foreign_keys` is a no-op inside a transaction, so the runner toggles it
+   * outside and runs `PRAGMA foreign_key_check` before committing. That check is what
+   * keeps this from being a blanket weakening: the constraint is not enforced
+   * statement-by-statement, but the end state is still verified.
+   */
+  suspendForeignKeys?: boolean;
 };
 
 /**
@@ -11,7 +25,8 @@ export type Migration = {
  *
  * v1 stores only an encrypted envelope plus non-secret metadata. v2 adds the
  * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
- * telemetry, and v6 per-client identities with a metadata-only audit trail. None of them holds a credential column, and neither `routes` nor the
+ * telemetry, v6 per-client identities with a metadata-only audit trail, and v7 the
+ * `custom-openai` provider kind. None of them holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
  * `secrets` under `provider:<id>:api_key` and proxy passwords under
@@ -214,6 +229,48 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX identity_audit_identity_idx ON identity_audit (identity_id)`,
     ],
   },
+  {
+    version: 7,
+    suspendForeignKeys: true,
+    statements: [
+      /*
+       * Add the `custom-openai` provider kind.
+       *
+       * SQLite cannot alter a CHECK constraint, so the table is rebuilt. The order
+       * matters and is the standard safe sequence: create the replacement, copy every
+       * row, drop the original, rename. All of it runs inside the migration's single
+       * transaction, so a failure at any point rolls the whole thing back and leaves
+       * the original table untouched.
+       *
+       * `routes.provider_id` references `providers(id)`, so this migration declares
+       * `suspendForeignKeys`. Without it, `DROP TABLE providers` cascades every
+       * dependent route away and an upgrade silently destroys the operator's routing.
+       * The runner verifies the end state with `PRAGMA foreign_key_check` before
+       * committing, so suspension narrows to "not enforced per statement" rather than
+       * "not enforced".
+       *
+       * The numbering follows the spec's ledger rule rather than its provisional
+       * label: 9D landed before 9E, so 9D's migration takes the next free number.
+       */
+      `CREATE TABLE providers_v7 (
+         id           TEXT    PRIMARY KEY,
+         kind         TEXT    NOT NULL CHECK (kind IN
+                      ('openai-compatible','openrouter','gemini','codex-oauth','custom-openai')),
+         display_name TEXT    NOT NULL,
+         base_url     TEXT    NOT NULL,
+         enabled      INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+         config_json  TEXT    NOT NULL,
+         created_at   TEXT    NOT NULL,
+         updated_at   TEXT    NOT NULL
+       )`,
+      `INSERT INTO providers_v7
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       SELECT id, kind, display_name, base_url, enabled, config_json, created_at, updated_at
+         FROM providers`,
+      `DROP TABLE providers`,
+      `ALTER TABLE providers_v7 RENAME TO providers`,
+    ],
+  },
 ];
 
 export const TARGET_SCHEMA_VERSION = MIGRATIONS.length;
@@ -249,28 +306,49 @@ export function runMigrations(
       throw new StorageError("storage_unavailable", "migration-version");
     }
 
-    db.exec("BEGIN IMMEDIATE");
+    // Toggled outside the transaction, because `PRAGMA foreign_keys` is a no-op
+    // inside one. Restored in the `finally` whatever happens.
+    const suspend = migration.suspendForeignKeys === true;
+    if (suspend) {
+      db.exec("PRAGMA foreign_keys = OFF");
+    }
     try {
-      for (const statement of migration.statements) {
-        db.exec(statement);
-      }
-      db.prepare(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-      ).run(migration.version, new Date().toISOString());
-      db.exec(`PRAGMA user_version = ${migration.version}`);
-      db.exec("COMMIT");
-      applied += 1;
-    } catch (error) {
+      db.exec("BEGIN IMMEDIATE");
       try {
-        db.exec("ROLLBACK");
-      } catch {
-        // The transaction is already unwound; the original failure is what matters.
+        for (const statement of migration.statements) {
+          db.exec(statement);
+        }
+        if (suspend) {
+          // The end state is verified even though per-statement enforcement was off.
+          // A dangling reference here means the rebuild lost or renamed something, and
+          // committing it would leave a database that fails on the next write.
+          const violations = db.prepare("PRAGMA foreign_key_check").all();
+          if (violations.length > 0) {
+            throw new StorageError("storage_unavailable", "migration-foreign-key");
+          }
+        }
+        db.prepare(
+          "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+        ).run(migration.version, new Date().toISOString());
+        db.exec(`PRAGMA user_version = ${migration.version}`);
+        db.exec("COMMIT");
+        applied += 1;
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // The transaction is already unwound; the original failure is what matters.
+        }
+        throw asStorageError(
+          "storage_unavailable",
+          `migrate:${migration.version}`,
+          error,
+        );
       }
-      throw asStorageError(
-        "storage_unavailable",
-        `migrate:${migration.version}`,
-        error,
-      );
+    } finally {
+      if (suspend) {
+        db.exec("PRAGMA foreign_keys = ON");
+      }
     }
   }
 

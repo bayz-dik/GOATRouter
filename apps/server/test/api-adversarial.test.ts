@@ -210,6 +210,7 @@ test("no response body in a full exercise contains a stored secret", async (t) =
     kind: "openai-compatible",
     displayName: "P1",
     baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+    config: { allowLoopback: true },
   });
   await call("PUT", "/api/providers/p1/credential", { value: CREDENTIAL });
   await call("POST", "/api/proxies", {
@@ -286,6 +287,7 @@ test("no prompt or secret reaches the database or the logs", async (t) => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     },
   });
   await h.app.inject({
@@ -451,6 +453,7 @@ test("a cross-site POST is refused even with a valid token", async (t) => {
       kind: "openai-compatible",
       displayName: "CSRF",
       baseUrl: "http://127.0.0.1:1/v1",
+      config: { allowLoopback: true },
     },
   });
   assert.equal(response.statusCode, 403);
@@ -514,6 +517,7 @@ test("one provider's credential is never used for another provider", async (t) =
         kind: "openai-compatible",
         displayName: id,
         baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+        config: { allowLoopback: true },
       },
     });
   }

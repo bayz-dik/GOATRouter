@@ -12,16 +12,16 @@
 
 **Repository constraint driving the design:** `proxy_id` currently lives only on `routes` (`packages/router/src/repository.ts`), and `packages/providers/src/repository.ts` has zero occurrences of `proxyId`. Assigning one proxy to forty providers today means editing forty routes. That is the gap.
 
-**Migration numbering:** the spec's ledger (§4) labels this subprogram's migration v7, assuming 9C takes v6 from the v5 baseline. 9D and 9E run in **parallel**, so if 9D's kind migration lands first this one becomes v8 — whichever lands second renumbers and updates both plan texts in the same commit. No test hardcodes the head version.
+**Migration numbering — SETTLED:** the spec's ledger (§4) provisionally labelled this subprogram's migration v7. **9D's `custom-openai` kind migration landed first and took v7**, so this subprogram's provider-proxy migration is **v8**, and 9D's plan text records the same settlement. No test hardcodes the head version; every migration test reads the head from the migration table.
 
 ---
 
-### Task 1 — Provider-level proxy default (migration v7)
+### Task 1 — Provider-level proxy default (migration v8)
 
 **Modify:** `packages/storage/src/migrations.ts`, `packages/storage/test/migrations.test.ts`, `packages/providers/src/repository.ts`, `packages/providers/src/manager.ts`
 **Test:** `packages/providers/test/provider-proxy.test.ts`
 
-**Schema:** migration v7 adds `providers.proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL`
+**Schema:** migration v8 adds `providers.proxy_id TEXT REFERENCES proxies(id) ON DELETE SET NULL`
 
 - [ ] RED `packages/storage/test/migrations.test.ts`: fresh `providers` gains `proxy_id` as a 9th column; the pinned column set updates; deleting a proxy sets dependent `providers.proxy_id` to NULL (degrade to direct, never break); existing rows survive the migration with `proxy_id` NULL.
 - [ ] RED `packages/providers/test/provider-proxy.test.ts`: create with `proxyId` validates the proxy exists (pre-SQL, `invalid_provider_config` for unknown); `updateProvider` can set and clear it with `null`; the view exposes `proxyId` and never a password; a provider with no proxy reports `undefined`, not `""`.
@@ -108,7 +108,7 @@ GET  /api/proxies/:id/usage
 
 ## Completion checklist
 
-- [ ] Migration v7 adds `providers.proxy_id`; proxy deletion degrades to direct.
+- [ ] Migration v8 adds `providers.proxy_id`; proxy deletion degrades to direct.
 - [ ] Resolution order route-override → provider-default → direct, with `null` meaning force-direct.
 - [ ] Bulk assign/unassign is atomic, bounded at 200, and issues one call.
 - [ ] Proxy panel covers both kinds, full lifecycle, write-only password, real test result.

@@ -156,6 +156,7 @@ test("prompt and completion bytes are absent from the database files", async () 
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -197,6 +198,7 @@ test("logs carry no prompt, completion, or credential", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -227,6 +229,7 @@ test("a model name cannot escape into the request URL", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4*", providerId: "p1" });
 
@@ -279,6 +282,7 @@ test("an upstream cannot inject extra fields into the router result", async () =
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     const result = await ctx.router.chat(REQUEST);
@@ -311,6 +315,7 @@ test("a prototype-polluting upstream payload cannot poison Object.prototype", as
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     const result = await ctx.router.chat(REQUEST);
@@ -341,6 +346,7 @@ test("an enormous upstream response is refused rather than buffered", async () =
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     await assert.rejects(ctx.router.chat(REQUEST), (error: unknown) => {
@@ -369,6 +375,7 @@ test("a route row rewritten with a hostile model fails closed", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     ctx.storage.sql
@@ -399,6 +406,7 @@ test("a route row rewritten with a hostile config fails closed", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     ctx.storage.sql
@@ -436,6 +444,7 @@ test("one provider's credential is never sent to another provider", async () => 
       kind: "openai-compatible",
       displayName: "With Key",
       baseUrl: `http://127.0.0.1:${first.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("with-key", CREDENTIAL);
     ctx.router.providers.createProvider({
@@ -443,6 +452,7 @@ test("one provider's credential is never sent to another provider", async () => 
       kind: "openai-compatible",
       displayName: "No Key",
       baseUrl: `http://127.0.0.1:${second.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({
       id: "r1",
@@ -486,6 +496,7 @@ test("a tampered credential fails closed instead of sending an unauthenticated r
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -518,6 +529,7 @@ test("the buffered chat path still refuses a stream flag", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 

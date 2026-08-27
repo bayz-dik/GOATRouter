@@ -115,6 +115,7 @@ function seed(runtime: BayzRuntime, port: number): void {
     kind: "openai-compatible",
     displayName: "Stream Provider",
     baseUrl: `http://127.0.0.1:${port}`,
+    config: { allowLoopback: true },
   });
   runtime.providers.setCredential("sp", CREDENTIAL);
   runtime.router.createRoute({ id: "sr", model: "stream-model", providerId: "sp" });

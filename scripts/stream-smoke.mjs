@@ -361,6 +361,7 @@ async function main() {
         kind: "openai-compatible",
         displayName: "SSE Origin",
         baseUrl: `http://127.0.0.1:${sse.port}`,
+        config: { allowLoopback: true },
       },
     });
     check("the streaming provider was created", created.status === 201);
@@ -543,6 +544,7 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Dead Origin",
         baseUrl: `http://127.0.0.1:${dead.address().port}`,
+        config: { allowLoopback: true },
       },
     });
     await call("/api/routes", {
@@ -626,6 +628,7 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Tool Origin",
         baseUrl: `http://127.0.0.1:${tools.port}`,
+        config: { allowLoopback: true },
       },
     });
     await call("/api/providers/tool/credential", {

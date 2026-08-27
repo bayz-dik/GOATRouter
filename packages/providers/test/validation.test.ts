@@ -71,12 +71,16 @@ test("every provider error code has a distinct fixed message", () => {
   assert.equal(messages.size, codes.length);
 });
 
-test("the supported provider kinds are exactly the four planned kinds", () => {
+test("the supported provider kinds are exactly the five planned kinds", () => {
+  // `custom-openai` added in 9D: a first-class generic relay, distinguished from
+  // `openai-compatible` only so an operator can see which providers are their own
+  // endpoints. It is treated as untrusted identically.
   assert.deepEqual([...PROVIDER_KINDS], [
     "openai-compatible",
     "openrouter",
     "gemini",
     "codex-oauth",
+    "custom-openai",
   ]);
 });
 

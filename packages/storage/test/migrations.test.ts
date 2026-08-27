@@ -882,3 +882,98 @@ test("the revoked flag is boolean-constrained", () => {
     db.close();
   }
 });
+
+test("migration v7 accepts the custom-openai kind", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('relay', 'custom-openai', 'Relay', 'https://relay.example.com', 1, '{}', 't', 't')`,
+    ).run();
+    assert.equal(
+      db.prepare("SELECT kind FROM providers WHERE id = 'relay'").get()?.kind,
+      "custom-openai",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v7 still refuses an unknown kind", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    assert.throws(() =>
+      db
+        .prepare(
+          `INSERT INTO providers
+             (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+           VALUES ('bad', 'anthropic', 'Bad', 'https://x.example.com', 1, '{}', 't', 't')`,
+        )
+        .run(),
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v7 preserves existing provider rows and their routes", () => {
+  const db = freshDb();
+  try {
+    // Migrate only to v6, populate, then finish. This is the real upgrade path: the
+    // table rebuild must carry every row and leave the dependent foreign key working.
+    runMigrations(
+      db,
+      MIGRATIONS.filter((migration) => migration.version <= 6),
+    );
+    db.prepare(
+      `INSERT INTO providers
+         (id, kind, display_name, base_url, enabled, config_json, created_at, updated_at)
+       VALUES ('legacy', 'openai-compatible', 'Legacy', 'http://127.0.0.1:8080', 1,
+               '{"timeoutMs":30000}', 'created', 'updated')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO routes
+         (id, model, provider_id, proxy_id, priority, enabled, config_json, created_at, updated_at)
+       VALUES ('r1', 'gpt-4o', 'legacy', NULL, 100, 1, '{}', 't', 't')`,
+    ).run();
+
+    assert.equal(runMigrations(db), 1);
+
+    const provider = db.prepare("SELECT * FROM providers WHERE id = 'legacy'").get();
+    assert.equal(provider?.display_name, "Legacy");
+    assert.equal(provider?.base_url, "http://127.0.0.1:8080");
+    assert.equal(provider?.config_json, '{"timeoutMs":30000}');
+    assert.equal(provider?.created_at, "created");
+    assert.equal(provider?.updated_at, "updated");
+    assert.equal(
+      db.prepare("SELECT provider_id FROM routes WHERE id = 'r1'").get()?.provider_id,
+      "legacy",
+    );
+
+    // The rebuilt table must still be the one the foreign key points at: deleting the
+    // provider has to cascade its route away, exactly as before the rebuild.
+    db.exec("PRAGMA foreign_keys = ON");
+    db.prepare("DELETE FROM providers WHERE id = 'legacy'").run();
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS n FROM routes").get()?.n,
+      0,
+      "the route cascade must survive the table rebuild",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("migration v7 leaves no temporary table behind", () => {
+  const db = freshDb();
+  try {
+    runMigrations(db);
+    assert.ok(!tableNames(db).includes("providers_v7"));
+    assert.ok(tableNames(db).includes("providers"));
+  } finally {
+    db.close();
+  }
+});

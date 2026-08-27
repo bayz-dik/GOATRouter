@@ -94,6 +94,7 @@ async function seed(
       kind: "openai-compatible",
       displayName: id.toUpperCase(),
       baseUrl: `http://127.0.0.1:${port}/v1`,
+      config: { allowLoopback: true },
     },
   });
   if (options.credential === true) {

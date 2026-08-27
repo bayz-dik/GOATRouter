@@ -113,6 +113,16 @@ describe("provider identity mapping", () => {
     expect(model.providers[0]!.iconKey).toBe("generic");
   });
 
+  it("maps the custom-openai kind to the local custom mark", () => {
+    const model = buildLiveViewModel({
+      summary: summary(),
+      providers: [providerRow({ kind: "custom-openai" as never })],
+    });
+    // `custom` is a key into the local icon table, so a custom provider gets a
+    // recognisable mark without the API ever supplying an asset, a URL, or markup.
+    expect(model.providers[0]!.iconKey).toBe("custom");
+  });
+
   it("keeps duplicate display names distinguishable by id", () => {
     const model = buildLiveViewModel({
       summary: summary(),

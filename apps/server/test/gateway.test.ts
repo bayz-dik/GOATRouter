@@ -68,6 +68,7 @@ async function seed(runtime: BayzRuntime, port: number): Promise<void> {
     kind: "openai-compatible",
     displayName: "Gateway Origin",
     baseUrl: `http://127.0.0.1:${port}`,
+    config: { allowLoopback: true },
   });
   runtime.providers.setCredential("gw-provider", CREDENTIAL);
   runtime.router.createRoute({

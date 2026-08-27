@@ -135,6 +135,7 @@ test("a chat request completes end to end through a registered route", async () 
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     const route = ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.equal(route.providerId, "p1");
@@ -167,6 +168,7 @@ test("the stored credential is attached without ever being returned", async () =
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -192,6 +194,7 @@ test("a proxy-bound route really traverses the proxy", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.proxies.createProxy({
       id: "x1",
@@ -238,12 +241,14 @@ test("failover advances past an unreachable provider to a working one", async ()
       kind: "openai-compatible",
       displayName: "Dead",
       baseUrl: `http://127.0.0.1:${deadPort}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.createProvider({
       id: "live",
       kind: "openai-compatible",
       displayName: "Live",
       baseUrl: `http://127.0.0.1:${good.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({
       id: "r-dead",
@@ -279,12 +284,14 @@ test("failover advances on rate_limited and on upstream_error", async () => {
         kind: "openai-compatible",
         displayName: "A",
         baseUrl: `http://127.0.0.1:${first.port}/v1`,
+        config: { allowLoopback: true },
       });
       ctx.router.providers.createProvider({
         id: "b",
         kind: "openai-compatible",
         displayName: "B",
         baseUrl: `http://127.0.0.1:${second.port}/v1`,
+        config: { allowLoopback: true },
       });
       ctx.router.createRoute({ id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
       ctx.router.createRoute({ id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
@@ -310,12 +317,14 @@ test("auth_failed stops immediately instead of trying another provider", async (
       kind: "openai-compatible",
       displayName: "Denied",
       baseUrl: `http://127.0.0.1:${denied.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.createProvider({
       id: "backup",
       kind: "openai-compatible",
       displayName: "Backup",
       baseUrl: `http://127.0.0.1:${backup.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "denied", priority: 900 });
     ctx.router.createRoute({ id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
@@ -347,12 +356,14 @@ test("an invalid response stops immediately rather than failing over", async () 
       kind: "openai-compatible",
       displayName: "Broken",
       baseUrl: `http://127.0.0.1:${broken.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.createProvider({
       id: "backup",
       kind: "openai-compatible",
       displayName: "Backup",
       baseUrl: `http://127.0.0.1:${backup.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "broken", priority: 900 });
     ctx.router.createRoute({ id: "r2", model: "gpt-4o", providerId: "backup", priority: 100 });
@@ -380,12 +391,14 @@ test("when every candidate fails the last real failure is raised", async () => {
       kind: "openai-compatible",
       displayName: "A",
       baseUrl: `http://127.0.0.1:${first.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.createProvider({
       id: "b",
       kind: "openai-compatible",
       displayName: "B",
       baseUrl: `http://127.0.0.1:${second.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "ra", model: "gpt-4o", providerId: "a", priority: 900 });
     ctx.router.createRoute({ id: "rb", model: "gpt-4o", providerId: "b", priority: 100 });
@@ -413,6 +426,7 @@ test("a model with no route is no_route and makes no request", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "claude-3*", providerId: "p1" });
 
@@ -436,6 +450,7 @@ test("a disabled route is skipped", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({
       id: "r1",
@@ -463,6 +478,7 @@ test("a route whose provider is disabled is skipped", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
       enabled: false,
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -488,6 +504,7 @@ test("an invalid request is refused before any route is consulted", async () => 
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
 
@@ -522,6 +539,7 @@ test("logs record routing metadata but never the prompt or completion", async ()
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.providers.setCredential("p1", CREDENTIAL);
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
@@ -562,6 +580,7 @@ test("a failed attempt is logged with its code and no body", async () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     await assert.rejects(ctx.router.chat(REQUEST));
@@ -587,6 +606,7 @@ test("the prompt is absent from the database after a completed request", async (
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     await ctx.router.chat(REQUEST);
@@ -620,6 +640,7 @@ test("route management is exposed and delegates to the repository", () => {
       kind: "openai-compatible",
       displayName: "P1",
       baseUrl: "http://127.0.0.1:1/v1",
+      config: { allowLoopback: true },
     });
     ctx.router.createRoute({ id: "r1", model: "gpt-4o", providerId: "p1" });
     assert.deepEqual(
@@ -642,6 +663,7 @@ test("close releases the underlying storage exactly once", () => {
     kind: "openai-compatible",
     displayName: "P1",
     baseUrl: "http://127.0.0.1:1/v1",
+    config: { allowLoopback: true },
   });
   ctx.router.close();
   assert.throws(() => ctx.router.listRoutes());

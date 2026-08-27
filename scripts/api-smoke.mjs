@@ -309,6 +309,7 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Smoke",
         baseUrl: `http://127.0.0.1:${origin.port}/v1`,
+        config: { allowLoopback: true },
       },
     });
     check("the provider was created", created.status === 201);
@@ -496,7 +497,13 @@ async function main() {
         "content-type": "application/json",
         origin: "https://evil.example.com",
       },
-      body: JSON.stringify({ id: "csrf", kind: "openai-compatible", displayName: "X", baseUrl: "http://127.0.0.1:1/v1" }),
+      body: JSON.stringify({
+        id: "csrf",
+        kind: "openai-compatible",
+        displayName: "X",
+        baseUrl: "http://127.0.0.1:1/v1",
+        config: { allowLoopback: true },
+      }),
     });
     check("a cross-site POST is refused", crossOrigin.status === 403);
     check(

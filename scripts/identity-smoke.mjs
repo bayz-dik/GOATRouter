@@ -145,6 +145,7 @@ async function main() {
             kind: "openai-compatible",
             displayName: "Smoke Origin",
             baseUrl: `http://127.0.0.1:${origin.port}`,
+            config: { allowLoopback: true },
           },
         })
       ).status === 201,

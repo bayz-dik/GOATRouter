@@ -110,6 +110,7 @@ test("a credential lives at exactly one scoped physical name", () => {
       kind: "openai-compatible",
       displayName: "Victim",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     ctx.manager.setCredential("victim", CREDENTIAL);
 
@@ -134,6 +135,7 @@ test("a tampered credential fails closed instead of reporting absence", () => {
       kind: "openai-compatible",
       displayName: "Tampered",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     ctx.manager.setCredential("tampered", CREDENTIAL);
     ctx.storage.corruptForTest("provider:tampered:api_key", "ciphertext");
@@ -163,6 +165,7 @@ test("one provider's credential cannot be read through another provider", () => 
         kind: "openai-compatible",
         displayName: id,
         baseUrl: "http://127.0.0.1:11434/v1",
+        config: { allowLoopback: true },
       });
     }
     ctx.manager.setCredential("alpha", CREDENTIAL);
@@ -189,6 +192,7 @@ test("plaintext credentials are absent from the database bytes and logs", () => 
       kind: "openai-compatible",
       displayName: "On Disk",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     ctx.manager.setCredential("ondisk", CREDENTIAL);
   } finally {
@@ -230,6 +234,7 @@ test("injection-shaped ids are rejected and the schema survives", () => {
             kind: "openai-compatible",
             displayName: "X",
             baseUrl: "http://127.0.0.1:11434/v1",
+            config: { allowLoopback: true },
           }),
         (error: unknown) =>
           error instanceof ProviderError && error.code === "invalid_provider_id",
@@ -241,6 +246,7 @@ test("injection-shaped ids are rejected and the schema survives", () => {
       kind: "openai-compatible",
       displayName: "Survivor",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     assert.deepEqual(
       ctx.manager.listProviders().map((provider) => provider.id),
@@ -270,6 +276,9 @@ test("a config that tries to smuggle headers or a proxy is refused", () => {
             kind: "openai-compatible",
             displayName: "Config",
             baseUrl: "http://127.0.0.1:11434/v1",
+            // The hostile config under test carries no loopback opt-in, and must not
+            // need one: it has to be refused for being malformed, before the base URL
+            // is ever judged.
             config,
           }),
         (error: unknown) =>
@@ -329,7 +338,7 @@ test("a hostile model feed is capped and cannot flood the caller", async () => {
       kind: "openai-compatible",
       displayName: "Flood",
       baseUrl: "http://127.0.0.1:11434/v1",
-      config: { modelLimit: 500 },
+      config: { allowLoopback: true, modelLimit: 500 },
     });
     const models = await ctx.manager.discoverModels("flood");
     assert.equal(models.length, 500);
@@ -356,6 +365,7 @@ test("an enormous discovery body is refused rather than buffered", async () => {
       kind: "openai-compatible",
       displayName: "Huge",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     await assert.rejects(
       ctx.manager.discoverModels("huge"),
@@ -381,6 +391,7 @@ test("an upstream error body never reaches the raised error", async () => {
       kind: "openai-compatible",
       displayName: "Leaky",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     await assert.rejects(ctx.manager.discoverModels("leaky"), (error: unknown) => {
       assert.ok(error instanceof ProviderError);
@@ -409,6 +420,7 @@ test("discovery never places the credential in the request URL", async () => {
       kind: "openai-compatible",
       displayName: "URL Check",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     ctx.manager.setCredential("urlcheck", CREDENTIAL);
     await ctx.manager.discoverModels("urlcheck");
@@ -429,6 +441,7 @@ test("a provider row rewritten with a hostile config fails closed on read", () =
       kind: "openai-compatible",
       displayName: "Rewritten",
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     });
     ctx.storage.sql
       .prepare("UPDATE providers SET config_json = ? WHERE id = ?")

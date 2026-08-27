@@ -105,7 +105,12 @@ function seed(runtime: BayzRuntime, port: number, supportsTools?: boolean): void
     kind: "openai-compatible",
     displayName: "Tool Provider",
     baseUrl: `http://127.0.0.1:${port}`,
-    ...(supportsTools === undefined ? {} : { config: { supportsTools } }),
+    // One `config` in every branch: the loopback opt-in is unconditional because the
+    // origin is always local, and `supportsTools` is only sometimes specified.
+    config: {
+      allowLoopback: true,
+      ...(supportsTools === undefined ? {} : { supportsTools }),
+    },
   });
   runtime.providers.setCredential("tp", CREDENTIAL);
   runtime.router.createRoute({ id: "tr", model: "tool-model", providerId: "tp" });

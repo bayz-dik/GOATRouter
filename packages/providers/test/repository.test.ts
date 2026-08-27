@@ -21,6 +21,7 @@ const BASE = {
   kind: "openai-compatible" as const,
   displayName: "Local Llama",
   baseUrl: "http://127.0.0.1:11434/v1",
+  config: { allowLoopback: true },
 };
 
 test("a created provider round-trips with normalized fields and defaults", () => {
@@ -32,7 +33,10 @@ test("a created provider round-trips with normalized fields and defaults", () =>
     assert.equal(created.displayName, "Local Llama");
     assert.equal(created.baseUrl, "http://127.0.0.1:11434/v1");
     assert.equal(created.enabled, true);
+    // `allowLoopback` is present because BASE points at a local runtime, which 9D's
+    // egress policy requires an explicit opt-in for.
     assert.deepEqual(created.config, {
+      allowLoopback: true,
       timeoutMs: 30000,
       discoveryPath: "/v1/models",
       modelLimit: 100,
@@ -215,10 +219,13 @@ test("update changes only the supplied fields and advances updated_at", () => {
   const ctx = freshRepository();
   try {
     const created = ctx.repo.create({ id: "up", ...BASE });
+    // `config` is replaced wholesale rather than merged, so the loopback opt-in has to
+    // be restated. Without it the update is refused, because the stored base URL still
+    // points at a local runtime — 9D's "config and URL stay consistent" rule.
     const updated = ctx.repo.update("up", {
       displayName: "Renamed",
       enabled: false,
-      config: { timeoutMs: 5000 },
+      config: { timeoutMs: 5000, allowLoopback: true },
     });
 
     assert.equal(updated.displayName, "Renamed");
@@ -227,6 +234,7 @@ test("update changes only the supplied fields and advances updated_at", () => {
     assert.equal(updated.kind, created.kind);
     assert.equal(updated.createdAt, created.createdAt);
     assert.deepEqual(updated.config, {
+      allowLoopback: true,
       timeoutMs: 5000,
       discoveryPath: "/v1/models",
       modelLimit: 100,

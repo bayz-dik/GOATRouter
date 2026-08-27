@@ -38,6 +38,7 @@ async function seedProvider(app: FastifyInstance, id = "p1"): Promise<void> {
       kind: "openai-compatible",
       displayName: id.toUpperCase(),
       baseUrl: "http://127.0.0.1:11434/v1",
+      config: { allowLoopback: true },
     },
   });
 }

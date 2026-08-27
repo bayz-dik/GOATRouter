@@ -10,7 +10,8 @@ export type ProviderKind =
   | "openai-compatible"
   | "openrouter"
   | "gemini"
-  | "codex-oauth";
+  | "codex-oauth"
+  | "custom-openai";
 
 export type ProviderConfig = {
   timeoutMs: number;

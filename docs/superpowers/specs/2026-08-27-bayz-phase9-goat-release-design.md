@@ -130,11 +130,11 @@ a surface that does not exist yet measures nothing.
 Three subprograms add schema migrations and two of them run in parallel, so the
 numbers cannot be assigned statically without a collision. The baseline is v5.
 
-| Subprogram | Change | Intended version |
-|---|---|---|
-| 9C | `client_identities`, `identity_audit` | v6 |
-| 9E | `providers.proxy_id` | v7 |
-| 9D | `providers.kind` CHECK gains `custom-openai` | v8 |
+| Subprogram | Change | Intended version | Actual |
+|---|---|---|---|
+| 9C | `client_identities`, `identity_audit` | v6 | **v6** |
+| 9E | `providers.proxy_id` | v7 | **v8** |
+| 9D | `providers.kind` CHECK gains `custom-openai` | v8 | **v7** |
 
 **Rule**: the intended version above is a *plan-time* label, not a contract. 9D
 and 9E are parallel, so whichever lands second takes the next free number and
@@ -142,6 +142,9 @@ updates its own plan text and the other's cross-reference in the same commit. No
 test hardcodes a head version — every migration test reads the head from the
 migration table, and `9J` Task 6 walks the ladder from v1 to whatever head is.
 Renumbering is a documentation edit; skipping or reusing a number is a defect.
+
+**Settled:** 9D's kind migration landed before 9E's provider-proxy column, so 9D
+took v7 and 9E takes v8. The Actual column above is the contract from here on.
 
 ### Build order after Phase 9
 
@@ -298,7 +301,7 @@ Egress policy (this is also 9F's SSRF work, owned here for provider URLs):
 **Release requirement.** Backend support is not enough.
 
 The architectural change: proxy assignment moves from route-only to a
-**provider-level default with route-level override**. Migration v7 adds
+**provider-level default with route-level override**. Migration v8 adds
 `providers.proxy_id`. Resolution order at dial time: route override → provider
 default → direct. This is what makes "assign one proxy to forty providers" one
 action instead of forty.

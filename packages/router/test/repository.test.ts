@@ -24,12 +24,14 @@ function freshRepository(): {
     kind: "openai-compatible",
     displayName: "P1",
     baseUrl: "http://127.0.0.1:11434/v1",
+    config: { allowLoopback: true },
   });
   providers.create({
     id: "p2",
     kind: "openai-compatible",
     displayName: "P2",
     baseUrl: "http://127.0.0.1:11435/v1",
+    config: { allowLoopback: true },
   });
   proxies.create({ id: "x1", kind: "socks5", host: "127.0.0.1", port: 1080 });
 

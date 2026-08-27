@@ -90,6 +90,7 @@ function seedProvider(
     kind: "openai-compatible",
     displayName: id,
     baseUrl: `http://127.0.0.1:${port}`,
+    config: { allowLoopback: true },
   });
   router.providers.setCredential(id, CREDENTIAL);
   router.createRoute({

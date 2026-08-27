@@ -206,6 +206,7 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Primary",
         baseUrl: `http://127.0.0.1:${primary.port}/v1`,
+        config: { allowLoopback: true },
       });
       router.providers.setCredential("primary", CREDENTIAL);
       router.providers.createProvider({
@@ -213,18 +214,21 @@ async function main() {
         kind: "openai-compatible",
         displayName: "Flaky",
         baseUrl: `http://127.0.0.1:${flaky.port}/v1`,
+        config: { allowLoopback: true },
       });
       router.providers.createProvider({
         id: "backup",
         kind: "openai-compatible",
         displayName: "Backup",
         baseUrl: `http://127.0.0.1:${backup.port}/v1`,
+        config: { allowLoopback: true },
       });
       router.providers.createProvider({
         id: "denied",
         kind: "openai-compatible",
         displayName: "Denied",
         baseUrl: `http://127.0.0.1:${denied.port}/v1`,
+        config: { allowLoopback: true },
       });
       router.proxies.createProxy({
         id: "tunnel",
