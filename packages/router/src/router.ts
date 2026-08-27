@@ -165,6 +165,9 @@ export function createRouter(options: CreateRouterOptions): Router {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
+      ...(provider.config.supportsTools === undefined
+        ? {}
+        : { supportsTools: provider.config.supportsTools }),
     };
 
     let agent: HttpAgent | HttpsAgent | undefined;
@@ -221,6 +224,9 @@ export function createRouter(options: CreateRouterOptions): Router {
       kind: provider.kind,
       baseUrl: provider.baseUrl,
       requestTimeoutMs: route.config.requestTimeoutMs,
+      ...(provider.config.supportsTools === undefined
+        ? {}
+        : { supportsTools: provider.config.supportsTools }),
     };
 
     let agent: HttpAgent | HttpsAgent | undefined;

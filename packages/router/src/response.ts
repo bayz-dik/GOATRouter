@@ -1,4 +1,5 @@
 import { RouterError } from "./errors.js";
+import { parseToolCalls, type ToolCall } from "./tools.js";
 
 /** 512 KiB of completion text. Beyond this a response is hostile, not verbose. */
 export const MAX_CONTENT_BYTES = 512 * 1024;
@@ -11,10 +12,18 @@ export type ChatUsage = {
 };
 
 export type ChatResponse = {
+  /**
+   * Always a string.
+   *
+   * An empty string alongside a populated `toolCalls` is how a purely tool-calling
+   * response is represented. Making this `string | undefined` instead would force a
+   * new branch into every existing caller for no gain.
+   */
   content: string;
   finishReason: string | undefined;
   model: string | undefined;
   usage: ChatUsage | undefined;
+  toolCalls?: ToolCall[];
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -94,11 +103,36 @@ export function parseChatResponse(body: unknown): ChatResponse {
   if (!isPlainObject(message)) {
     throw new RouterError("invalid_response", "message-shape");
   }
+  // Tool calls are validated with the same parser the request path uses, so an
+  // upstream cannot smuggle a shape a client would be forbidden from sending. A
+  // hostile call is a hard failure rather than a dropped field: forwarding a
+  // half-validated call to a client that will execute something is the worst
+  // outcome available here.
+  let toolCalls: ToolCall[] | undefined;
+  if (message.tool_calls !== undefined) {
+    try {
+      toolCalls = parseToolCalls(message.tool_calls);
+    } catch {
+      throw new RouterError("invalid_response", "tool-calls");
+    }
+  }
+
   const content = message.content;
   if (typeof content !== "string") {
-    // Never substituted with "" — a caller must not mistake a broken response
-    // for an empty completion.
-    throw new RouterError("invalid_response", "content");
+    if (toolCalls === undefined) {
+      // Never substituted with "" — a caller must not mistake a broken response
+      // for an empty completion.
+      throw new RouterError("invalid_response", "content");
+    }
+    // A provider returning only tool calls sends `content: null`, which is correct
+    // rather than broken.
+    return {
+      content: "",
+      finishReason: optionalLabel(first.finish_reason),
+      model: optionalLabel(body.model),
+      usage: parseUsage(body.usage),
+      toolCalls,
+    };
   }
   if (Buffer.byteLength(content, "utf8") > MAX_CONTENT_BYTES) {
     throw new RouterError("response_too_large", "content-bytes");
@@ -109,5 +143,6 @@ export function parseChatResponse(body: unknown): ChatResponse {
     finishReason: optionalLabel(first.finish_reason),
     model: optionalLabel(body.model),
     usage: parseUsage(body.usage),
+    ...(toolCalls === undefined ? {} : { toolCalls }),
   };
 }

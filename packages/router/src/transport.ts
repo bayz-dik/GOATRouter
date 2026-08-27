@@ -43,6 +43,24 @@ type RawResponse = {
 };
 
 /**
+ * Refuse a tool request the provider is known not to support.
+ *
+ * The refusal is explicit rather than a silent strip. A client whose `tools` were
+ * dropped would receive a perfectly normal prose answer and never learn that its
+ * tools were ignored — which is worse than an error, because it looks like the model
+ * simply chose not to call anything.
+ *
+ * `supportsTools === undefined` deliberately forwards: BAYZ does not know, cannot
+ * find out from a discovery endpoint, and guessing either way would be fabrication.
+ * The upstream is the authority and its own error surfaces normally.
+ */
+function assertToolsSupported(options: SendChatRequestOptions): void {
+  if (options.request.tools !== undefined && options.provider.supportsTools === false) {
+    throw new RouterError("tools_unsupported", "provider-capability");
+  }
+}
+
+/**
  * Open the upstream request.
  *
  * `node:http` is used rather than `fetch` precisely because it accepts a custom
@@ -155,6 +173,7 @@ export async function sendChatRequest(
     // authenticate this request.
     throw new ProviderError("unsupported_operation", "codex-chat");
   }
+  assertToolsSupported(options);
 
   const raw = await performRequest(options, wireBody(options.request, false));
 
@@ -264,6 +283,7 @@ export async function* sendChatRequestStreaming(
   if (options.provider.kind === "codex-oauth") {
     throw new ProviderError("unsupported_operation", "codex-chat");
   }
+  assertToolsSupported(options);
   if (options.signal?.aborted === true) {
     // Checked before any socket is opened, so an already-cancelled request costs
     // the provider nothing.

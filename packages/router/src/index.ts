@@ -58,7 +58,11 @@ export {
   type SendChatRequestStreamingOptions,
   type TransportProvider,
 } from "./transport.js";
-export { parseChatChunk, type ChatChunk } from "./chunk.js";
+export {
+  parseChatChunk,
+  type ChatChunk,
+  type ToolCallDelta,
+} from "./chunk.js";
 export {
   MAX_TOOLS,
   MAX_TOOL_ARGUMENT_BYTES,

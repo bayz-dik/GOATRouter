@@ -5,6 +5,21 @@ export type ProviderConfig = {
   timeoutMs: number;
   discoveryPath: string;
   modelLimit: number;
+  /**
+   * Whether this provider supports tool calling.
+   *
+   * Three states, and the third is the important one:
+   *
+   * - `true`  — the operator has confirmed it. Tools are forwarded.
+   * - `false` — the operator has confirmed it does not. A request carrying tools is
+   *             refused with `tools_unsupported` rather than having them silently
+   *             stripped, because a client whose tools vanished would receive a
+   *             plain answer and never learn its tools were ignored.
+   * - absent  — **unknown**, and BAYZ says so instead of guessing. Tools are
+   *             forwarded and the upstream decides. A model-discovery endpoint does
+   *             not reveal tool support, so inferring it would be fabrication.
+   */
+  supportsTools?: boolean;
 };
 
 export const TIMEOUT_MS_MIN = 1000;
@@ -23,7 +38,12 @@ const MAX_DISCOVERY_PATH_LENGTH = 512;
 const DISCOVERY_PATH_RE = /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/;
 
 /** The accepted key set. Anything else is a hard error, see below. */
-const ALLOWED_KEYS = new Set(["timeoutMs", "discoveryPath", "modelLimit"]);
+const ALLOWED_KEYS = new Set([
+  "timeoutMs",
+  "discoveryPath",
+  "modelLimit",
+  "supportsTools",
+]);
 
 function defaultDiscoveryPath(kind: ProviderKind): string {
   return kind === "gemini" ? "/v1beta/models" : "/v1/models";
@@ -99,7 +119,14 @@ export function parseProviderConfig(
     }
   }
 
+  if (record.supportsTools !== undefined && typeof record.supportsTools !== "boolean") {
+    throw new ProviderError("invalid_provider_config", "config-supports-tools");
+  }
+
   return {
+    ...(record.supportsTools === undefined
+      ? {}
+      : { supportsTools: record.supportsTools as boolean }),
     timeoutMs:
       record.timeoutMs === undefined
         ? TIMEOUT_MS_DEFAULT

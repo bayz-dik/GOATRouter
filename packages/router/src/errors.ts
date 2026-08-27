@@ -8,7 +8,8 @@ export type RouterErrorCode =
   | "no_route"
   | "all_routes_failed"
   | "invalid_response"
-  | "response_too_large";
+  | "response_too_large"
+  | "tools_unsupported";
 
 /**
  * Fixed, caller-independent messages.
@@ -28,6 +29,7 @@ const MESSAGES: Record<RouterErrorCode, string> = {
   all_routes_failed: "all_routes_failed: every candidate route failed",
   invalid_response: "invalid_response: the upstream response could not be interpreted",
   response_too_large: "response_too_large: the upstream response exceeded the byte cap",
+  tools_unsupported: "tools_unsupported: the selected provider does not support tool calling",
 };
 
 export class RouterError extends Error {

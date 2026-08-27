@@ -1,6 +1,25 @@
 import { RouterError } from "./errors.js";
 import type { ChatUsage } from "./response.js";
 
+/**
+ * One streamed tool-call fragment.
+ *
+ * Providers stream tool-call arguments a few characters at a time, all sharing an
+ * `index` that identifies which call in the response they belong to. The `index` is
+ * therefore load-bearing: a parser that ignored it would produce one distinct call
+ * per network chunk. `id` and `name` appear only on the first fragment of each call.
+ *
+ * Reassembly is deliberately *not* done here. This module parses one frame with no
+ * memory of previous frames, which keeps it pure and testable; whoever consumes the
+ * stream accumulates by index.
+ */
+export type ToolCallDelta = {
+  index: number;
+  id: string | undefined;
+  name: string | undefined;
+  argumentsDelta: string | undefined;
+};
+
 /** A single streamed increment of a completion. */
 export type ChatChunk = {
   /** Text to append. Absent for a role-only or keepalive chunk. */
@@ -9,7 +28,87 @@ export type ChatChunk = {
   model: string | undefined;
   /** Only present when the upstream reported it, typically on the last chunk. */
   usage: ChatUsage | undefined;
+  /** Absent rather than empty when a frame carries no tool-call fragment. */
+  toolCallDeltas?: ToolCallDelta[];
 };
+
+/** Matches the request-path caps so a stream cannot exceed what a client may send. */
+const MAX_STREAM_TOOL_CALLS = 8;
+const MAX_STREAM_ARGUMENT_DELTA_BYTES = 32 * 1024;
+const MAX_TOOL_CALL_INDEX = 63;
+const STREAM_TOOL_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const STREAM_TOOL_CALL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * Parse the `tool_calls` fragment array on one streamed delta.
+ *
+ * Every field is bounded and copied. The argument fragment is *not* JSON-validated
+ * here because a fragment is legitimately incomplete JSON — validation happens once
+ * the consumer has reassembled the whole string.
+ */
+function parseToolCallDeltas(value: unknown): ToolCallDelta[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RouterError("invalid_response", "chunk-tool-calls");
+  }
+  if (value.length > MAX_STREAM_TOOL_CALLS) {
+    throw new RouterError("invalid_response", "chunk-tool-calls-count");
+  }
+
+  return value.map((entry) => {
+    if (!isPlainObject(entry)) {
+      throw new RouterError("invalid_response", "chunk-tool-call-shape");
+    }
+    const index = entry.index;
+    if (
+      typeof index !== "number" ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index > MAX_TOOL_CALL_INDEX
+    ) {
+      throw new RouterError("invalid_response", "chunk-tool-call-index");
+    }
+
+    let id: string | undefined;
+    if (entry.id !== undefined && entry.id !== null) {
+      if (typeof entry.id !== "string" || !STREAM_TOOL_CALL_ID_RE.test(entry.id)) {
+        throw new RouterError("invalid_response", "chunk-tool-call-id");
+      }
+      id = entry.id;
+    }
+
+    let name: string | undefined;
+    let argumentsDelta: string | undefined;
+    const fn = entry.function;
+    if (fn !== undefined && fn !== null) {
+      if (!isPlainObject(fn)) {
+        throw new RouterError("invalid_response", "chunk-tool-call-function");
+      }
+      if (fn.name !== undefined && fn.name !== null) {
+        if (
+          typeof fn.name !== "string" ||
+          !STREAM_TOOL_NAME_RE.test(fn.name) ||
+          fn.name.startsWith("__")
+        ) {
+          throw new RouterError("invalid_response", "chunk-tool-call-name");
+        }
+        name = fn.name;
+      }
+      if (fn.arguments !== undefined && fn.arguments !== null) {
+        if (typeof fn.arguments !== "string") {
+          throw new RouterError("invalid_response", "chunk-tool-call-arguments");
+        }
+        if (
+          Buffer.byteLength(fn.arguments, "utf8") > MAX_STREAM_ARGUMENT_DELTA_BYTES
+        ) {
+          throw new RouterError("response_too_large", "chunk-tool-call-arguments-bytes");
+        }
+        argumentsDelta = fn.arguments;
+      }
+    }
+
+    return { index, id, name, argumentsDelta };
+  });
+}
 
 const MAX_LABEL_LENGTH = 128;
 /** 512 KiB per delta. A single increment larger than this is not a token. */
@@ -116,10 +215,16 @@ export function parseChatChunk(payload: unknown): ChatChunk {
     contentDelta = source.content;
   }
 
+  const toolCallDeltas =
+    source !== undefined && source.tool_calls !== undefined
+      ? parseToolCallDeltas(source.tool_calls)
+      : undefined;
+
   return {
     contentDelta,
     finishReason: optionalLabel(first.finish_reason),
     model: optionalLabel(payload.model),
     usage,
+    ...(toolCallDeltas === undefined ? {} : { toolCallDeltas }),
   };
 }

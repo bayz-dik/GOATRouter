@@ -8,6 +8,12 @@ export type TransportProvider = {
   baseUrl: string;
   requestTimeoutMs: number;
   /**
+   * Whether tools may be forwarded to this provider.
+   *
+   * `undefined` means unknown, and unknown forwards. See `ProviderConfig.supportsTools`.
+   */
+  supportsTools?: boolean;
+  /**
    * How long a stream may go without producing a byte.
    *
    * Distinct from `requestTimeoutMs` on purpose: a long generation is legitimate
@@ -41,6 +47,12 @@ export function wireBody(request: ChatRequest, stream: boolean): string {
   }
   if (request.stop !== undefined) {
     body.stop = request.stop;
+  }
+  if (request.tools !== undefined) {
+    body.tools = request.tools;
+    if (request.toolChoice !== undefined) {
+      body.tool_choice = request.toolChoice;
+    }
   }
   if (stream) {
     body.stream = true;
