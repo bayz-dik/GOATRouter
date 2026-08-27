@@ -123,6 +123,28 @@ describe("provider identity mapping", () => {
     expect(model.providers[0]!.iconKey).toBe("custom");
   });
 
+  it("resolves a hostile kind descriptor to the local generic mark", () => {
+    // 9D extends the Phase 7 rule to `custom-openai`: the kind is a *key*, so markup,
+    // a URL, and a data URI are all simply unknown keys and fall back to `generic`.
+    // There is no code path that turns provider metadata into an asset reference.
+    for (const hostile of [
+      '<svg onload="window.__iconXss = true"></svg>',
+      "https://evil.example.com/logo.svg",
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+      "../../etc/passwd",
+      "custom-openai\u0000",
+      "CUSTOM-OPENAI",
+      "",
+    ]) {
+      const model = buildLiveViewModel({
+        summary: summary(),
+        providers: [providerRow({ kind: hostile as never })],
+      });
+      expect(model.providers[0]!.iconKey).toBe("generic");
+    }
+    expect((window as unknown as { __iconXss?: boolean }).__iconXss).toBeUndefined();
+  });
+
   it("keeps duplicate display names distinguishable by id", () => {
     const model = buildLiveViewModel({
       summary: summary(),

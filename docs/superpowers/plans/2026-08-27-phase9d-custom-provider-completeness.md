@@ -100,10 +100,10 @@ export function assertResolvedAddressAllowed(address: string, policy: EgressPoli
 
 **Create:** `packages/providers/test/custom-adversarial.test.ts`, `scripts/custom-provider-smoke.mjs`
 
-- [ ] RED `custom-adversarial.test.ts`: a provider-supplied icon descriptor that is markup, a URL, or a data URI resolves to the local generic mark (extending the Phase 7 rule to `custom-openai`); a 5 MiB discovery response is refused; a discovery payload with 50,000 models is capped at 500; a model name containing `<script>` is skipped; an error body containing a credential sentinel never reaches a stored row or a response; a hostile `Host` header cannot be injected through config; a provider whose base URL resolves to `169.254.169.254` is refused at connect even if DNS changed after creation.
-- [ ] `scripts/custom-provider-smoke.mjs`: real listener; register a `custom-openai` relay against a real loopback origin with `allowLoopback: true` and a custom header; prove discovery, chat, and test-connection work; register a second provider targeting `169.254.169.254` and prove creation is refused; prove a denied header is refused; scan db/wal/shm/logs/responses for the credential and error-body sentinels.
-- [ ] Verify: `node scripts/custom-provider-smoke.mjs` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add Bayz custom provider adversarial suite and smoke`
+- [x] RED `custom-adversarial.test.ts`: a provider-supplied icon descriptor that is markup, a URL, or a data URI resolves to the local generic mark (extending the Phase 7 rule to `custom-openai`); a 5 MiB discovery response is refused; a discovery payload with 50,000 models is capped at 500; a model name containing `<script>` is skipped; an error body containing a credential sentinel never reaches a stored row or a response; a hostile `Host` header cannot be injected through config; a provider whose base URL resolves to `169.254.169.254` is refused at connect even if DNS changed after creation.
+- [x] `scripts/custom-provider-smoke.mjs`: real listener; register a `custom-openai` relay against a real loopback origin with `allowLoopback: true` and a custom header; prove discovery, chat, and test-connection work; register a second provider targeting `169.254.169.254` and prove creation is refused; prove a denied header is refused; scan db/wal/shm/logs/responses for the credential and error-body sentinels.
+- [x] Verify: `node scripts/custom-provider-smoke.mjs` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
+- [x] Commit — `test: add Bayz custom provider adversarial suite and smoke`
 
 ## Completion checklist
 
