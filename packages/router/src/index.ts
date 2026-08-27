@@ -60,6 +60,20 @@ export {
 } from "./transport.js";
 export { parseChatChunk, type ChatChunk } from "./chunk.js";
 export {
+  MAX_TOOLS,
+  MAX_TOOL_ARGUMENT_BYTES,
+  MAX_TOOL_CALLS,
+  MAX_TOOL_NAME_LENGTH,
+  parseToolCalls,
+  parseToolChoice,
+  parseToolDefinitions,
+  parseToolMessage,
+  type ToolCall,
+  type ToolChoice,
+  type ToolDefinition,
+  type ToolMessage,
+} from "./tools.js";
+export {
   MAX_SSE_LINE_BYTES,
   MAX_SSE_MALFORMED,
   MAX_SSE_TOTAL_BYTES,

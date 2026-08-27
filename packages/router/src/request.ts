@@ -1,15 +1,27 @@
 import { RouterError } from "./errors.js";
 import { assertModelId } from "./model.js";
+import {
+  MAX_TOOL_ARGUMENT_BYTES,
+  parseToolCalls,
+  parseToolChoice,
+  parseToolDefinitions,
+  parseToolMessage,
+  type ToolCall,
+  type ToolChoice,
+  type ToolDefinition,
+} from "./tools.js";
 
 export const MAX_MESSAGES = 256;
 export const MAX_CONTENT_CHARS = 128000;
 export const MAX_TOKENS_MAX = 128000;
 export const MAX_STOP_SEQUENCES = 4;
 export const MAX_STOP_LENGTH = 64;
+/** Re-exported so a caller sees one number for every tool-shaped blob. */
+export const MAX_TOOL_BLOB_BYTES = MAX_TOOL_ARGUMENT_BYTES;
 /** 1 MiB. A larger body is a bug or an attack, not a prompt. */
 export const MAX_REQUEST_BYTES = 1024 * 1024;
 
-const ROLES = new Set(["system", "user", "assistant"]);
+const ROLES = new Set(["system", "user", "assistant", "tool"]);
 const ALLOWED_KEYS = new Set([
   "model",
   "messages",
@@ -17,14 +29,30 @@ const ALLOWED_KEYS = new Set([
   "maxTokens",
   "topP",
   "stop",
+  "tools",
+  "toolChoice",
 ]);
-const ALLOWED_MESSAGE_KEYS = new Set(["role", "content"]);
+const ALLOWED_MESSAGE_KEYS = new Set([
+  "role",
+  "content",
+  "tool_calls",
+  "tool_call_id",
+]);
 
-export type ChatRole = "system" | "user" | "assistant";
+export type ChatRole = "system" | "user" | "assistant" | "tool";
 
 export type ChatMessage = {
   role: ChatRole;
-  content: string;
+  /**
+   * Absent only on an assistant message that is purely tool calls.
+   *
+   * A provider legitimately returns `content: null` with `tool_calls` populated,
+   * and a client echoes that message back on the next turn. Requiring content
+   * would make a tool roundtrip impossible.
+   */
+  content?: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
 };
 
 export type ChatRequest = {
@@ -34,6 +62,8 @@ export type ChatRequest = {
   maxTokens?: number;
   topP?: number;
   stop?: string[];
+  tools?: ToolDefinition[];
+  toolChoice?: ToolChoice;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -78,18 +108,29 @@ function parseIntegerRange(
   return value;
 }
 
+/**
+ * Validate the message array, threading tool-call ids forward.
+ *
+ * Order matters: a `role: "tool"` result is only valid if an *earlier* assistant
+ * message declared that call id. Walking forward and accumulating known ids is what
+ * makes a fabricated result — one for a call that never happened — impossible to
+ * smuggle in, whether it came from a buggy client or from model output a client
+ * echoed back without checking.
+ */
 function parseMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MESSAGES) {
     throw new RouterError("invalid_request", "messages");
   }
+
+  const knownCallIds = new Set<string>();
   return value.map((entry) => {
     if (!isPlainObject(entry)) {
       throw new RouterError("invalid_request", "message-shape");
     }
     for (const key of Object.keys(entry)) {
       if (!ALLOWED_MESSAGE_KEYS.has(key)) {
-        // Rejecting extras keeps tool-call and multimodal payloads out until
-        // they are actually implemented and verified.
+        // Rejecting extras keeps multimodal payloads out until they are actually
+        // implemented and verified.
         throw new RouterError("invalid_request", "message-unknown-key");
       }
     }
@@ -97,15 +138,57 @@ function parseMessages(value: unknown): ChatMessage[] {
     if (typeof role !== "string" || !ROLES.has(role)) {
       throw new RouterError("invalid_request", "message-role");
     }
+
+    if (role === "tool") {
+      const parsed = parseToolMessage(
+        {
+          role: "tool",
+          tool_call_id: entry.tool_call_id,
+          content: entry.content,
+        },
+        knownCallIds,
+      );
+      return {
+        role: "tool" as ChatRole,
+        content: parsed.content,
+        toolCallId: parsed.toolCallId,
+      };
+    }
+
+    const toolCalls =
+      entry.tool_calls === undefined ? undefined : parseToolCalls(entry.tool_calls);
+    if (toolCalls !== undefined) {
+      if (role !== "assistant") {
+        // Only an assistant makes tool calls. A user message carrying them would be
+        // an attempt to inject a call BAYZ never received from a model.
+        throw new RouterError("invalid_request", "message-tool-calls-role");
+      }
+      for (const call of toolCalls) {
+        knownCallIds.add(call.id);
+      }
+    }
+
     const content = entry.content;
+    // An assistant message that is purely tool calls legitimately has no content.
+    const contentOptional = role === "assistant" && toolCalls !== undefined;
+    if (content === undefined || content === null) {
+      if (!contentOptional) {
+        throw new RouterError("invalid_request", "message-content");
+      }
+      return { role: role as ChatRole, ...(toolCalls === undefined ? {} : { toolCalls }) };
+    }
     if (
       typeof content !== "string" ||
-      content.length === 0 ||
+      (content.length === 0 && !contentOptional) ||
       content.length > MAX_CONTENT_CHARS
     ) {
       throw new RouterError("invalid_request", "message-content");
     }
-    return { role: role as ChatRole, content };
+    return {
+      role: role as ChatRole,
+      content,
+      ...(toolCalls === undefined ? {} : { toolCalls }),
+    };
   });
 }
 
@@ -182,6 +265,26 @@ export function parseChatRequest(input: unknown): ChatRequest {
   }
   if (input.stop !== undefined) {
     request.stop = parseStop(input.stop);
+  }
+  if (input.tools !== undefined) {
+    request.tools = parseToolDefinitions(input.tools);
+  }
+  if (input.toolChoice !== undefined) {
+    if (request.tools === undefined) {
+      // Naming a tool that was never declared cannot be honoured, and silently
+      // dropping the choice would leave the caller believing it was applied.
+      throw new RouterError("invalid_request", "tool-choice-without-tools");
+    }
+    const choice = parseToolChoice(input.toolChoice);
+    if (typeof choice === "object") {
+      const declared = request.tools.some(
+        (tool) => tool.function.name === choice.function.name,
+      );
+      if (!declared) {
+        throw new RouterError("invalid_request", "tool-choice-unknown-tool");
+      }
+    }
+    request.toolChoice = choice;
   }
 
   // Checked last, on the validated copy, so the cap reflects what will actually
