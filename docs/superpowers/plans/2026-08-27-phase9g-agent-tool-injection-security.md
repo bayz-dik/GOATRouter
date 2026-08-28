@@ -116,11 +116,59 @@ export function lookupCapability(name: unknown): CapabilityHandler | undefined;
 **Modify:** `packages/gateway/src/normalize.ts`, `apps/server/src/routes/chat.ts`, `apps/server/package.json`
 **Test:** `apps/server/test/tool-dispatch.test.ts`
 
-- [ ] RED `tool-dispatch.test.ts`: a tool call in an upstream response is dispatched only when the identity holds the capability's scope; an undispatchable call is returned to the client as a tool call for the client to handle (BAYZ does not silently swallow it), with a documented note that client-side tools remain the client's business; a dispatched capability's output becomes a `role:"tool"` message on the next turn; dispatch failures surface as a fixed-code error with no model text echoed; no tool argument reaches telemetry, logs, or the database.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
-- [ ] Commit — `feat: dispatch Bayz tool calls through the capability registry`
+- [x] RED `tool-dispatch.test.ts`: a tool call in an upstream response is dispatched only when the identity holds the capability's scope; an undispatchable call is returned to the client as a tool call for the client to handle (BAYZ does not silently swallow it), with a documented note that client-side tools remain the client's business; a dispatched capability's output becomes a `role:"tool"` message on the next turn; dispatch failures surface as a fixed-code error with no model text echoed; no tool argument reaches telemetry, logs, or the database.
+- [x] Verify RED. Module-load RED first (`Cannot find module '../src/tool-loop.js'`). 17 tests.
+- [x] GREEN. New `apps/server/src/tool-loop.ts`; `apps/server/package.json` gains `@bayz/capability`; nine 9G codes added to the HTTP error map. **`packages/gateway/src/normalize.ts` was not modified** — see below.
+- [x] Verify: `npm run test --workspace @bayz/server` exits 0 (**336/336**, up from 319); `@bayz/router` **289/289**; `tsc --noEmit` clean for both; `node scripts/api-smoke.mjs` **70/70** (62/62 was the Phase 6 figure this plan was written against), `stream-smoke` 63/63, `router-smoke` 46/46.
+- [x] Commit — `feat: dispatch Bayz tool calls through the capability registry`
+
+**Findings worth carrying forward:**
+- **A live bug in `wireBody`, found by this task and fixed here.** `ChatMessage` uses
+  camelCase (`toolCalls`, `toolCallId`); the OpenAI wire contract is snake_case.
+  `wireBody` serialized `request.messages` directly, so **every** tool roundtrip reached
+  the upstream with `toolCalls` and `toolCallId` — names no provider recognises. The
+  model was handed a conversation with the tool call and its result effectively missing.
+  The 9B suite could not see it: its only outbound assertion was that the result
+  *string* appeared somewhere in the body, which held either way because `content` needs
+  no renaming. `wireMessages()` now translates, and
+  `tools-response.test.ts` pins the key names.
+- **`normalize.ts` was left alone, contrary to the plan's Modify list.** The gateway
+  maps client request fields; nothing about server-side dispatch belongs there, and the
+  `role:"tool"` messages the loop synthesises never pass through it. Touching it would
+  have been change for the sake of matching a checklist.
+- **The first turn must pass the request through untouched.** Seeding the loop with
+  `[...request.messages]` turned a `{}` payload's clean 400 `invalid_request` into a 500
+  on a spread of `undefined`. `router.chat` owns validation, so the conversation is only
+  reconstructed *after* a turn returns tool calls — at which point the body is known to
+  have validated. Caught by `chat-api.test.ts`, which pins that refusal.
+- **A split batch is refused, not half-run.** Running the registered calls and handing
+  the client-side ones back would perform a side effect and then return a conversation
+  neither party can reconcile: the client cannot know which calls already ran, and the
+  model's next turn would be missing a result it expects.
+- **An unregistered call is forwarded, not refused.** BAYZ has nothing to run, and
+  inventing a refusal would break every client that declares its own tools. This is also
+  why a model naming `read_provider_credentials` gets a forwarded tool call rather than
+  an error: the guarantee is that no capability reads a secret, not that a name was
+  blocked.
+- **Streaming does not dispatch, and the test says so rather than leaving it
+  ambiguous.** A stream's 200 and headers are committed with the first byte, so a
+  dispatch failure could only be a terminal event inside an already-successful response,
+  while the non-streaming path can still answer 403 or 400. Forwarding tool calls to a
+  streaming client is the correct fallback — exactly the 9B behaviour — and the handler
+  is asserted not to run.
+- **The reachable capability namespace is the intersection of two patterns.**
+  `CAPABILITY_NAME_PATTERN` admits `.`; the router's 9B `TOOL_NAME_RE` does not. So
+  `echo.text` is registrable and permanently unreachable — a model naming it has its
+  whole response refused by `parseToolCalls` before the registry is consulted. Safe but
+  silent, so it is pinned by a test.
+- **The leak scan runs on both the rejected and the accepted path.** The successful path
+  is where an argument could most plausibly be persisted, since it travelled to a
+  handler and back out to the model. Telemetry rows, log lines, and the raw
+  `bayz.db`/`-wal`/`-shm` bytes are all scanned, with a positive check that the scan
+  reads real content.
+- **Three mutations proved the suite can fail**, then were reverted: half-running a
+  split batch (1 red), letting a tool result widen the effective scope (1 red), and
+  removing the turn budget (1 red).
 
 ### Task 4 — Injection adversarial suite
 

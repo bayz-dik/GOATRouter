@@ -15,6 +15,7 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { handleDomain, mapDomainError } from "../http-errors.js";
 import { principalOf, requireScope } from "../scopes.js";
+import { runToolLoop } from "../tool-loop.js";
 import type { BayzRuntime } from "../runtime.js";
 
 /**
@@ -183,7 +184,19 @@ export function registerChatRoutes(app: FastifyInstance, runtime: BayzRuntime): 
 
     return handleDomain(request, reply, async () => {
       const normalized = normalizeRequest(profile, request.body);
-      const result = await runtime.router.chat(normalized, {
+      /*
+       * 9G: tool calls this deployment has a registered capability for are dispatched
+       * server-side; everything else is forwarded to the client exactly as before.
+       *
+       * The registry is empty unless an operator registers something, so with the
+       * shipped configuration `runToolLoop` makes one router call and returns what
+       * Phase 9B returned. The principal is passed rather than re-derived, so authority
+       * comes from the authenticated identity and not from anything the model said.
+       */
+      const result = await runToolLoop({
+        router: runtime.router,
+        principal: principalOf(request),
+        request: normalized as unknown as Record<string, unknown>,
         requestId: String(request.id),
       });
 

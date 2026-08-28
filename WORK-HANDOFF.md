@@ -24,10 +24,13 @@
     `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, `40b517b`, + Task 9), `runtime:verify`
     green.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
-  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–2 **COMPLETE**
-    (`0539536`, + Task 2). Task 3 is next and **NOT STARTED**.
+  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–3 **COMPLETE**
+    (`0539536`, `d243a3f`, + Task 3). Task 4 is next and **NOT STARTED**.
     New package `@bayz/capability`; `runtime:build` is now **twelve** targets, with
     `@bayz/capability` after `@bayz/identity` per the spec §4 order.
+    Task 3 also fixed a **live 9B wire bug**: `wireBody` emitted the internal camelCase
+    `toolCalls`/`toolCallId` instead of `tool_calls`/`tool_call_id`, so every tool
+    roundtrip reached the upstream with the call and result unrecognisable.
   - 9H–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -67,15 +70,15 @@
 
 ## Verified totals
 
-Current as of 9F Task 9. Every figure below was measured on this device, not carried
+Current as of 9G Task 3. Every figure below was measured on this device, not carried
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
 - `@bayz/storage`: 246 tests pass (schema is **v11**).
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 121 tests pass.
-- `@bayz/router`: 288 tests pass.
-- `@bayz/server`: 319 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/router`: 289 tests pass.
+- `@bayz/server`: 336 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: 48.
 - `@bayz/dashboard`: 340 tests pass across 23 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
@@ -1824,14 +1827,105 @@ Verified: `@bayz/capability` **48/48** (18 registry + 30 dispatch), `@bayz/ident
 targets, no `node:fs` / `node:child_process` / `node:net` / `node:http` / secret-store
 import anywhere in `packages/capability/src`.
 
+### Task 3 — Gateway and router wiring
+
+`apps/server/src/tool-loop.ts`, wired into `apps/server/src/routes/chat.ts`.
+17 tests in `apps/server/test/tool-dispatch.test.ts`, all against a real runtime, a
+real SQLite database, and a real loopback origin scripted to emit hostile tool calls.
+
+**One distinction carries the design.** A tool call BAYZ has a registered capability
+for is BAYZ's to run; everything else belongs to the client. The registry is empty
+unless an operator registers something, so with the shipped configuration `runToolLoop`
+makes exactly one router call and returns exactly what Phase 9B returned — which is why
+adding it changes no existing deployment's behaviour, asserted by a test.
+
+An unregistered call is **forwarded, not refused**. BAYZ has nothing to run, and
+inventing a refusal would break every client that declares its own tools. That is also
+why a model naming `read_provider_credentials` gets a forwarded tool call rather than an
+error: the guarantee is that no capability reads a secret, not that a name was blocked.
+
+Authority is re-established from the authenticated principal on **every** turn, never
+from the previous turn's output. `dispatchToolCalls` checks the scope before calling a
+handler's `parse`, and the HTTP test measures that with a counter — a chat-only identity
+naming a `routes.write` capability gets 403 with `parsed() === 0`.
+
+#### A live bug this task found and fixed
+
+`wireBody` serialized `request.messages` directly. `ChatMessage` is BAYZ's internal
+shape and uses camelCase (`toolCalls`, `toolCallId`); the OpenAI wire contract is
+snake_case. So **every tool roundtrip since 9B** reached the upstream with `toolCalls`
+and `toolCallId` — names no provider recognises — handing the model a conversation with
+the tool call and its result effectively missing. It would answer without the data it
+asked for, or ask again.
+
+The 9B suite could not see it. Its only assertion on the outbound body was that the
+result *string* appeared somewhere in it, which held either way because `content` needs
+no renaming. `wireMessages()` now translates the three fields explicitly, assembling
+them one at a time so a field added to `ChatMessage` later cannot reach the wire without
+a decision, and `packages/router/test/tools-response.test.ts` pins the key names.
+
+#### Decisions worth carrying forward
+
+- **`packages/gateway/src/normalize.ts` was not modified**, contrary to the plan's
+  Modify list. The gateway maps *client request* fields; nothing about server-side
+  dispatch belongs there, and the `role:"tool"` messages the loop synthesises never pass
+  through it. Editing it to match a checklist would have been change without a reason.
+- **The first turn passes the request through untouched.** Seeding the loop with
+  `[...request.messages]` turned a `{}` payload's clean 400 `invalid_request` into a 500
+  on a spread of `undefined`. `router.chat` owns request validation, so the conversation
+  is only reconstructed *after* a turn comes back with tool calls — at which point the
+  body is known to have validated. Caught by `chat-api.test.ts`, which pins that refusal.
+- **A split batch is refused, not half-run.** Running the registered calls and handing
+  the client-side ones back would perform a side effect and then return a conversation
+  neither party can reconcile: the client cannot know which calls already ran, and the
+  model's next turn would be missing a result it expects. `tool_dispatch_split`, and
+  nothing ran.
+- **The loop is bounded in turns, not wall-clock** — `MAX_DISPATCH_TURNS = 4`. A turn is
+  a real upstream request that costs money and holds a socket, so the count is what an
+  operator can reason about and what a hostile model inflates. Reaching the last turn
+  with another call pending is `tool_dispatch_exhausted` rather than a conversation whose
+  final turn is an unanswered call.
+- **Streaming does not dispatch, stated rather than left ambiguous.** A stream's 200 and
+  headers are committed with the first byte, so a dispatch failure could only be a
+  terminal event inside an already-successful response, while the non-streaming path can
+  still answer 403 or 400. Forwarding tool calls to a streaming client is the correct
+  fallback — exactly the 9B behaviour — and a test asserts the handler does not run.
+- **The reachable capability namespace is the intersection of two patterns.**
+  `CAPABILITY_NAME_PATTERN` admits `.`; the router's 9B `TOOL_NAME_RE` does not. A
+  capability named `echo.text` is registrable and permanently unreachable, because a
+  model naming it has its whole response refused by `parseToolCalls` before the registry
+  is consulted. Safe, but silent, so a test pins it.
+- **Nine 9G codes were added to the HTTP error map.** 400 for a malformed argument or an
+  exhausted loop (the remedy is a different request, not a retry), 403 for a scope
+  refusal, 502 for a capability that threw — the client did nothing wrong. Every message
+  behind them is fixed vocabulary, because all of them are produced in response to model
+  output.
+- **The leak scan covers the accepted path too**, not just the rejected one. A successful
+  dispatch is where an argument could most plausibly be persisted: it travelled to a
+  handler, came back, and went out to the model again. Telemetry rows, captured log
+  lines, and the raw `bayz.db` / `-wal` / `-shm` bytes are all scanned, with a positive
+  check that the scan is reading real content.
+
+**Three mutations proved the suite can fail**, then were reverted: half-running a split
+batch (1 red), letting a tool result widen the effective scope (1 red), and removing the
+turn budget (1 red).
+
+Verified: `@bayz/server` **336/336** (up from 319), `@bayz/router` **289/289** (up from
+288), `tsc --noEmit` clean for both, `api-smoke` 70/70, `stream-smoke` 63/63,
+`router-smoke` 46/46. `apps/server/src/tool-loop.ts` touches no secret surface — no
+`SecretStorage`, no `withCredential`, no `node:fs`, no `node:child_process`.
+
 ### 9G resume point
 
-Task 3 — gateway and router wiring. **NOT STARTED.** Next concrete step: RED
-`apps/server/test/tool-dispatch.test.ts`, dispatching an upstream response's tool calls
-only when the identity holds the capability's scope, returning an undispatchable call to
-the client rather than swallowing it, turning a dispatched output into a `role:"tool"`
-message on the next turn, and asserting no tool argument reaches telemetry, logs, or the
-database.
+Task 4 — injection adversarial suite. **NOT STARTED.** Next concrete step: RED
+`packages/capability/test/injection-adversarial.test.ts`, each case asserting a
+*structural* refusal rather than a filtered string — a hostile prompt producing no
+capability match, `secrets.read` / `providers.credential` / `admin.export` all
+`unknown_capability`, traversal and `file://` and `169.254.169.254` arguments refused by
+schema with a note that no filesystem or network capability is registered at all, a
+Unicode homoglyph not matching, `__proto__` not resolving — plus a source scan over
+`packages/capability/src` for `SecretStorage`, `scopedSecretStorage`, `withCredential`,
+`node:fs`, and `node:child_process`.
 
 ## Phase 9 GOAT — planning state
 

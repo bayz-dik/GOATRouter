@@ -81,6 +81,29 @@ const STATUS_BY_CODE: Record<string, number> = {
   all_routes_failed: 502,
   timeout: 504,
 
+  // 9G tool dispatch. All four are produced in response to *model output*, so every
+  // message behind them is fixed vocabulary with nothing interpolated.
+  //
+  // 400 for a bad argument or an exhausted loop: the model asked for something
+  // malformed or unbounded, and the remedy is a different request or a different model,
+  // not a retry. 403 for a scope refusal, matching `forbidden`. 502 for a capability
+  // that threw, matching every other "something downstream of us failed" code — the
+  // client did nothing wrong.
+  invalid_tool_call: 400,
+  invalid_tool_arguments: 400,
+  tool_arguments_too_large: 413,
+  too_many_tool_calls: 400,
+  tool_dispatch_exhausted: 400,
+  tool_dispatch_split: 400,
+  dispatch_depth_exceeded: 400,
+  capability_forbidden: 403,
+  capability_failed: 502,
+  // A model naming a capability that does not exist is not an error the *client* can
+  // act on, and the chat route forwards such a call rather than refusing it. The code
+  // is mapped anyway so a future caller that does surface it gets 400 rather than a
+  // generic 500.
+  unknown_capability: 400,
+
   // Storage
   storage_unavailable: 503,
   master_key_invalid: 500,

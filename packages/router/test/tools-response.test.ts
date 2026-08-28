@@ -215,6 +215,61 @@ test("wireBody omits tool_choice when no tools are present", () => {
   assert.equal("tool_choice" in body, false);
 });
 
+test("wireBody renames the internal tool fields to the wire contract", () => {
+  /*
+   * A regression guard for a bug 9G Task 3 found in this file's own subject.
+   *
+   * `ChatMessage` is BAYZ's internal shape and uses `toolCalls` / `toolCallId`; the
+   * OpenAI wire contract is `tool_calls` / `tool_call_id`. `wireBody` used to serialize
+   * `request.messages` directly, so both reached the upstream under names it does not
+   * recognise — the model was handed a conversation with the tool call and its result
+   * effectively missing, and would answer without the data it asked for or ask again.
+   *
+   * The 9B suite could not see it: the only assertion on the outbound body was that the
+   * result *string* appeared somewhere in it, which held either way because `content`
+   * needs no renaming. Asserting the key names is what makes the failure visible.
+   */
+  const body = JSON.parse(
+    wireBody(
+      {
+        model: "m",
+        messages: [
+          { role: "user", content: "weather?" },
+          {
+            role: "assistant",
+            toolCalls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "get_weather", arguments: '{"city":"x"}' },
+              },
+            ],
+          },
+          { role: "tool", toolCallId: "call_1", content: "sunny" },
+        ],
+      },
+      false,
+    ),
+  ) as { messages: Array<Record<string, unknown>> };
+
+  const [user, assistant, tool] = body.messages;
+  assert.deepEqual(Object.keys(user!).sort(), ["content", "role"]);
+
+  assert.deepEqual(Object.keys(assistant!).sort(), ["content", "role", "tool_calls"]);
+  // Explicitly `null`, which is what the contract specifies for an assistant turn that
+  // is purely tool calls. Omitting the key makes some upstreams reject the message.
+  assert.equal(assistant!.content, null);
+  assert.equal(
+    (assistant!.tool_calls as Array<{ id: string }>)[0]?.id,
+    "call_1",
+  );
+  assert.equal("toolCalls" in assistant!, false, "the internal name reached the wire");
+
+  assert.deepEqual(Object.keys(tool!).sort(), ["content", "role", "tool_call_id"]);
+  assert.equal(tool!.tool_call_id, "call_1");
+  assert.equal("toolCallId" in tool!, false, "the internal name reached the wire");
+});
+
 test("a provider declared without tool support refuses rather than silently dropping", async () => {
   // The honest failure. A silent strip would hand the client a normal prose answer
   // that never mentions its tools were ignored, which reads as the model declining

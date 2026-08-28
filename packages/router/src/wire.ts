@@ -40,6 +40,45 @@ export type TransportProvider = {
 };
 
 /**
+ * Render the validated messages in the OpenAI wire shape.
+ *
+ * `ChatMessage` is BAYZ's internal shape and uses camelCase (`toolCalls`,
+ * `toolCallId`); the wire contract is snake_case. Without this translation an
+ * assistant tool-call message and its `role: "tool"` answer both reach the upstream
+ * under names it does not recognise, so the model is handed a conversation with the
+ * tool call and its result effectively missing — it answers without the data it asked
+ * for, or asks again.
+ *
+ * That was live for the whole tool-roundtrip path and invisible to the 9B suite, which
+ * asserted only that the result *string* appeared somewhere in the outbound body — true
+ * either way, because `content` needs no renaming. Found by 9G Task 3, which had to read
+ * the field names to prove a dispatched capability's output reaches the model.
+ *
+ * Fields are assembled one at a time rather than spread, so a field added to
+ * `ChatMessage` later cannot reach the wire without a decision here.
+ */
+function wireMessages(messages: ChatRequest["messages"]): Record<string, unknown>[] {
+  return messages.map((message) => {
+    const wire: Record<string, unknown> = { role: message.role };
+    if (message.content !== undefined) {
+      wire.content = message.content;
+    } else if (message.toolCalls !== undefined) {
+      // An assistant message that is purely tool calls carries an explicit `null`,
+      // which is what the OpenAI contract specifies. Omitting the key entirely makes
+      // some upstreams reject the message outright.
+      wire.content = null;
+    }
+    if (message.toolCalls !== undefined) {
+      wire.tool_calls = message.toolCalls;
+    }
+    if (message.toolCallId !== undefined) {
+      wire.tool_call_id = message.toolCallId;
+    }
+    return wire;
+  });
+}
+
+/**
  * Translate the validated request into the OpenAI wire shape.
  *
  * Only fields the caller actually supplied are emitted. `stream` is emitted only
@@ -50,7 +89,7 @@ export type TransportProvider = {
 export function wireBody(request: ChatRequest, stream: boolean): string {
   const body: Record<string, unknown> = {
     model: request.model,
-    messages: request.messages,
+    messages: wireMessages(request.messages),
   };
   if (request.temperature !== undefined) {
     body.temperature = request.temperature;
