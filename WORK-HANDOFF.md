@@ -39,29 +39,33 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–4 **COMPLETE**.
-    Tasks 5–6 **NOT STARTED**.
+  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–5 **COMPLETE**.
+    Task 6 **NOT STARTED**.
     `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
     `tests/matrix-integrity.test.mjs` (9/9), `scripts/client-conformance.mjs` (**55/55**),
-    `docs/clients/` (4 guides + index), `tests/client-docs.test.mjs` (6/6), and
-    `scripts/verify-opencode.mjs` (**16 VERIFIED / 1 UNVERIFIED, exit 0**) with
-    transcripts in `docs/transcripts/opencode/`.
-    Matrix tally **29 VERIFIED / 2 PARTIAL / 0 BLOCKED / 71 UNVERIFIED**.
-    Two rows carry evidence: `generic-openai` (13 V, 2 P, `smoke:` citations) and
-    `opencode` (16 V, `transcript:` citations). **Antigravity and Hermes remain
-    entirely `UNVERIFIED`**, so the Core 3 gate is still expected to block.
+    `docs/clients/` (4 guides + index), `tests/client-docs.test.mjs` (6/6),
+    `scripts/verify-opencode.mjs` (**16 VERIFIED / 1 UNVERIFIED, exit 0**),
+    `scripts/verify-hermes.mjs` (**17 VERIFIED, exit 0**), and
+    `scripts/verify-antigravity.mjs` (client absent, exit 0), with transcripts in
+    `docs/transcripts/opencode/` and `docs/transcripts/hermes/`.
+    Matrix tally **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED**.
+    Three rows carry evidence: `generic-openai` (13 V, 2 P, `smoke:` citations),
+    `opencode` (16 V) and `hermes` (17 V), both `transcript:` citations.
+    **`antigravity` is absent from this host and wholly `UNVERIFIED`**, so the Core 3
+    gate must still block a release.
     Status vocabulary **deviates from the plan text deliberately**:
     `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, with `PASS`/`FAIL` refused as
     placeholders. `BLOCKED` (tried, did not work) vs `UNVERIFIED` (not tried) is the split
     that matters. Consequence for Task 6: the gate must block on **both**.
     Device reality corrected at Task 1: **`hermes` is present** on this host
-    (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent.
+    (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent, and
+    Task 5 therefore verified it for real instead of only shipping a harness.
     Task 2 fixed a **live 400-vs-500 bug**: no `GatewayError` code was mapped in
     `apps/server/src/http-errors.ts`, so a malformed body returned `500 internal_error`
     and told a client to retry forever. Four codes now map to 400.
-    **Task 4 fixed three defects that protocol conformance could not see** — see the
-    9H resume point below; the short version is that before Task 4 **no real OpenCode
-    session could reach a provider at all**.
+    **Tasks 4–5 found four defects protocol conformance could not see** — see the 9H
+    resume point; the short version is that before Task 4 no real OpenCode session could
+    reach a provider at all, and before Task 5 no Hermes tool result could get back.
   - 9I–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -930,7 +934,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–4 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6, `verify-opencode` 16V/1U exit 0; 29 VERIFIED / 2 PARTIAL / 71 UNVERIFIED; Task 5 (Antigravity + Hermes attempts) next |
+| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–5 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 54 UNVERIFIED; Task 6 (release gate) next |
 | 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2620,27 +2624,97 @@ Verified sequentially, one command per step: `@bayz/server` **338/338**, `@bayz/
 `usage-smoke` **119/119**, `proxy-ux-smoke` **127/127**, `@bayz/server` build exit 0.
 `git diff --check` clean.
 
+### Task 5 — Antigravity and Hermes verification attempts
+
+`scripts/verify-antigravity.mjs` (client absent, exit 0), `scripts/verify-hermes.mjs` +
+`-config` + `-scenarios` + `-part1` + `-part2` + `-run` (**17 VERIFIED, exit 0**),
+`docs/transcripts/hermes/` (README + 9 transcripts), and `scripts/verify-client-lib.mjs`
+holding the BAYZ-side fixtures both harnesses share.
+
+**Hermes is installed here, so it was verified for real** — nine scenarios against the actual
+`hermes` binary (v0.20.5) as a child process. Every scenario uses a throwaway `HERMES_HOME`
+**and** `HOME`: this agent is itself Hermes, and redirecting `HERMES_HOME` alone leaves some
+paths under the real `$HOME`, so a stray write could destroy the session doing the
+verification.
+
+**Antigravity is absent.** `scripts/verify-antigravity.mjs` prints
+`UNVERIFIED: antigravity not installed on this host`, writes no transcript, and exits 0 — so
+`tests/matrix-integrity.test.mjs` cannot let any of its 17 cells read `VERIFIED`, because
+there is nothing on disk to cite. Presence is checked as an **executable file on PATH**, not
+`command -v`, because Task 1 caught exactly that error when `command -v continue` "found" the
+shell builtin. If a host *does* have the client, the script exits **non-zero** rather than
+guessing its configuration form: a harness that invents field names produces a transcript that
+looks like evidence and is not.
+
+#### The fourth defect, and it was worse in kind
+
+Task 4's three broke requests before they reached a provider. This one broke the roundtrip
+*after* the work was already done. The message allow-list in `packages/router/src/request.ts`
+permitted `role`, `content`, `tool_calls`, `tool_call_id` — and Hermes sends
+`{role, tool_call_id, name, content}`, where `name` is part of the OpenAI chat contract. BAYZ
+delivered the tool call, Hermes executed it, and the result was rejected on the way back with
+`invalid_request (message-unknown-key)`.
+
+`name` is now validated and bounded at 64 characters (matching the tool-name bound) and
+deliberately **not forwarded**: `tool_call_id` already identifies the call unambiguously, so
+echoing a client-supplied string into the provider request would add untrusted data for no
+gain. It is validated anyway — "we drop it" is not a reason to skip bounding a value that is
+still parsed and held. Three tests pin it, and the allow-list assertion that previously used
+`name` to prove the list closed was **retargeted at `metadata` and `function_call`** rather
+than deleted, so the list is still proven closed rather than merely widened.
+
+#### Two harness bugs, each costing a full run
+
+- **`api_key: ${VAR}` in `config.yaml` is load-bearing.** The first probe wrote the key only
+  into `.env`; Hermes answered `HTTP 401: A valid API token is required` with **zero** requests
+  reaching BAYZ. The YAML must reference the variable, which is what the live file does.
+- **`-t` takes toolset names, not tool names.** `-t execute_code` made Hermes exit 2 before
+  sending anything, which would have recorded both tool cells `BLOCKED` against BAYZ for a
+  mistake in the harness. `terminal` is a real toolset, read from
+  `/usr/local/lib/hermes-agent/toolsets.py`.
+
+Both are recorded in the harness comments, because the next person to touch it will otherwise
+make the same two mistakes.
+
+#### Where the two verified rows disagree, on measured grounds
+
+`hermes/models.list` is `VERIFIED` (10 `GET /v1/models` calls in one one-shot run, all 200)
+where `opencode/models.list` is `UNVERIFIED` (the client reads its own config map and never
+touches the endpoint). Neither is a defect. Two verified rows differing because the clients
+genuinely differ is the matrix working as intended.
+
+Also worth carrying: Hermes reports transport failures as `HTTP <status>: <message>` on stdout
+and **exits 0**, so exit code alone cannot distinguish success from refusal for this client.
+Every authentication and key assertion therefore checks for the *absence of the completion*
+plus the error text, not the exit status.
+
+Verified sequentially, one command per step: `@bayz/router` **294/294**, `@bayz/server`
+**338/338**, `@bayz/capability` **72/72**, `matrix-integrity` **9/9**, `client-docs` **6/6**,
+`runtime-structure` **1/1**, `client-conformance` **55/55**, `injection-smoke` **179/179**,
+`verify-hermes` **17 VERIFIED exit 0**, `verify-antigravity` **exit 0**. Secret scan across
+`docs/transcripts/hermes/` returns nothing. `git diff --check` clean.
+
 ### 9H resume point
 
-Tasks 1–4 **COMPLETE**. Next: **Task 5 — Antigravity and Hermes verification attempts.**
-Create `scripts/verify-hermes.mjs` and `scripts/verify-antigravity.mjs`.
+Tasks 1–5 **COMPLETE**. Next: **Task 6 — Release-blocking gate wiring.** Create
+`scripts/client-gate.mjs`, reading the matrix and blocking on the Core 3 (`opencode`,
+`antigravity`, `hermes`).
 
-**Hermes is present on this host** (v0.20.5), so it must be genuinely driven, not merely
-prepared for. Its configuration differs from OpenCode's at nearly every field and the real
-form was already read from this machine at Task 3: `~/.hermes/config.yaml`, **snake_case**
-`model.base_url`, `api_mode: chat_completions`, **bare** model ids (no provider prefix), and
-the key read from `~/.hermes/.env` under the **host-and-port-derived** variable
-`HERMES_CUSTOM_127_0_0_1_20128_API_KEY`. See `docs/clients/hermes.md`.
+Two modes: `--report` always exits 0 and prints the current status; `--enforce` exits
+**non-zero** on any Core 3 cell that is `UNVERIFIED` **or** `BLOCKED`. The plan text says
+`FAIL`/`UNVERIFIED`; this project's vocabulary has no `FAIL`, and the equivalent is `BLOCKED`
+— the gate must block on both, and on `PARTIAL` only if the plan's mandatory-column rule says
+so (it does not, so `PARTIAL` passes with its limitation named).
 
-**Antigravity is absent**, so its harness ships ready and every cell stays `UNVERIFIED` with
-the absence recorded as the reason — **not `BLOCKED`**, which would claim an attempt was made
-and failed. Both scripts must carry the same refusal-to-self-certify as
-`scripts/verify-opencode.mjs`. Then update both matrix rows from measured evidence only and
-commit `test: attempt Bayz verification against Antigravity and Hermes`.
+**`--enforce` must exit non-zero today**, because `antigravity` is absent and wholly
+`UNVERIFIED`. That is the correct current state and the gate's own test should assert it
+rather than treat it as a failure to fix. Print a table of exactly what blocks.
+
+Then the Phase 9H completion checklist, and STOP — 9I is a separate phase.
 
 Note: verification stays the bounded per-workspace sequence described under "Verification
-is run sequentially on this device". Expect real-client runs to be slow — roughly 20 seconds
-per `opencode run`-equivalent — and run one client process at a time.
+is run sequentially on this device". Real-client runs are slow: ~20 s per `opencode run`,
+~40 s per `hermes -z`, so a full harness pass is minutes. Run one client process at a time.
 
 ## Phase 9 GOAT — planning state
 

@@ -6,7 +6,7 @@ Four guides, one per client row in the compatibility matrix:
 | --- | --- | --- |
 | [`generic-openai.md`](generic-openai.md) | any OpenAI-compatible client | 13 VERIFIED, 2 PARTIAL, 2 UNVERIFIED |
 | [`opencode.md`](opencode.md) | present, `1.18.23` | **16 VERIFIED, 1 UNVERIFIED** |
-| [`hermes.md`](hermes.md) | present, `Hermes Agent v0.20.5` | all 17 cells UNVERIFIED |
+| [`hermes.md`](hermes.md) | present, `Hermes Agent v0.20.5` | **17 VERIFIED** |
 | [`antigravity.md`](antigravity.md) | **absent** | all 17 cells UNVERIFIED |
 
 ## Read this first
@@ -21,12 +21,13 @@ checks. That is what BAYZ *does*. Whether a **specific client** works against it
 separate question, answered only by running that client, and recorded cell by cell in
 [`../superpowers/2026-08-27-bayz-client-compatibility-matrix.md`](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md).
 
-**OpenCode has now been driven against BAYZ for real** — `scripts/verify-opencode.mjs`
-runs the actual binary and 16 of its 17 cells cite a transcript under
-`docs/transcripts/opencode/`. Doing so found three defects the 55 generic protocol checks
-could not see, which is the case for real-client verification stated as a result rather than
-a principle. `hermes` and `antigravity` are still entirely `UNVERIFIED`; their guides say so
-at the top rather than implying otherwise.
+**Two of the three mandated clients have now been driven against BAYZ for real** —
+`scripts/verify-opencode.mjs` (16 of 17 cells) and `scripts/verify-hermes.mjs` (17 of 17),
+each cell citing a transcript under `docs/transcripts/`. Doing so found **four** defects the
+55 generic protocol checks could not see, which is the case for real-client verification
+stated as a result rather than a principle. `antigravity` is not installed here, so all 17 of
+its cells stay `UNVERIFIED` and `scripts/verify-antigravity.mjs` records the absence rather
+than inventing a configuration.
 
 Where a guide shows a client-side config file, that file was **read from this machine**.
 Where a client is not installed, the guide says its configuration form is undocumented here

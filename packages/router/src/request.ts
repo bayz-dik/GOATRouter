@@ -15,6 +15,8 @@ export const MAX_MESSAGES = 256;
 export const MAX_CONTENT_CHARS = 128000;
 export const MAX_TOKENS_MAX = 128000;
 export const MAX_STOP_SEQUENCES = 4;
+/** Matches the tool-name bound: a message `name` names a function. */
+export const MAX_MESSAGE_NAME_LENGTH = 64;
 export const MAX_STOP_LENGTH = 64;
 /** Re-exported so a caller sees one number for every tool-shaped blob. */
 export const MAX_TOOL_BLOB_BYTES = MAX_TOOL_ARGUMENT_BYTES;
@@ -32,11 +34,29 @@ const ALLOWED_KEYS = new Set([
   "tools",
   "toolChoice",
 ]);
+/**
+ * Keys a client may put on a chat message.
+ *
+ * **`name` was added in Phase 9H Task 5, because the real Hermes Agent client sends it on
+ * every `role: "tool"` message** — `{role, tool_call_id, name, content}` — and without it
+ * the whole request failed `invalid_request (message-unknown-key)`. A real tool roundtrip
+ * was impossible for that client: BAYZ delivered the call, Hermes executed it, and the
+ * result message was refused on the way back. See `docs/transcripts/hermes/`.
+ *
+ * `name` is part of the OpenAI chat contract (the function whose result this message
+ * carries, and historically the author name on other roles). It is validated below rather
+ * than merely tolerated, and it is **not forwarded**: `tool_call_id` already identifies the
+ * call unambiguously, so echoing a client-supplied name upstream would add an untrusted
+ * string to the provider request for no gain. Accepting-and-ignoring is safe here in a way
+ * it is not for a *setting* — no behaviour is being silently declined, because the field
+ * carries no instruction.
+ */
 const ALLOWED_MESSAGE_KEYS = new Set([
   "role",
   "content",
   "tool_calls",
   "tool_call_id",
+  "name",
 ]);
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
@@ -137,6 +157,22 @@ function parseMessages(value: unknown): ChatMessage[] {
     const role = entry.role;
     if (typeof role !== "string" || !ROLES.has(role)) {
       throw new RouterError("invalid_request", "message-role");
+    }
+
+    /*
+     * `name` is validated even though it is dropped rather than forwarded. Accepting a
+     * key without bounding it would let a client push an unbounded string through the
+     * message loop, and "we ignore it" is not a reason to skip validation — the value
+     * still has to be parsed and held before it is discarded.
+     */
+    if (entry.name !== undefined) {
+      if (
+        typeof entry.name !== "string" ||
+        entry.name.length === 0 ||
+        entry.name.length > MAX_MESSAGE_NAME_LENGTH
+      ) {
+        throw new RouterError("invalid_request", "message-name");
+      }
     }
 
     if (role === "tool") {

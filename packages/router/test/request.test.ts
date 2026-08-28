@@ -82,10 +82,21 @@ test("messages must be a non-empty array of valid entries", () => {
   rejects({ ...VALID, messages: [{ role: "user", content: "" }] });
   rejects({ ...VALID, messages: [{ role: "user", content: 42 }] });
   rejects({ ...VALID, messages: [{ role: "user", content: null }] });
+  /*
+   * `name` used to be listed here as an unknown key. Phase 9H Task 5 admitted it, because
+   * the real Hermes client sends it on every `role: "tool"` message and the refusal made a
+   * tool roundtrip impossible for that client — see the `name` tests at the end of this
+   * file. The assertion is kept, pointed at a key that is genuinely not in the OpenAI
+   * message contract, so the allow-list is still proven closed rather than merely widened.
+   */
   rejects({
     ...VALID,
-    messages: [{ role: "user", content: "hi", name: "extra" }],
+    messages: [{ role: "user", content: "hi", metadata: { trace: "x" } }],
   }, "unknown message key");
+  rejects({
+    ...VALID,
+    messages: [{ role: "user", content: "hi", function_call: { name: "f" } }],
+  }, "legacy function_call on a message");
 });
 
 test("message and content limits are enforced", () => {
@@ -186,4 +197,66 @@ test("the parsed request contains no key the caller did not supply", () => {
   assert.deepEqual(Object.keys(parsed).sort(), ["messages", "model"]);
   assert.equal("stream" in parsed, false);
   assert.equal("temperature" in parsed, false);
+});
+
+test("a tool result message carrying `name` is accepted", () => {
+  /*
+   * Phase 9H Task 5 regression.
+   *
+   * The real Hermes Agent client (v0.20.5) sends `name` on every `role: "tool"` message —
+   * `{role, tool_call_id, name, content}` — which is part of the OpenAI chat contract. The
+   * message allow-list refused it, so the whole request failed
+   * `invalid_request (message-unknown-key)` and a tool roundtrip was impossible for that
+   * client: BAYZ delivered the call, Hermes ran it, and the result was refused on the way
+   * back. See docs/transcripts/hermes/.
+   */
+  const parsed = parseChatRequest({
+    model: "gpt-4o",
+    messages: [
+      { role: "user", content: "what is the weather" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "get_weather", arguments: '{"city":"Oslo"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", name: "get_weather", content: "18C" },
+    ],
+  });
+  const toolMessage = parsed.messages.at(-1)!;
+  assert.equal(toolMessage.role, "tool");
+  assert.equal(toolMessage.toolCallId, "call_1");
+  assert.equal(toolMessage.content, "18C");
+  // Validated, then dropped: `tool_call_id` already identifies the call, so echoing a
+  // client-supplied name upstream would add an untrusted string for no gain.
+  assert.equal("name" in (toolMessage as Record<string, unknown>), false);
+});
+
+test("`name` is accepted on other roles and still not forwarded", () => {
+  const parsed = parseChatRequest({
+    model: "gpt-4o",
+    messages: [{ role: "user", name: "alice", content: "hello" }],
+  });
+  assert.deepEqual(parsed.messages, [{ role: "user", content: "hello" }]);
+});
+
+test("a message `name` is still bounded and type-checked", () => {
+  // Accepting a key is not accepting anything in it. "We drop it" is no reason to skip
+  // validation: the value is still parsed and held before it is discarded.
+  for (const name of ["", "x".repeat(65), 42, null, {}, []]) {
+    rejects(
+      { model: "gpt-4o", messages: [{ role: "user", name, content: "hello" }] },
+      `message name ${JSON.stringify(name)}`,
+    );
+  }
+  const atLimit = parseChatRequest({
+    model: "gpt-4o",
+    messages: [{ role: "user", name: "n".repeat(64), content: "hello" }],
+  });
+  assert.deepEqual(atLimit.messages, [{ role: "user", content: "hello" }]);
 });

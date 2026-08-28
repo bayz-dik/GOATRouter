@@ -5,25 +5,55 @@
 **Hermes Agent v0.20.5 (2026.8.19)**.
 
 > **This corrects the plan and spec.** Both the 9H plan and spec §12 recorded `hermes` as
-> absent from this machine. It is present. The row stays `UNVERIFIED` — presence is not
-> verification — but 9H Task 5 can attempt it for real rather than only shipping a harness
-> for some other host.
+> absent from this machine. It is present, and 9H Task 5 verified it for real.
 
-## Verification status: UNVERIFIED, all 17 capabilities
+## Verification status: VERIFIED, all 17 capabilities
 
-**Hermes has not been driven against BAYZ as a verified test.** Every cell in the `hermes`
-row of [the compatibility matrix](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md)
-reads `UNVERIFIED`.
+**Hermes has been driven against BAYZ for real.** `scripts/verify-hermes.mjs` runs the actual
+binary as a child process across nine scenarios and writes a transcript for each under
+`docs/transcripts/hermes/`. Every cell in the `hermes` row of
+[the compatibility matrix](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md)
+cites one.
 
-The configuration below was **read from the live `~/.hermes/config.yaml` on this machine**,
-which already points at `http://127.0.0.1:20128/v1`. That is real evidence about the
-*configuration form* — the field names and structure are not guessed. It is **not** evidence
-that any capability works: no capability was exercised under controlled conditions, nothing
-was captured, and a working config file is not a test result. 9H Task 5 owns the real
-verification, with transcripts under `docs/transcripts/hermes/`.
+| capability | status | evidence |
+| --- | --- | --- |
+| configure | VERIFIED | `docs/transcripts/hermes/configure-authenticate.md` |
+| authenticate | VERIFIED | `docs/transcripts/hermes/configure-authenticate.md` |
+| models.list | VERIFIED | `docs/transcripts/hermes/configure-authenticate.md` |
+| chat | VERIFIED | `docs/transcripts/hermes/chat-stream.md` |
+| stream | VERIFIED | `docs/transcripts/hermes/chat-stream.md` |
+| tool call | VERIFIED | `docs/transcripts/hermes/tool-roundtrip.md` |
+| tool result roundtrip | VERIFIED | `docs/transcripts/hermes/tool-roundtrip.md` |
+| large request | VERIFIED | `docs/transcripts/hermes/large-request.md` |
+| cancel | VERIFIED | `docs/transcripts/hermes/cancel.md` |
+| error surface | VERIFIED | `docs/transcripts/hermes/error-surface-and-keys.md` |
+| custom provider | VERIFIED | `docs/transcripts/hermes/routing.md` |
+| proxy-bound route | VERIFIED | `docs/transcripts/hermes/routing.md` |
+| combo | VERIFIED | `docs/transcripts/hermes/routing.md` |
+| failover | VERIFIED | `docs/transcripts/hermes/routing.md` |
+| restart/reconnect | VERIFIED | `docs/transcripts/hermes/restart-reconnect.md` |
+| key revoke/rotate | VERIFIED | `docs/transcripts/hermes/error-surface-and-keys.md` |
+| free-only routing | VERIFIED | `docs/transcripts/hermes/free-only.md` |
 
-What *is* proven is the protocol underneath: the generic OpenAI contract holds over real HTTP
-(`scripts/client-conformance.mjs`, 55/55).
+**Driving this client exposed a real BAYZ defect.** The message allow-list refused `name`,
+which Hermes sends on every `role: "tool"` message (`{role, tool_call_id, name, content}`).
+BAYZ delivered the tool call, Hermes executed it, and the **result was refused on the way
+back** with `invalid_request (message-unknown-key)` — so a tool roundtrip was impossible for
+this client. `name` is part of the OpenAI chat contract; it is now validated and bounded, and
+deliberately not forwarded upstream because `tool_call_id` already identifies the call.
+
+**`api_key: ${VAR}` in `config.yaml` is load-bearing.** Writing the key into `.env` alone is
+not enough: the first probe did exactly that and Hermes answered
+`HTTP 401: A valid API token is required` with **zero** requests reaching BAYZ. The YAML must
+reference the variable, which is what the live file on this host does.
+
+Unlike OpenCode, Hermes genuinely calls `GET /v1/models` — 10 discovery calls in a single
+one-shot run — so `models.list` is verified here where it is `UNVERIFIED` for OpenCode.
+
+To re-verify: `node scripts/verify-hermes.mjs`. It takes roughly ten minutes (one real client
+run at a time, ~40 seconds each) and exits non-zero if any cell it claims lacks a transcript.
+Every scenario uses a throwaway `HERMES_HOME` and `HOME`, so your live `~/.hermes` is never
+read or written.
 
 ## Configuration
 
@@ -122,39 +152,39 @@ is free-only, and a model BAYZ has not classified as free is not free. Expect HT
 Publish the provider's catalogue (`POST /api/providers/<id>/catalogue`) so its models get
 classified, or opt one route out with `PATCH /api/routes/<id>` `{"freeOnly": false}`.
 
-How Hermes surfaces that 409 is **unobserved** and is one of the things Task 5's
-`error surface` cell will record.
+**Observed:** Hermes prints this as a single `HTTP 409: no_free_route: …` line on stdout and
+exits 0 — no retry loop, no traceback. `docs/transcripts/hermes/free-only.md` captures the
+refusal and records that the paid origin received **zero** requests, so nothing could have
+been spent before the refusal landed.
 
-## Capabilities: what is unknown
+## Capabilities: what was observed per cell
 
-All seventeen are `UNVERIFIED`. Hermes is an agentic client, so the tool cells are the
-interesting ones:
+All seventeen are `VERIFIED`; each row of the table at the top of this document cites its
+transcript. Hermes is an agentic client, so the tool cells were the interesting ones:
 
-| capability | the open question |
+| capability | what the real run showed |
 | --- | --- |
-| configure | does Hermes reach BAYZ with this config under controlled conditions |
-| authenticate | is the `.env` key sent as `Authorization: Bearer` |
-| models.list | does it call `GET /v1/models`, or rely on the `models` mapping |
-| chat / stream | does it parse responses and SSE frames without complaint |
-| tool call | does it handle `finish_reason: "tool_calls"` with `content: null` |
-| tool result roundtrip | does it return `tool_call_id` matching the call, over many turns |
-| large request | how does it behave against the 128,000-character message bound |
-| cancel | does interrupting abort the HTTP request so BAYZ tears the upstream down |
-| error surface | does a 409 `no_free_route` reach the user legibly |
-| custom provider | does a `custom-openai` BAYZ provider serve it identically |
-| proxy-bound route | unobserved end to end |
-| combo / failover | does a mid-request failover stay invisible |
-| restart/reconnect | does a long session survive a BAYZ restart |
-| key revoke/rotate | does it fail cleanly on a revoked key, or hang |
-| free-only routing | does the refusal reach the user comprehensibly |
-
-The BAYZ half of each is already covered by tests and smokes. The client's half needs Hermes
-run under controlled conditions with output captured.
+| configure | the YAML config above reaches BAYZ; `api_key: ${VAR}` is required for the `.env` value to be sent |
+| authenticate | the derived `.env` key authenticates; a corrupted key yields `HTTP 401: A valid API token is required` |
+| models.list | it calls `GET /v1/models` — 10 discovery calls in one one-shot run, all served 200 |
+| chat / stream | it requests `stream:true` by default and consumes the SSE frames |
+| tool call | it advertises its toolset through BAYZ and receives the streamed call intact |
+| tool result roundtrip | it returns `role:"tool"` with `tool_call_id` **and `name`** — the `name` key needed a BAYZ fix |
+| large request | a 95,047-byte request is served intact |
+| cancel | SIGINT aborts the request and BAYZ tears the upstream down |
+| error surface | BAYZ's message reaches the user as `HTTP <status>: <message>`, not a traceback |
+| custom provider | a custom `openai-compatible` provider serves it identically |
+| proxy-bound route | the CONNECT proxy logged the origin authority — it genuinely tunnels |
+| combo / failover | a mid-suite primary kill stayed invisible to the client |
+| restart/reconnect | the same key works across a BAYZ restart on the same port |
+| key revoke/rotate | the superseded key stops completing immediately; deletion locks the client out |
+| free-only routing | the 409 is comprehensible and the paid origin was never called |
 
 ## Not claimed here
 
-- No screenshot. None was taken.
-- No transcript. `docs/transcripts/hermes/` does not exist yet; Task 5 creates it.
-- No claim that any capability works. The configuration form is evidenced by the live file;
-  the outcomes are not.
-- No `hermes`-specific behaviour in BAYZ. There is none, by design.
+- No screenshot. None was taken; the transcripts are text.
+- No claim about `hermes chat` (the interactive REPL) or the TUI. Verification used `-z`
+  one-shot mode, which is what a script or CI would use.
+- No claim about long multi-turn sessions beyond the tool roundtrip that was captured.
+- No `hermes`-specific behaviour in BAYZ. There is none, by design — the preset seeds scopes
+  and labels a key, nothing more.

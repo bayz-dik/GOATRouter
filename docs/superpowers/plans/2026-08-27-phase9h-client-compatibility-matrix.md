@@ -322,11 +322,47 @@ is ~30 KiB of system prompt and tool schemas. A grep for every secret literal an
 
 **Create:** `scripts/verify-antigravity.mjs`, `scripts/verify-hermes.mjs`
 
-- [ ] Each script detects whether the client binary is available. If absent it prints a clear `UNVERIFIED: <client> not installed on this host` and exits **0** — absence is not a failure of BAYZ, but it must not be recorded as success either.
-- [ ] If present, it runs the same matrix as 9H Task 4 and writes transcripts.
-- [ ] The matrix rows for these two clients stay `UNVERIFIED` on this device, and `tests/matrix-integrity.test.mjs` enforces that they cannot be `PASS` without a transcript reference.
-- [ ] Verify: both scripts exit 0; the matrix records `UNVERIFIED` with the reason.
-- [ ] Commit — `test: add Bayz verification harnesses for Antigravity and Hermes`
+- [x] Each script detects whether the client binary is available. If absent it prints a clear `UNVERIFIED: <client> not installed on this host` and exits **0** — absence is not a failure of BAYZ, but it must not be recorded as success either. — Detection is an **executable file on PATH**, not `command -v`: Task 1 caught exactly that measurement error when `command -v continue` "found" the shell builtin. A name that resolves but cannot run is absence.
+- [x] If present, it runs the same matrix as 9H Task 4 and writes transcripts. — **Hermes is present**, so this ran for real: nine scenarios, nine transcripts in `docs/transcripts/hermes/`, **17 VERIFIED / 0 PARTIAL / 0 BLOCKED / 0 UNVERIFIED**, exit 0.
+- [x] The matrix rows for these two clients stay `UNVERIFIED` on this device, and `tests/matrix-integrity.test.mjs` enforces that they cannot be `PASS` without a transcript reference. — **Deviation, stated rather than hidden: the `hermes` row is now `VERIFIED`, not `UNVERIFIED`.** The plan assumed Hermes was absent; it is installed (v0.20.5), Task 1 corrected that measurement, and refusing to verify a client that is genuinely runnable in order to match the plan's text would be the fake-status failure inverted. `antigravity` **is** absent and every one of its 17 cells stays `UNVERIFIED` with no transcript written, so the integrity test's enforcement is exactly what the plan asked for.
+- [x] Verify: both scripts exit 0; the matrix records `UNVERIFIED` with the reason. — `verify-antigravity.mjs` exits 0 with the absence recorded; `verify-hermes.mjs` exits 0 with 17 verified cells.
+- [x] Commit — `test: add Bayz verification harnesses for Antigravity and Hermes`
+
+**Driving Hermes found a fourth defect, and it was worse in kind than Task 4's three:** it
+broke the tool roundtrip *after* the work was already done. The message allow-list in
+`packages/router/src/request.ts` refused `name`, which Hermes sends on every `role: "tool"`
+message (`{role, tool_call_id, name, content}`) and which is part of the OpenAI chat contract.
+BAYZ delivered the call, Hermes executed it, and the result was rejected on the way back with
+`invalid_request (message-unknown-key)`. `name` is now validated and bounded at 64 characters
+and deliberately **not forwarded** — `tool_call_id` already identifies the call, so echoing a
+client-supplied string upstream would add untrusted data for no gain. Validated anyway,
+because "we drop it" is not a reason to skip bounding a value that is still parsed and held.
+Three regression tests pin it: the roundtrip works, `name` never reaches the router request,
+and the bound plus type check still refuse `""`, 65 characters, and non-strings.
+
+**The message allow-list assertion was retargeted, not deleted.** `request.test.ts` previously
+proved the list closed by rejecting `name`. That case now points at `metadata` and
+`function_call` — keys genuinely outside the OpenAI message contract — so the list is still
+proven closed rather than merely widened.
+
+**Two configuration facts cost a full run each, and both are recorded in the harness:**
+`api_key: ${VAR}` in `config.yaml` is load-bearing (writing the key only into `.env` yields
+`HTTP 401` with **zero** requests reaching BAYZ), and `-t` takes **toolset** names rather than
+tool names (`-t execute_code` made Hermes exit 2 before sending anything, which would have
+recorded both tool cells `BLOCKED` against BAYZ for a harness mistake).
+
+**`hermes/models.list` is `VERIFIED` where `opencode/models.list` is `UNVERIFIED`.** Hermes
+makes 10 `GET /v1/models` calls in a single one-shot run; OpenCode reads its own config map and
+never touches the endpoint. Two verified rows disagreeing on measured grounds is the matrix
+working, not a contradiction.
+
+**The BAYZ-side fixtures are now shared** in `scripts/verify-client-lib.mjs` — the scripted SSE
+origin, the CONNECT proxy, the listener, the redactor, the transcript writer, and the
+refuse-to-self-certify auditor. Two harnesses with private copies would drift, and drifting
+copies would make their matrix rows incomparable.
+
+Matrix tally moves 29/2/0/71 → **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED**.
+`antigravity` remains wholly `UNVERIFIED`, so the Core 3 gate must still block.
 
 ### Task 6 — Release-blocking gate wiring
 

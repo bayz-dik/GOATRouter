@@ -1,11 +1,11 @@
 # BAYZ Router — Client Compatibility Matrix
 
-**Phase:** 9H Tasks 1–4 · **Spec:** `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md` §12, amended by §25
+**Phase:** 9H Tasks 1–5 · **Spec:** `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md` §12, amended by §25
 **Status of this document:** the matrix exists and the vocabulary is enforced by
-`tests/matrix-integrity.test.mjs`. **Two rows now carry evidence:** `generic-openai` from
-the protocol conformance harness, and `opencode` from a real-client run against the
-installed binary. Every Antigravity, Hermes, Cline, and Continue cell is still
-`UNVERIFIED`.
+`tests/matrix-integrity.test.mjs`. **Three rows carry evidence:** `generic-openai` from the
+protocol conformance harness, and `opencode` and `hermes` from real-client runs against the
+installed binaries. Antigravity, Cline, and Continue are absent from this host and every one
+of their cells is `UNVERIFIED`.
 
 ## What this document is, and what it is not
 
@@ -121,8 +121,8 @@ Measured directly, not assumed:
 | client | measurement | consequence |
 | --- | --- | --- |
 | `opencode` | **present** — `/usr/local/bin/opencode` → `opencode-ai/bin/opencode.exe`, `--version` reports `1.18.23` | **driven for real; 9H Task 4 filled the row** |
-| `hermes` | **present** — `/root/.local/bin/hermes` → `hermes-agent/venv/bin/hermes`, `--version` reports `Hermes Agent v0.20.5` | can be driven here; 9H Task 5 |
-| `antigravity` | **absent** — `command -v antigravity` finds nothing | not executable here; harness ships ready |
+| `hermes` | **present** — `/root/.local/bin/hermes` → `hermes-agent/venv/bin/hermes`, `--version` reports `Hermes Agent v0.20.5` | **driven for real; 9H Task 5 filled the row** |
+| `antigravity` | **absent** — no executable file named `antigravity` on PATH | not executable here; `scripts/verify-antigravity.mjs` records the absence and exits 0 |
 | `cline` | **absent** — `command -v cline` finds nothing | not executable here |
 | `continue` | **absent** — the `command -v continue` hit resolves to the **shell builtin**; `type continue` reports `continue is a shell builtin`, and there is no `~/.continue` | not executable here; treating that hit as a client would have been a measurement error |
 
@@ -134,10 +134,10 @@ but 9H Task 5 can attempt it for real rather than only shipping a harness.
 
 `opencode`, `antigravity`, and `hermes` are release-blocking. 9H Task 6's
 `scripts/client-gate.mjs --enforce` must exit non-zero while any Core 3 mandatory cell is
-`UNVERIFIED` or `BLOCKED`. `opencode` is now verified (16 of 17, with `models.list`
-`UNVERIFIED` because the client does not use that surface); `antigravity` and `hermes` are
-entirely `UNVERIFIED`, so the gate is still expected to block — that is the correct current
-state, not a defect.
+`UNVERIFIED` or `BLOCKED`. `opencode` is verified 16 of 17 (`models.list` `UNVERIFIED`
+because the client does not use that surface) and `hermes` is verified 17 of 17;
+`antigravity` is absent from this host and entirely `UNVERIFIED`, so the gate is still
+expected to block — that is the correct current state, not a defect.
 
 ## How a cell moves to `VERIFIED`
 
@@ -271,25 +271,54 @@ What each transcript demonstrates:
 
 ### hermes
 
+Filled by 9H Task 5 from `scripts/verify-hermes.mjs`, which drives the **real `hermes`
+binary** (v0.20.5) as a child process against a real BAYZ listener. Every scenario runs in a
+throwaway `HERMES_HOME` *and* `HOME`, so the operator's live `~/.hermes` is never read or
+written — this agent is itself Hermes, and clobbering that directory would destroy the
+session performing the verification.
+
+**Driving this client found a fourth real defect**, on top of Task 4's three: the message
+allow-list in `packages/router/src/request.ts` refused `name`, which Hermes sends on every
+`role: "tool"` message (`{role, tool_call_id, name, content}`). BAYZ delivered the tool call,
+Hermes executed it, and the **result was refused on the way back** with
+`invalid_request (message-unknown-key)` — a tool roundtrip was impossible for this client.
+`name` is part of the OpenAI chat contract; it is now validated and bounded, and deliberately
+**not** forwarded, because `tool_call_id` already identifies the call.
+
+Unlike OpenCode, Hermes genuinely calls `GET /v1/models` — 10 discovery calls in a single
+one-shot run — so its `models.list` cell is `VERIFIED` where OpenCode's is `UNVERIFIED`. Two
+rows differing on measured grounds is the matrix working as intended.
+
+| transcript | what it captures |
+| --- | --- |
+| `configure-authenticate.md` | the YAML config accepted; a corrupted key refused 401; 10 `GET /v1/models` calls served 200 |
+| `chat-stream.md` | `stream:true` by default, SSE consumed, usage in the final chunk |
+| `tool-roundtrip.md` | 2 tool definitions advertised, the streamed call delivered, `role:"tool"` result answered |
+| `large-request.md` | a 95,047-byte request served intact |
+| `cancel.md` | SIGINT mid-flight destroyed the upstream socket before the response completed |
+| `error-surface-and-keys.md` | `HTTP <status>: <message>` reaches the user, not a traceback; rotation and revocation both bite |
+| `routing.md` | a custom provider; a CONNECT proxy logging the origin authority; `routingMode:"combo"`; failover |
+| `free-only.md` | `freeOnly` defaults true; a PAID provider refused with **0 upstream requests**; opt-out then routes |
+
 | capability | status | evidence / reason |
 | --- | --- | --- |
-| configure | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| authenticate | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| models.list | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| chat | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| stream | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| tool call | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| tool result roundtrip | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| large request | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| cancel | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| error surface | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| custom provider | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| proxy-bound route | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| combo | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| failover | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| restart/reconnect | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| key revoke/rotate | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
-| free-only routing | UNVERIFIED | Binary present at /root/.local/bin/hermes (Hermes Agent v0.20.5); not yet driven against BAYZ — 9H Task 5 owns this row. |
+| configure | VERIFIED | transcript:docs/transcripts/hermes/configure-authenticate.md |
+| authenticate | VERIFIED | transcript:docs/transcripts/hermes/configure-authenticate.md |
+| models.list | VERIFIED | transcript:docs/transcripts/hermes/configure-authenticate.md |
+| chat | VERIFIED | transcript:docs/transcripts/hermes/chat-stream.md |
+| stream | VERIFIED | transcript:docs/transcripts/hermes/chat-stream.md |
+| tool call | VERIFIED | transcript:docs/transcripts/hermes/tool-roundtrip.md |
+| tool result roundtrip | VERIFIED | transcript:docs/transcripts/hermes/tool-roundtrip.md |
+| large request | VERIFIED | transcript:docs/transcripts/hermes/large-request.md |
+| cancel | VERIFIED | transcript:docs/transcripts/hermes/cancel.md |
+| error surface | VERIFIED | transcript:docs/transcripts/hermes/error-surface-and-keys.md |
+| custom provider | VERIFIED | transcript:docs/transcripts/hermes/routing.md |
+| proxy-bound route | VERIFIED | transcript:docs/transcripts/hermes/routing.md |
+| combo | VERIFIED | transcript:docs/transcripts/hermes/routing.md |
+| failover | VERIFIED | transcript:docs/transcripts/hermes/routing.md |
+| restart/reconnect | VERIFIED | transcript:docs/transcripts/hermes/restart-reconnect.md |
+| key revoke/rotate | VERIFIED | transcript:docs/transcripts/hermes/error-surface-and-keys.md |
+| free-only routing | VERIFIED | transcript:docs/transcripts/hermes/free-only.md |
 
 ### generic-openai
 
@@ -367,31 +396,37 @@ over real HTTP with real `fetch` — no `app.inject`, no in-process shortcut. Tw
 
 | status | cells |
 | --- | --- |
-| `VERIFIED` | 29 |
+| `VERIFIED` | 46 |
 | `PARTIAL` | 2 |
 | `BLOCKED` | 0 |
-| `UNVERIFIED` | 71 |
+| `UNVERIFIED` | 54 |
 | `N/A` | 0 |
 
-102 = 6 clients × 17 capabilities. The non-`UNVERIFIED` cells sit in two rows:
-**`generic-openai`** (13 `VERIFIED`, 2 `PARTIAL`), each citing a numbered check in
-`scripts/client-conformance.mjs`, and **`opencode`** (16 `VERIFIED`), each citing a
-transcript under `docs/transcripts/opencode/`. `tests/matrix-integrity.test.mjs` resolves
-both forms on disk.
+102 = 6 clients × 17 capabilities. Three rows carry evidence: **`generic-openai`** (13
+`VERIFIED`, 2 `PARTIAL`, `smoke:` citations into `scripts/client-conformance.mjs`),
+**`opencode`** (16 `VERIFIED`, `transcript:` citations) and **`hermes`** (17 `VERIFIED`,
+`transcript:` citations). `tests/matrix-integrity.test.mjs` resolves all 48 citations on disk.
 
-**One real client has now been driven against BAYZ.** The `opencode` row was filled by
-`scripts/verify-opencode.mjs`, which runs the actual `opencode` binary (v1.18.23) as a
-child process against a real listener — and it found **three real defects that the 55
-generic protocol checks could not see**: `stream_options` refused outright, streamed
-`tool_calls` silently dropped, and a 1 KiB tool-description cap that no real agent client
-could satisfy. All three are fixed with regression tests. That is the argument for
-real-client verification over protocol conformance alone, stated as a measured result
-rather than a principle.
+**Two of the Core 3 are now verified against the real client.** Between them, Tasks 4 and 5
+found **four defects that the 55 generic protocol checks could not see**, because none is a
+protocol violation:
 
-`opencode/models.list` stays `UNVERIFIED` **by measurement, not omission**: the client
-reads its own config `models` map and never calls `GET /v1/models`, so BAYZ's discovery
-endpoint is genuinely not exercised by it. Promoting it because `opencode models bayz`
-printed the right thing would be exactly the fake claim this matrix exists to prevent.
+1. `stream_options` refused outright — no real OpenCode session could reach a provider.
+2. Streamed `tool_calls` silently dropped — the client re-sent the same request 18 times.
+3. A 1 KiB tool-description cap that no real agent client could satisfy.
+4. `name` refused on `role: "tool"` messages — the Hermes tool result was refused *on the
+   way back*, after BAYZ had delivered the call and the client had executed it.
 
-Antigravity and Hermes remain entirely `UNVERIFIED`, so the Core 3 gate 9H Task 6 builds
-is still expected to block a release from this state.
+All four are fixed with regression tests pinning the measured values. That is the argument
+for real-client verification over protocol conformance, stated as a result rather than a
+principle.
+
+Two cells differ **between** verified rows on measured grounds, which is the matrix doing its
+job: `opencode/models.list` is `UNVERIFIED` because that client reads its own config `models`
+map and never calls `GET /v1/models`, while `hermes/models.list` is `VERIFIED` because Hermes
+makes 10 such calls in a single run.
+
+**`antigravity` remains entirely `UNVERIFIED`** — the client is not installed on this host,
+`scripts/verify-antigravity.mjs` records the absence and writes no transcript, so no cell can
+be promoted. The Core 3 gate must therefore still block a release, which is the correct
+current state.
