@@ -368,20 +368,48 @@ Matrix tally moves 29/2/0/71 → **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVE
 
 **Create:** `scripts/client-gate.mjs`
 
-- [ ] The gate reads the matrix, and **fails** if any Core 3 client has a `FAIL` in any column, or if the release is being declared while any Core 3 mandatory column is `UNVERIFIED`. It prints a table of what is blocking.
-- [ ] The gate distinguishes two modes: `--report` (always exits 0, prints status) and `--enforce` (exits non-zero on any Core 3 `FAIL` or `UNVERIFIED`). 9L runs it with `--enforce`.
-- [ ] Verify: `node scripts/client-gate.mjs --report` exits 0 and lists the current `UNVERIFIED` cells; `node scripts/client-gate.mjs --enforce` exits **non-zero** today, which is the correct current state.
-- [ ] Commit — `test: add the Bayz client compatibility gate`
+- [x] The gate reads the matrix, and **fails** if any Core 3 client has a `FAIL` in any column, or if the release is being declared while any Core 3 mandatory column is `UNVERIFIED`. It prints a table of what is blocking. — `scripts/client-gate.mjs` (entry), `scripts/client-gate-lib.mjs` (policy + parsing + assessment), `scripts/client-gate-run.mjs` (reporting). Blocks on **`BLOCKED`** — this project's vocabulary has no `FAIL` — **and `UNVERIFIED`**, and on a **`MISSING`** cell or an absent Core 3 row, because silence must never read as success.
+- [x] The gate distinguishes two modes: `--report` (always exits 0, prints status) and `--enforce` (exits non-zero on any Core 3 `FAIL` or `UNVERIFIED`). 9L runs it with `--enforce`. — Both implemented. No flag, both flags, or a misspelled flag exits **2**, so a CI step with a typo cannot be read as "release permitted".
+- [x] Verify: `node scripts/client-gate.mjs --report` exits 0 and lists the current `UNVERIFIED` cells; `node scripts/client-gate.mjs --enforce` exits **non-zero** today, which is the correct current state. — `--report` exits 0 and lists **18** blocking cells; `--enforce` exits **1**. `tests/client-gate.test.mjs` (11 tests) asserts that non-zero exit as a requirement rather than noting it as a known failure.
+- [x] Commit — `test: add the Bayz client compatibility gate`
+
+**All seventeen capabilities are mandatory.** The plan says "mandatory column" without
+narrowing the list, and §25 made `free-only routing` explicitly not optional. Inventing a
+subset would have been a quiet decision that some capability does not matter, so every column
+is required and `N/A` carries "this client has no such surface".
+
+**`PARTIAL` and `N/A` do not block; `BLOCKED` and `UNVERIFIED` do.** A `PARTIAL` cell carries
+evidence *and* a limitation that `tests/matrix-integrity.test.mjs` forces it to name, so it is
+a documented bound. `UNVERIFIED` is an unknown, which is not a smaller release risk than a
+known failure — that is why Task 1 refused to collapse it into `BLOCKED`, and the gate honours
+the same split.
+
+**The gate is tested against synthetic matrices, not just today's.** Driving only the real
+document would let a gate hardcoded to fail pass every check, since the current state *is*
+blocked. `assess()` is exercised directly: a fully `VERIFIED` matrix permits release, a single
+blocking cell at the first, middle, and last capability of each Core 3 client blocks, a missing
+cell blocks, a missing row blocks, and a non-Core-3 client can neither block nor rescue.
+
+**Five mutations each turned the suite red and were reverted:** dropping `UNVERIFIED` from the
+blocking set (4 red), adding `PARTIAL` to it (1 red), ignoring a missing cell (1 red), checking
+only the first Core 3 client (5 red), and promoting an `antigravity` cell to `VERIFIED` with a
+citation to a transcript that does not exist — which the gate cannot see but
+`tests/matrix-integrity.test.mjs` catches by name, the two tools covering each other.
+
+**Structural note:** the entry script cannot both export the policy and `await import` the
+runner that needs it — that is a circular top-level await, and Node exits **13** with
+"unsettled top-level await" rather than failing visibly. Hence three files: entry dispatches,
+lib holds policy, run renders.
 
 ## Completion checklist
 
-- [ ] Matrix exists with every cell one of four statuses and no placeholder.
-- [ ] Every `PASS` carries a machine-checkable evidence reference.
-- [ ] Generic OpenAI conformance harness passes against real HTTP.
-- [ ] OpenCode verified with transcripts, or explicitly `FAIL`/`UNVERIFIED`.
-- [ ] Antigravity and Hermes recorded `UNVERIFIED` on this device with the reason; harnesses ready for a host that has them.
-- [ ] `client-gate.mjs --enforce` correctly blocks release while Core 3 cells are `UNVERIFIED`.
-- [ ] No client-name branching added to any runtime path.
+- [x] Matrix exists with every cell one of four statuses and no placeholder. — Five statuses, actually: `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, enforced as a closed vocabulary by `tests/matrix-integrity.test.mjs`. 102 cells, no blanks, no `TODO`.
+- [x] Every `PASS` carries a machine-checkable evidence reference. — 48 citations, every one resolved on disk: `smoke:<script>#N` validated against `docs/evidence/client-conformance.json`, and `transcript:<path>` against the file itself.
+- [x] Generic OpenAI conformance harness passes against real HTTP. — `scripts/client-conformance.mjs`, **55/55**, real `fetch` over a real port.
+- [x] OpenCode verified with transcripts, or explicitly `FAIL`/`UNVERIFIED`. — **16 VERIFIED / 1 UNVERIFIED**, nine transcripts. `models.list` is `UNVERIFIED` by measurement: the client never calls the endpoint.
+- [x] Antigravity and Hermes recorded `UNVERIFIED` on this device with the reason; harnesses ready for a host that has them. — **Half of this is a deliberate deviation.** `antigravity` is absent and wholly `UNVERIFIED` with the reason recorded. `hermes` is **present** on this host — the plan and spec §12 were wrong about that, Task 1 corrected the measurement — so it was verified for real: **17 VERIFIED**, nine transcripts. Leaving a runnable client `UNVERIFIED` to match the plan's text would have been the fake-status failure inverted.
+- [x] `client-gate.mjs --enforce` correctly blocks release while Core 3 cells are `UNVERIFIED`. — Exits **1** with 18 blocking cells listed; asserted by `tests/client-gate.test.mjs`.
+- [x] No client-name branching added to any runtime path. — Still true, and still enforced: `packages/gateway/test/adversarial.test.ts` scans every gateway source outside `presets.ts` for the preset names. The four Task 4/5 fixes are all client-agnostic — `stream_options`, streamed `tool_calls`, the tool-description bound, and the message `name` key are OpenAI-contract features, not per-client special cases.
 
 ---
 
@@ -392,5 +420,58 @@ test gains it as a required column so it cannot be omitted.
 
 - [x] Amend Task 1's column list to include `free-only routing` and re-run `node --test tests/matrix-integrity.test.mjs`. — **done at Task 1**: the column is in the integrity test's required list from the start, so all six clients carry it and it cannot be omitted. 9/9 green.
 - [x] Amend Task 2's conformance harness with a check that a free-only route to a paid-classified provider fails `no_free_route` over real HTTP, so the `generic-openai` row's cell has a citable check number. — **`smoke:client-conformance#50`**, plus #48 (default is free-only), #51 (the paid origin was never called), #52 (stable envelope), and #53 (explicit opt-out still routes).
-- [ ] Amend Task 4's OpenCode verification to configure a free-only route and record the cell from the transcript.
-- [ ] Statuses for this column follow the same rule as every other: `UNVERIFIED` where the client cannot run here.
+- [x] Amend Task 4's OpenCode verification to configure a free-only route and record the cell from the transcript. — **done**: `scripts/verify-opencode-scenarios.mjs` scenario 9 creates a route with **no** `freeOnly` field against a genuinely PAID-classified non-loopback provider, drives the real client, and records `transcript:docs/transcripts/opencode/free-only.md`. The transcript captures the route as created (`freeOnly: true` by default), the client's refusal, **0 upstream requests to the paid origin**, and an explicit opt-out then routing. Repeated for Hermes at Task 5.
+- [x] Statuses for this column follow the same rule as every other: `UNVERIFIED` where the client cannot run here. — `antigravity/free-only routing` is `UNVERIFIED` (client absent). `opencode` and `hermes` are both `VERIFIED` from transcripts, and `generic-openai` cites `smoke:client-conformance#50`.
+
+---
+
+## Phase 9H — COMPLETE
+
+Six tasks, six commits, and the completion checklist above is green. Final state:
+
+**Matrix: 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED / 0 N/A** across 102 cells,
+48 citations all resolving on disk.
+
+| client | result |
+| --- | --- |
+| `generic-openai` | 13 VERIFIED, 2 PARTIAL — protocol conformance over real HTTP, 55/55 |
+| `opencode` | **16 VERIFIED, 1 UNVERIFIED** — real client v1.18.23, 9 transcripts |
+| `hermes` | **17 VERIFIED** — real client v0.20.5, 9 transcripts |
+| `antigravity` | 17 UNVERIFIED — client absent from this host, absence recorded |
+| `cline`, `continue` | 17 UNVERIFIED each — clients absent |
+
+**The gate blocks, and that is the correct outcome.** `scripts/client-gate.mjs --enforce`
+exits 1 with 18 blocking cells: 17 for the absent `antigravity` and one for
+`opencode/models.list`. A release cannot be declared from this host, which is what a
+mandatory-client gate is for.
+
+**Real-client verification earned its place.** Driving two actual clients found **four
+defects that 55 generic protocol checks could not see**, because none is a protocol
+violation — each is a gap between what BAYZ accepted and what a real agent client sends:
+
+1. `stream_options` refused outright (Task 4) — **no real OpenCode session could reach a
+   provider at all**.
+2. Streamed `tool_calls` silently dropped (Task 4) — the client re-sent the same request 18
+   times, unable to tell that a call had been lost.
+3. A 1 KiB tool-description cap (Task 4) — no real coding agent could call a tool, since
+   OpenCode's `bash` description alone is 4,628 characters.
+4. `name` refused on `role: "tool"` messages (Task 5) — the worst of the four, because it
+   broke the roundtrip *after* the work was done: BAYZ delivered the call, Hermes executed
+   it, and the result was rejected on the way back.
+
+All four are fixed with regression tests pinning the measured values, so a future tightening
+fails with the client that would break rather than passing review.
+
+**Three defects were found in the harnesses themselves and fixed there, not blamed on BAYZ:**
+a bodyless-`DELETE` content-type that silently made revocation a no-op, `api_key: ${VAR}`
+missing from the Hermes YAML (401 with zero requests reaching BAYZ), and `-t execute_code`
+naming a tool where a toolset was required. Each would have recorded a false `BLOCKED`.
+
+**What is deliberately not claimed:** `opencode/models.list` stays `UNVERIFIED` because that
+client never calls the endpoint; `hermes/models.list` is `VERIFIED` because it makes 10 such
+calls per run. Two verified rows disagreeing on measured grounds is the matrix working.
+Antigravity's harness exits **non-zero** on a host that has the client but whose config form
+is unmeasured, rather than guessing field names and producing a transcript that looks like
+evidence.
+
+Next phase: **9I**. Not started, and out of 9H's scope.

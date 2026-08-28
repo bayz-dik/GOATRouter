@@ -39,33 +39,36 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–5 **COMPLETE**.
-    Task 6 **NOT STARTED**.
+  - 9H Mandatory Client Compatibility Matrix: **COMPLETE.** Tasks 1–6 done, completion
+    checklist green.
     `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
     `tests/matrix-integrity.test.mjs` (9/9), `scripts/client-conformance.mjs` (**55/55**),
     `docs/clients/` (4 guides + index), `tests/client-docs.test.mjs` (6/6),
     `scripts/verify-opencode.mjs` (**16 VERIFIED / 1 UNVERIFIED, exit 0**),
-    `scripts/verify-hermes.mjs` (**17 VERIFIED, exit 0**), and
-    `scripts/verify-antigravity.mjs` (client absent, exit 0), with transcripts in
-    `docs/transcripts/opencode/` and `docs/transcripts/hermes/`.
-    Matrix tally **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED**.
-    Three rows carry evidence: `generic-openai` (13 V, 2 P, `smoke:` citations),
-    `opencode` (16 V) and `hermes` (17 V), both `transcript:` citations.
-    **`antigravity` is absent from this host and wholly `UNVERIFIED`**, so the Core 3
-    gate must still block a release.
+    `scripts/verify-hermes.mjs` (**17 VERIFIED, exit 0**),
+    `scripts/verify-antigravity.mjs` (client absent, exit 0), and
+    `scripts/client-gate.mjs` with `tests/client-gate.test.mjs` (11/11), with transcripts
+    in `docs/transcripts/opencode/` and `docs/transcripts/hermes/`.
+    Matrix tally **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED**, 48 citations
+    all resolving on disk.
+    **`node scripts/client-gate.mjs --enforce` exits 1** with 18 blocking cells — 17 for
+    the absent `antigravity` plus `opencode/models.list`. That is the gate working, not a
+    defect: a release cannot be declared from a host that cannot run a mandatory client.
     Status vocabulary **deviates from the plan text deliberately**:
     `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, with `PASS`/`FAIL` refused as
     placeholders. `BLOCKED` (tried, did not work) vs `UNVERIFIED` (not tried) is the split
-    that matters. Consequence for Task 6: the gate must block on **both**.
+    that matters, and the gate blocks on **both**.
     Device reality corrected at Task 1: **`hermes` is present** on this host
-    (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent, and
-    Task 5 therefore verified it for real instead of only shipping a harness.
+    (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent, so
+    Task 5 verified it for real instead of only shipping a harness.
     Task 2 fixed a **live 400-vs-500 bug**: no `GatewayError` code was mapped in
     `apps/server/src/http-errors.ts`, so a malformed body returned `500 internal_error`
     and told a client to retry forever. Four codes now map to 400.
-    **Tasks 4–5 found four defects protocol conformance could not see** — see the 9H
-    resume point; the short version is that before Task 4 no real OpenCode session could
-    reach a provider at all, and before Task 5 no Hermes tool result could get back.
+    **Tasks 4–5 found four defects protocol conformance could not see**: `stream_options`
+    refused outright (no OpenCode session could reach a provider), streamed `tool_calls`
+    silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
+    could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
+    rejected *after* the work was done). All four fixed with regression tests.
   - 9I–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -934,7 +937,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–5 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 54 UNVERIFIED; Task 6 (release gate) next |
+| 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
 | 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2694,27 +2697,77 @@ Verified sequentially, one command per step: `@bayz/router` **294/294**, `@bayz/
 `verify-hermes` **17 VERIFIED exit 0**, `verify-antigravity` **exit 0**. Secret scan across
 `docs/transcripts/hermes/` returns nothing. `git diff --check` clean.
 
+### Task 6 — Release-blocking gate wiring
+
+`scripts/client-gate.mjs` (entry), `scripts/client-gate-lib.mjs` (policy, parsing,
+assessment), `scripts/client-gate-run.mjs` (reporting), guarded by
+`tests/client-gate.test.mjs` (**11 tests**).
+
+`--report` exits 0 and prints the Core 3 tally plus every blocking cell. `--enforce` exits
+non-zero when anything blocks. No flag, both flags, or a misspelled flag exits **2** — a CI
+step with a typo must not be read as "release permitted".
+
+**`--enforce` exits 1 today, with 18 blocking cells**: 17 for the absent `antigravity` and one
+for `opencode/models.list`. That is the gate working. `tests/client-gate.test.mjs` asserts the
+non-zero exit as a *requirement*, not as a known failure to be fixed later.
+
+#### Policy decisions, each with a reason
+
+- **All seventeen capabilities are mandatory.** The plan says "mandatory column" without
+  narrowing the list, and §25 made `free-only routing` explicitly not optional. Inventing a
+  subset would be a quiet decision that some capability does not matter; `N/A` is how a client
+  says it has no such surface.
+- **`BLOCKED` and `UNVERIFIED` both block.** The plan's word is `FAIL`; this vocabulary has no
+  `FAIL`, and the equivalent is `BLOCKED`. `UNVERIFIED` blocks too, because "we never tried" is
+  not a smaller release risk than "we tried and it broke" — it is an unknown. That is the split
+  Task 1 refused to collapse, honoured here.
+- **`PARTIAL` and `N/A` pass.** A `PARTIAL` cell carries evidence *and* a limitation that
+  `tests/matrix-integrity.test.mjs` forces it to name, so it is a documented bound rather than
+  an unknown.
+- **A `MISSING` cell or an absent Core 3 row blocks.** Deleting a line is the easiest way to
+  make a claim disappear, so silence is a blocker in its own right.
+- **The gate re-derives nothing.** It reads what the matrix says; the matrix's own integrity is
+  `tests/matrix-integrity.test.mjs`'s job. Two tools, one question each — and Mutation E below
+  shows them covering each other.
+
+#### The test suite is written against synthetic matrices
+
+Driving only the real document would let a gate **hardcoded to fail** pass every check, because
+today's state is blocked. So `assess()` is exercised directly: a fully `VERIFIED` matrix
+permits release; a single blocking cell at the first, middle, and last capability of *each*
+Core 3 client blocks; a missing cell blocks; a missing row blocks; and `generic-openai` can
+neither block (it is not Core 3) nor rescue a Core 3 failure.
+
+**Five mutations, each red, each reverted:** dropping `UNVERIFIED` from the blocking set
+(**4 red**), adding `PARTIAL` to it (**1 red**), ignoring a missing cell (**1 red**), checking
+only the first Core 3 client (**5 red**), and promoting `antigravity/configure` to `VERIFIED`
+citing a transcript that does not exist — invisible to the gate, caught by
+`matrix-integrity` by name.
+
+#### One structural constraint worth knowing
+
+The entry script cannot both export the policy and `await import` the runner that consumes it:
+that is a circular top-level await, and Node exits **13** with "unsettled top-level await"
+rather than failing visibly. The first version did exactly that and produced three blank lines
+and exit 13. Hence three files.
+
+Verified: `client-gate` **11/11**, `matrix-integrity` **9/9**, `client-docs` **6/6**,
+`runtime-structure` **1/1** (27/27 together), `--report` exit 0, `--enforce` exit 1,
+`git diff --check` clean.
+
 ### 9H resume point
 
-Tasks 1–5 **COMPLETE**. Next: **Task 6 — Release-blocking gate wiring.** Create
-`scripts/client-gate.mjs`, reading the matrix and blocking on the Core 3 (`opencode`,
-`antigravity`, `hermes`).
+**Phase 9H is COMPLETE.** All six tasks are done and the plan's completion checklist is green.
+Final matrix: **46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED** across 102 cells, 48
+citations resolving on disk.
 
-Two modes: `--report` always exits 0 and prints the current status; `--enforce` exits
-**non-zero** on any Core 3 cell that is `UNVERIFIED` **or** `BLOCKED`. The plan text says
-`FAIL`/`UNVERIFIED`; this project's vocabulary has no `FAIL`, and the equivalent is `BLOCKED`
-— the gate must block on both, and on `PARTIAL` only if the plan's mandatory-column rule says
-so (it does not, so `PARTIAL` passes with its limitation named).
+The release gate blocks (`--enforce` exits 1), which is correct: `antigravity` cannot be run on
+this host. On a machine that has it, `node scripts/verify-antigravity.mjs` will exit non-zero
+until someone reads the client's real configuration file and implements
+`configureAntigravity()` from it — deliberately, so nobody produces a transcript from a guessed
+config shape.
 
-**`--enforce` must exit non-zero today**, because `antigravity` is absent and wholly
-`UNVERIFIED`. That is the correct current state and the gate's own test should assert it
-rather than treat it as a failure to fix. Print a table of exactly what blocks.
-
-Then the Phase 9H completion checklist, and STOP — 9I is a separate phase.
-
-Note: verification stays the bounded per-workspace sequence described under "Verification
-is run sequentially on this device". Real-client runs are slow: ~20 s per `opencode run`,
-~40 s per `hermes -z`, so a full harness pass is minutes. Run one client process at a time.
+Next: **Phase 9I**, not started. Nothing in 9H is left open.
 
 ## Phase 9 GOAT — planning state
 
