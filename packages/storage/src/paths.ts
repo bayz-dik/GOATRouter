@@ -4,6 +4,16 @@ import { asStorageError } from "./errors.js";
 
 export const DATABASE_FILENAME = "bayz.db";
 export const MASTER_KEY_FILENAME = "master.key";
+/**
+ * Staging slot for a replacement root key.
+ *
+ * Rotation cannot be atomic across a file and a database, so the replacement is
+ * written here *first*, the rewrap transaction commits second, and only then is
+ * this file renamed over `master.key`. A crash between the commit and the rename
+ * therefore leaves the key the database now needs still on disk, and the open path
+ * promotes it. Without the staging slot that window would destroy every secret.
+ */
+export const STAGED_KEY_FILENAME = "master.key.next";
 
 export function databasePath(dataDir: string): string {
   return join(dataDir, DATABASE_FILENAME);
@@ -11,6 +21,10 @@ export function databasePath(dataDir: string): string {
 
 export function masterKeyPath(dataDir: string): string {
   return join(dataDir, MASTER_KEY_FILENAME);
+}
+
+export function stagedKeyPath(dataDir: string): string {
+  return join(dataDir, STAGED_KEY_FILENAME);
 }
 
 /**

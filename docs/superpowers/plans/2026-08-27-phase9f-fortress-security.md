@@ -66,12 +66,47 @@ no adapter can quietly grow a shell string later.
 
 **Route:** `POST /api/security/rotate-root-key` (scope `admin`)
 
-- [ ] RED `key-rotation-api.test.ts`: rotation requires `admin`; it rewraps every secret and every secret still decrypts afterwards; the old root key stops working; a failed rotation leaves **every** secret readable by the old key (atomicity, already guaranteed by `rotateRootKey` — this pins it at the API level); the response carries the new `keyId` fingerprint and no key material; an audit row records the rotation with counts and timestamps, no key; rotating twice in a row works.
-- [ ] RED same file: stale-key detection — a database whose `active_key_id` disagrees with the provider's key yields `master_key_mismatch` at open, before any ciphertext is touched (pins the Phase 2 behaviour at this layer).
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `npm run test --workspace @bayz/storage` exits 0.
-- [ ] Commit — `feat: add a Bayz root-key rotation surface with audit`
+**Deviation, as built:** the surface needed three things the plan did not name, each
+found by making the test pass honestly rather than by inspection.
+
+1. **A `RotatableKeyProvider` capability, not an attempt-and-see.** `rotateRootKey(next)`
+   takes a caller-supplied provider, which is wrong for an HTTP surface twice over: an
+   admin must not choose the key, and environment/passphrase custody cannot persist a
+   replacement at all. `rotateManagedRootKey()` mints the key inside custody, and
+   `canRotateRootKey` lets the route refuse **before reading a row**, so the refusal is a
+   genuine no-op rather than a half-rotation reported as an error.
+2. **Two-phase key promotion.** Rotation spans a file and a database and nothing here
+   can move both at once. The replacement is written to `master.key.next` *before* the
+   rewrap, and promoted by `rename(2)` *after* the commit. `openSecretStorage` now
+   recovers the crash-between-those-two window by promoting a staged key **only** when
+   its fingerprint matches the recorded `active_key_id`. Without this, a crash in that
+   window left every secret permanently unreadable.
+3. **`storage.keyId` became a getter.** It was a captured value, so after a rotation
+   `/api/status` would have reported the superseded fingerprint — telling an operator
+   the rotation had not happened. The test that pins status agreement is what caught it.
+
+Migration **v11** adds `security_audit`, kept separate from `identity_audit` because
+the subject differs: one records what a client credential did, the other what happened
+to the deployment's own custody. Folding them together would have meant an
+`identity_id` foreign key on a row that refers to no identity.
+
+- [x] RED `key-rotation-api.test.ts`: rotation requires `admin`; it rewraps every secret and every secret still decrypts afterwards; the old root key stops working; a failed rotation leaves **every** secret readable by the old key (atomicity, already guaranteed by `rotateRootKey` — this pins it at the API level); the response carries the new `keyId` fingerprint and no key material; an audit row records the rotation with counts and timestamps, no key; rotating twice in a row works.
+- [x] RED same file: stale-key detection — a database whose `active_key_id` disagrees with the provider's key yields `master_key_mismatch` at open, before any ciphertext is touched (pins the Phase 2 behaviour at this layer).
+- [x] Verify RED. The file survived a SIGKILL mid-RED and was recovered: 1/8 passing, and its fixtures used a `kind: "openai"` and a `credential` field neither of which exists, so it failed on setup rather than on the assertions. Fixtures corrected to the real `openai-compatible` + `setCredential` custody path; no assertion weakened.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/server` exits 0 (**260/260**, up from 252); `npm run test --workspace @bayz/storage` exits 0 (**202/202**); `tsc --noEmit` clean for both; `node scripts/storage-smoke.mjs` 42/42; `node scripts/api-smoke.mjs` 70/70.
+- [x] Commit — `feat: add a Bayz root-key rotation surface with audit`
+
+**Findings worth carrying forward:**
+- Two pinned counts moved and both were *supposed* to: `migrations.test.ts` gained
+  `security_audit` in its exact table list, and `scope-enforcement.test.ts` went 41 → 43
+  `/api/*` routes with both new routes declared `admin`. That is the enumeration doing
+  its job — a route added without a scope decision fails there.
+- The v10 migration test hardcoded `runMigrations(db) === 1`, which the ledger rule
+  forbids. It now counts migrations above v9 so a later phase does not break it.
+- `@bayz/providers` `slow-loris` and `@bayz/proxy` `never answers` are **pre-existing
+  timing flakes**, measured at 1-in-3 failures on `851dc68` with this work stashed.
+  Not regressions, and not fixed here; recorded so they are not rediscovered as new.
 
 ### Task 3 — Credential rotation, revocation, cryptographic erasure
 

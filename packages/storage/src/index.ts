@@ -16,11 +16,13 @@ export { nodeSqliteDriver, selectDriver } from "./drivers/node-sqlite.js";
 export {
   DATABASE_FILENAME,
   MASTER_KEY_FILENAME,
+  STAGED_KEY_FILENAME,
   databasePath,
   ensureDataDir,
   masterKeyPath,
   restrictDatabaseFileModes,
   restrictFileMode,
+  stagedKeyPath,
 } from "./paths.js";
 export {
   EnvKeyProvider,
@@ -29,12 +31,15 @@ export {
   PassphraseKeyProvider,
   SCRYPT_PARAMS,
   SecureFileKeyProvider,
+  isRotatableKeyProvider,
   resolveKeyProvider,
   type BayzSecurityMode,
   type KeyProvider,
   type KeyProviderKind,
   type KeyProviderLogger,
   type ResolveKeyProviderOptions,
+  type RotatableKeyProvider,
+  type RotationHandle,
   type SecureFileOptions,
 } from "./key-provider.js";
 export {
@@ -75,6 +80,18 @@ export {
   type Migration,
 } from "./migrations.js";
 export {
+  DEFAULT_SECURITY_AUDIT_RETENTION,
+  SECURITY_AUDIT_ACTIONS,
+  SECURITY_AUDIT_OUTCOMES,
+  createSecurityAuditRepository,
+  type CreateSecurityAuditRepositoryOptions,
+  type SecurityAuditAction,
+  type SecurityAuditInput,
+  type SecurityAuditOutcome,
+  type SecurityAuditRecord,
+  type SecurityAuditRepository,
+} from "./security-audit.js";
+export {
   openDatabase,
   type BayzDatabase,
   type OpenDatabaseOptions,
@@ -82,6 +99,7 @@ export {
 export {
   openSecretStorage,
   type CorruptibleColumn,
+  type ManagedRotationResult,
   type OpenSecretStorageOptions,
   type SecretEnvelopeView,
   type SecretRecordMetadata,

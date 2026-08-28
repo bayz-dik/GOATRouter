@@ -9,9 +9,13 @@ import {
   type UsageRepository,
 } from "@bayz/telemetry";
 import {
+  createSecurityAuditRepository,
   openSecretStorage,
   type BayzSecurityMode,
+  type ManagedRotationResult,
   type SecretStorage,
+  type SecurityAuditRecord,
+  type SecurityAuditRepository,
   type StorageLogger,
 } from "@bayz/storage";
 import { resolveApiToken, type ApiTokenSource } from "./api-token.js";
@@ -31,12 +35,28 @@ export type BayzRuntimeStatus = {
   };
 };
 
+/**
+ * The deployment-security surface.
+ *
+ * Deliberately narrow, and deliberately *not* the storage handle: an `admin` caller
+ * may replace the root key and read the metadata trail, and there is nothing here
+ * that returns a key, a secret, or a secret name. `rotateRootKey` takes the actor id
+ * rather than reading it from a request, so the audit row cannot be forged by a
+ * handler that forgets to pass one.
+ */
+export type BayzSecurity = {
+  readonly canRotateRootKey: boolean;
+  rotateRootKey(actor: string): ManagedRotationResult;
+  recentAudit(limit?: number): SecurityAuditRecord[];
+};
+
 export type BayzRuntime = {
   readonly identities: IdentityManager;
   readonly providers: ProviderManager;
   readonly proxies: ProxyManager;
   readonly router: Router;
   readonly usage: UsageRepository;
+  readonly security: BayzSecurity;
   readonly apiToken: string;
   readonly apiTokenSource: ApiTokenSource;
   describe(): BayzRuntimeStatus;
@@ -148,12 +168,41 @@ export function createBayzRuntime(
       },
     });
 
+    const securityAudit: SecurityAuditRepository = createSecurityAuditRepository(
+      storage.sql,
+    );
+
+    const security: BayzSecurity = {
+      canRotateRootKey: storage.canRotateRootKey,
+
+      rotateRootKey(actor: string): ManagedRotationResult {
+        // The rotation runs first and the audit row is written only on success. A row
+        // for a refused rotation would describe an event that did not happen, and
+        // there is nothing to reconstruct from it later.
+        const result = storage.rotateManagedRootKey();
+        securityAudit.record({
+          action: "root_key_rotated",
+          actor,
+          outcome: "ok",
+          keyId: result.keyId,
+          previousKeyId: result.previousKeyId,
+          subjectCount: result.rotated,
+        });
+        return result;
+      },
+
+      recentAudit(limit?: number): SecurityAuditRecord[] {
+        return securityAudit.recent(limit);
+      },
+    };
+
     return {
       identities,
       providers,
       proxies,
       router,
       usage,
+      security,
       apiToken: resolved.token,
       apiTokenSource: resolved.source,
 

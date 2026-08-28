@@ -1,5 +1,12 @@
 import { randomBytes, scryptSync } from "node:crypto";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { StorageError, asStorageError } from "./errors.js";
 import {
@@ -10,7 +17,7 @@ import type {
   KeystoreBackend,
   OsKeystoreAdapter,
 } from "./keystore/adapter.js";
-import { ensureDataDir, masterKeyPath } from "./paths.js";
+import { ensureDataDir, masterKeyPath, restrictFileMode, stagedKeyPath } from "./paths.js";
 
 export const KEK_LENGTH = 32;
 
@@ -53,6 +60,60 @@ export interface KeyProvider {
   readonly kind: KeyProviderKind;
   readonly available: boolean;
   loadKek(): Buffer;
+}
+
+/**
+ * An in-progress root-key replacement.
+ *
+ * Two-phase on purpose. A rotation touches two independent stores — the key
+ * custody and the database — and no primitive here can make both move at once, so
+ * the replacement key is *durably staged* before any row is rewrapped and only
+ * promoted after the rewrap commits. The failure windows that remain are both
+ * recoverable rather than destructive:
+ *
+ * - crash before the rewrap commits: the old key still opens every row, and the
+ *   staged key is discarded on the next open.
+ * - crash after the rewrap commits but before promotion: the staged key is the one
+ *   the database now needs, and `stagedKek()` lets the open path find and promote it.
+ */
+export type RotationHandle = {
+  /** The replacement key, already persisted to the staging slot. */
+  readonly kek: Buffer;
+  /** Promote the staged key to be the live one. */
+  commit(): void;
+  /** Discard the staged key; the live key is untouched. */
+  rollback(): void;
+};
+
+/**
+ * Custody that can persist a replacement key.
+ *
+ * Deliberately not every provider. `EnvKeyProvider` cannot rewrite the operator's
+ * environment and `PassphraseKeyProvider` derives its key from a passphrase only
+ * the operator can change, so a "rotation" there would leave a database whose key
+ * nothing holds. Those providers refuse instead, which is why this is a separate
+ * interface rather than an optional method that returns a boolean.
+ */
+export interface RotatableKeyProvider extends KeyProvider {
+  readonly canRotate: true;
+  beginRotation(): RotationHandle;
+  /**
+   * A staged key left behind by an interrupted rotation, if one exists.
+   *
+   * Returned without being trusted: the caller compares its fingerprint against
+   * the database's recorded `active_key_id` and promotes it only on a match.
+   */
+  stagedKek(): Buffer | undefined;
+  /** Promote a previously staged key after confirming the database needs it. */
+  promoteStaged(): void;
+  /** Remove a staged key the database does not need. */
+  discardStaged(): void;
+}
+
+export function isRotatableKeyProvider(
+  provider: KeyProvider,
+): provider is RotatableKeyProvider {
+  return (provider as Partial<RotatableKeyProvider>).canRotate === true;
 }
 
 function decodeConfiguredKey(raw: string): Buffer {
@@ -102,9 +163,10 @@ export type SecureFileOptions = {
   warn?: (message: string) => void;
 };
 
-export class SecureFileKeyProvider implements KeyProvider {
+export class SecureFileKeyProvider implements RotatableKeyProvider {
   readonly kind = "secure-file" as const;
   readonly available = true;
+  readonly canRotate = true as const;
   readonly #dataDir: string;
   readonly #warn: (message: string) => void;
 
@@ -139,6 +201,74 @@ export class SecureFileKeyProvider implements KeyProvider {
       throw asStorageError("master_key_invalid", "write-key-file", error);
     }
     return generated;
+  }
+
+  /**
+   * Stage a replacement key, then hand back the commit/rollback pair.
+   *
+   * The staged key is written before the caller rewraps anything, because a
+   * replacement that exists only in memory is lost by a crash — and a crash after
+   * the rewrap commit would then leave the database unopenable forever.
+   */
+  beginRotation(): RotationHandle {
+    ensureDataDir(this.#dataDir);
+    const staged = stagedKeyPath(this.#dataDir);
+    const next = randomBytes(KEK_LENGTH);
+    try {
+      // Truncating rather than exclusive-creating: a leftover slot from an
+      // abandoned attempt is stale by definition, and refusing here would mean an
+      // interrupted rotation could never be retried.
+      writeFileSync(staged, next, { mode: 0o600 });
+    } catch (error) {
+      throw asStorageError("master_key_invalid", "stage-key-file", error);
+    }
+
+    return {
+      kek: next,
+      commit: (): void => {
+        this.promoteStaged();
+      },
+      rollback: (): void => {
+        this.discardStaged();
+      },
+    };
+  }
+
+  stagedKek(): Buffer | undefined {
+    const staged = stagedKeyPath(this.#dataDir);
+    if (!existsSync(staged)) {
+      return undefined;
+    }
+    let contents: Buffer;
+    try {
+      contents = readFileSync(staged);
+    } catch {
+      // Unreadable staging slot is treated as absent: the live key is still
+      // authoritative and the caller falls back to it.
+      return undefined;
+    }
+    return contents.byteLength === KEK_LENGTH ? contents : undefined;
+  }
+
+  promoteStaged(): void {
+    const staged = stagedKeyPath(this.#dataDir);
+    try {
+      // rename(2) over the live path is atomic within a filesystem, so there is no
+      // instant at which no key file exists.
+      renameSync(staged, masterKeyPath(this.#dataDir));
+    } catch (error) {
+      throw asStorageError("master_key_invalid", "promote-key-file", error);
+    }
+    restrictFileMode(masterKeyPath(this.#dataDir));
+  }
+
+  discardStaged(): void {
+    try {
+      rmSync(stagedKeyPath(this.#dataDir), { force: true });
+    } catch {
+      // A stale staging file is harmless: it is only ever promoted when its
+      // fingerprint matches what the database records.
+    }
   }
 
   /**

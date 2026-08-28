@@ -132,6 +132,12 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   { method: "DELETE", url: "/api/identities/i1", scope: "admin" },
   { method: "POST", url: "/api/identities/i1/rotate", scope: "admin" },
   { method: "GET", url: "/api/identities/audit", scope: "admin" },
+  // 9F Task 2. Rotation replaces the key protecting every stored credential and the
+  // audit names key fingerprints and rotation counts, so both are admin-only for a
+  // stronger reason than the identity routes: there is no lesser scope for which
+  // "may re-key the whole deployment" would be a sensible grant.
+  { method: "POST", url: "/api/security/rotate-root-key", scope: "admin" },
+  { method: "GET", url: "/api/security/audit", scope: "admin" },
 ];
 
 test("every registered API route is covered by this suite", async (t) => {
@@ -168,7 +174,7 @@ test("every registered API route is covered by this suite", async (t) => {
   assert.ok(registered.length >= 29, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    41,
+    43,
     "the management surface changed size without a scope decision",
   );
 });

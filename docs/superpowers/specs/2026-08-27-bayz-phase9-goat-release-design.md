@@ -135,6 +135,8 @@ numbers cannot be assigned statically without a collision. The baseline is v5.
 | 9C | `client_identities`, `identity_audit` | v6 | **v6** |
 | 9E | `providers.proxy_id` | v7 | **v8** |
 | 9D | `providers.kind` CHECK gains `custom-openai` | v8 | **v7** |
+| 9E amendment | `routes.force_direct`, then `routes.free_only` + `model_catalogue` | — | **v9, v10** |
+| 9F Task 2 | `security_audit` | — | **v11** |
 
 **Rule**: the intended version above is a *plan-time* label, not a contract. 9D
 and 9E are parallel, so whichever lands second takes the next free number and

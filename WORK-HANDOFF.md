@@ -19,9 +19,11 @@
   - 9D Custom Provider Completeness: **COMPLETE**, Tasks 1–7 plus amendment 5a/5b.
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
-  - 9E Multi-Proxy Easy UX: **IN PROGRESS.** Tasks 1–3 **COMPLETE**. Task 4 is next
-    and **NOT STARTED**. See "Phase 9E resume point" below for the exact next step.
-  - 9F–9L: **NOT STARTED.**
+  - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
+  - 9F Fortress Security: **IN PROGRESS.** Task 1 **COMPLETE** (`851dc68`), Task 2
+    **COMPLETE**. Task 3 is next and **NOT STARTED**. Migration numbering: 9F Task 2
+    took **v11** (`security_audit`).
+  - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -38,9 +40,9 @@
   - `docs/superpowers/plans/2026-08-27-phase9b-streaming-and-tools.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
-  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — **IN PROGRESS,
+  - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
+  - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
     Tasks 1–2 done, Task 3 next**
-  - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -61,14 +63,38 @@
 
 ## Verified totals
 
+Current as of 9F Task 2. Every figure below was measured on this device, not carried
+forward from a plan.
+
 - `@bayz/telemetry`: 55 tests pass.
-- `@bayz/storage`: 160 tests pass (schema is v5).
-- `@bayz/providers`: 111 tests pass.
+- `@bayz/storage`: 202 tests pass (schema is **v11**).
+- `@bayz/providers`: 276 tests pass.
 - `@bayz/proxy`: 105 tests pass.
-- `@bayz/router`: 140 tests pass.
-- `@bayz/server`: 142 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/router`: 276 tests pass.
+- `@bayz/server`: 260 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/identity`: 69, `@bayz/gateway`: 74.
 - `@bayz/dashboard`: 253 tests pass across 17 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
+- `node scripts/api-smoke.mjs`: 70/70 against a **real listener** driven by real `fetch`.
+
+### Known pre-existing flakes
+
+Two timing-bound tests fail roughly 1 run in 3 on this device, **measured on
+`851dc68` with all 9F Task 2 work stashed** — they are not regressions and were not
+"fixed" by weakening them:
+
+- `@bayz/providers` — `a slow-loris body is bounded by the timeout, not held open`
+- `@bayz/proxy` — `a proxy that never answers is bounded by the timeout` /
+  `a header block that never terminates is refused at the byte cap`
+
+Both assert an upper bound on elapsed time against a deliberately stalled loopback
+peer. On a loaded ARM64 device the scheduler occasionally misses the bound. 9I owns
+load/timing work and is the right place to make them deterministic.
+
+## Historical totals (pre-9F)
+
+- `@bayz/storage`: 160 tests pass (schema was v5).
+- `@bayz/providers`: 111, `@bayz/proxy`: 105, `@bayz/router`: 140, `@bayz/server`: 142.
 - `npm run runtime:verify` exits 0; all nine builds exit 0.
 - `node scripts/storage-smoke.mjs`: 42/42 against a real database, including a
   reopen in a separate child process.
@@ -1269,6 +1295,64 @@ identity → providers → proxy → gateway → router → dashboard → server
   to the usage API.
 - **The dashboard shows a key as selectable text.** Correct given no clipboard API
   over HTTP, but it is in the DOM until acknowledged, so a screen recording captures it.
+
+## Phase 9F Fortress Security — as built so far
+
+### Task 1 — OS-backed key providers (`851dc68`)
+
+Three real adapters (DPAPI, Keychain, Secret Service) plus four supporting modules.
+`keystore/exec.ts` is the single `node:child_process` choke point, asserted by a
+source scan, so no adapter can grow a shell string later. On this Termux/Android
+ARM64 device all three probe `available: false` and `keystoreSupport()` reports
+`UNVERIFIED` — measured, never faked.
+
+### Task 2 — Root-key rotation surface and audit
+
+```text
+POST /api/security/rotate-root-key   admin   → { rotated, keyId, previousKeyId, rotatedAt }
+GET  /api/security/audit             admin   → { audit: [...] }
+```
+
+Three things the plan did not anticipate, each forced by making the recovered RED
+test pass honestly:
+
+1. **Rotation is a custody capability, not an attempt.** `rotateRootKey(next)` takes a
+   caller-supplied provider, which is wrong for an HTTP surface twice over — an admin
+   must not choose the key, and environment/passphrase custody cannot persist a
+   replacement at all. `SecretStorage` gained `canRotateRootKey` and
+   `rotateManagedRootKey()`: the route refuses with `409 rotation_unsupported`
+   **before reading a single row**, so a refusal is a genuine no-op. A test opens the
+   database afterwards and proves every secret still reads under the original key.
+2. **Two-phase key promotion, because rotation spans two stores.** The replacement is
+   written to `master.key.next` before the rewrap and promoted by `rename(2)` after
+   the commit. `openSecretStorage` now recovers the window between them: a staged key
+   is promoted **only** when its fingerprint matches the recorded `active_key_id`, and
+   a staged key that does not match is discarded as the residue of a failed attempt.
+   Without this, a crash between commit and promotion left every secret permanently
+   unreadable — the one failure mode worse than refusing to rotate.
+3. **`storage.keyId` had to become a getter.** It was captured at open, so after a
+   rotation `/api/status` would have reported the superseded fingerprint and told an
+   operator the rotation had not happened.
+
+Migration **v11** adds `security_audit`. Kept separate from `identity_audit` because
+the subject differs: one records what a client credential did, the other what happened
+to the deployment's own custody — and folding them together would have put an
+`identity_id` foreign key on a row that refers to no identity. `key_id` and
+`previous_key_id` are validated against `/^kek_[0-9a-f]{32}$/` on write, so a caller
+that passes a raw 64-hex key by mistake fails instead of persisting it. `subject_count`
+is a count, not a list: naming which secrets were rewrapped would turn the audit trail
+into a secret-name index.
+
+Verified: `@bayz/server` 260/260, `@bayz/storage` 202/202, both `tsc --noEmit` clean,
+`storage-smoke` 42/42, `api-smoke` 70/70.
+
+### 9F resume point
+
+Task 3 — credential rotation, revocation, cryptographic erasure. **NOT STARTED.**
+Next concrete step: write RED `packages/providers/test/credential-lifecycle.test.ts`
+asserting a replaced credential produces a new DEK *and* IV, that deletion makes the
+ciphertext unrecoverable, that the WAL caveat is stated rather than papered over, and
+that a revoked credential fails the next request with `credential_missing`.
 
 ## Phase 9 GOAT — planning state
 

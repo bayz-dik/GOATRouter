@@ -27,8 +27,8 @@ export type Migration = {
  * provider registry, v3 the proxy registry, v4 the route registry, v5 usage
  * telemetry, v6 per-client identities with a metadata-only audit trail, v7 the
  * `custom-openai` provider kind, v8 the provider-level proxy default, v9 the
- * route-level force-direct flag, and v10 free-only routing plus the model
- * catalogue. None of them
+ * route-level force-direct flag, v10 free-only routing plus the model
+ * catalogue, and v11 the deployment security audit. None of them
  * holds a credential column, and neither `routes` nor the
  * usage tables have any column able to hold a prompt, a completion, a request or
  * response body, or an arbitrary upstream error string. Provider keys live in
@@ -356,6 +356,38 @@ export const MIGRATIONS: readonly Migration[] = [
       // The free aggregate reads by classification across providers, so that is what is
       // indexed. Reading by provider is already served by the primary key.
       `CREATE INDEX model_catalogue_economics_idx ON model_catalogue (economics)`,
+    ],
+  },
+  {
+    version: 11,
+    statements: [
+      /*
+       * Security audit: metadata only (9F Task 2).
+       *
+       * Separate from `identity_audit` because the subject is different. An identity
+       * audit row is about a client credential; this is about the *deployment* — the
+       * root key that protects every secret. Folding them together would have meant
+       * one table answering two unrelated questions, and an `identity_id` foreign key
+       * on a row that refers to no identity.
+       *
+       * There is deliberately no column able to hold key material. `key_id` and
+       * `previous_key_id` are the one-way `kek_<32 hex>` fingerprints already used by
+       * `/api/status`, and `action`/`outcome` are enum-constrained so no free-text
+       * error prose can be smuggled through them. `subject_count` is a count, not a
+       * list: naming which secrets were rewrapped would turn the audit trail into a
+       * secret-name index.
+       */
+      `CREATE TABLE security_audit (
+         id              INTEGER PRIMARY KEY AUTOINCREMENT,
+         occurred_at     TEXT    NOT NULL,
+         action          TEXT    NOT NULL CHECK (action IN ('root_key_rotated')),
+         actor           TEXT    NOT NULL,
+         outcome         TEXT    NOT NULL CHECK (outcome IN ('ok', 'failed')),
+         key_id          TEXT,
+         previous_key_id TEXT,
+         subject_count   INTEGER NOT NULL CHECK (subject_count >= 0)
+       )`,
+      `CREATE INDEX security_audit_occurred_idx ON security_audit (occurred_at)`,
     ],
   },
 ];

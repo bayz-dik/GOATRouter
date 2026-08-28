@@ -12,6 +12,7 @@ import { registerIdentityRoutes } from "./routes/identities.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerProxyRoutes } from "./routes/proxies.js";
 import { registerRouteRoutes } from "./routes/routes.js";
+import { registerSecurityRoutes } from "./routes/security.js";
 import { registerUsageRoutes } from "./routes/usage.js";
 import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
@@ -99,6 +100,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       requireScope(request, reply, "providers.read") ?? runtime.describe(),
     );
     registerIdentityRoutes(app, runtime);
+    registerSecurityRoutes(app, runtime);
     registerProviderRoutes(app, runtime);
     registerProxyRoutes(app, runtime);
     registerRouteRoutes(app, runtime);

@@ -12,6 +12,7 @@ import {
 } from "./crypto.js";
 import { StorageError, asStorageError } from "./errors.js";
 import {
+  isRotatableKeyProvider,
   resolveKeyProvider,
   type BayzSecurityMode,
   type KeyProvider,
@@ -48,6 +49,13 @@ export interface SecureSecretRepository {
   rotateRootKey(next: KeyProvider): { rotated: number; keyId: string };
   close(): void;
 }
+
+/** What a rotation driven by the resolved custody reports back. */
+export type ManagedRotationResult = {
+  rotated: number;
+  keyId: string;
+  previousKeyId: string;
+};
 
 /** Envelope view used by diagnostics and adversarial tests, never by the domain. */
 export type SecretEnvelopeView = {
@@ -87,6 +95,24 @@ export interface SecretStorage extends SecureSecretRepository {
    */
   readonly sql: SqlDatabase;
   activeKeyId(): string | undefined;
+  /**
+   * Whether the resolved custody can persist a replacement root key.
+   *
+   * Honest capability rather than an attempt-and-see: environment and passphrase
+   * custody cannot be rewritten by BAYZ, so a rotation there would commit a rewrap
+   * against a key nothing holds. Callers check this and refuse *before* touching a
+   * row, which is what makes the refusal a no-op rather than a half-rotation.
+   */
+  readonly canRotateRootKey: boolean;
+  /**
+   * Rotate the root key using the resolved custody.
+   *
+   * Distinct from `rotateRootKey(next)`, which takes a caller-supplied provider and
+   * is what the Phase 2 tests and the smoke script drive. This variant mints and
+   * persists the replacement itself, so an operator surface does not have to know
+   * how custody works — and cannot be handed a key of its own choosing over HTTP.
+   */
+  rotateManagedRootKey(): ManagedRotationResult;
   /** Envelope introspection for diagnostics and tests; returns no plaintext. */
   inspect(name: string): SecretEnvelopeView;
   /** Test seam: simulate an attacker flipping bytes inside the database. */
@@ -171,16 +197,49 @@ export function openSecretStorage(
   const db = database.db;
 
   try {
-    const keyId = computeKeyId(kek);
     const recorded = readMetadata(db, ACTIVE_KEY_ID);
+    let keyId = computeKeyId(kek);
 
     if (recorded === undefined) {
       writeMetadata(db, ACTIVE_KEY_ID, keyId);
       writeMetadata(db, CRYPTO_FORMAT_VERSION, String(ENVELOPE_VERSION));
     } else if (!keyIdsMatch(recorded, keyId)) {
-      // Detected before any ciphertext is touched, so an operator sees one clear
-      // signal instead of a cascade of secret_corrupt failures.
-      throw new StorageError("master_key_mismatch", "verify-active-key");
+      /*
+       * Before declaring a mismatch, check for an interrupted rotation.
+       *
+       * A rotation stages its replacement key, commits the rewrap, then promotes the
+       * staged file. A crash in the window between commit and promotion leaves a
+       * database wrapped under a key that is on disk but not yet live — and refusing
+       * to open there would strand every secret permanently. The staged key is
+       * promoted only when its fingerprint matches what the database recorded, so
+       * this is recovery, not a second accepted key.
+       */
+      const rotatable = isRotatableKeyProvider(provider) ? provider : undefined;
+      const recovered = rotatable?.stagedKek();
+      if (
+        rotatable !== undefined &&
+        recovered !== undefined &&
+        keyIdsMatch(recorded, computeKeyId(recovered))
+      ) {
+        rotatable.promoteStaged();
+        kek.fill(0);
+        kek = recovered;
+        keyId = computeKeyId(kek);
+        log({ event: "root_key_rotation_recovered", keyId });
+      } else {
+        if (rotatable !== undefined && recovered !== undefined) {
+          // A staged key the database does not need is the residue of a rotation
+          // that failed before committing. Leaving it would make the next open
+          // consider it again forever.
+          rotatable.discardStaged();
+        }
+        // Detected before any ciphertext is touched, so an operator sees one clear
+        // signal instead of a cascade of secret_corrupt failures.
+        throw new StorageError("master_key_mismatch", "verify-active-key");
+      }
+    } else if (isRotatableKeyProvider(provider)) {
+      // The live key is correct, so any staged key is stale.
+      provider.discardStaged();
     }
 
     let activeKeyId = keyId;
@@ -193,14 +252,83 @@ export function openSecretStorage(
       return row;
     };
 
+    /**
+     * Rewrap every envelope onto `nextKek` in one transaction.
+     *
+     * Shared by both rotation entry points so there is exactly one place the
+     * atomicity guarantee lives. A failure leaves every record wrapped by the old
+     * KEK, which the caller still holds — rotation degrades to "nothing happened"
+     * rather than to a half-readable database.
+     */
+    const rewrapAll = (nextKek: Buffer): { rotated: number; keyId: string } => {
+      const nextKeyId = computeKeyId(nextKek);
+      const rows = db.prepare("SELECT * FROM secrets").all();
+
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        let rotated = 0;
+        const update = db.prepare(
+          `UPDATE secrets
+              SET key_id = ?, wrapped_dek = ?, wrap_iv = ?, wrap_tag = ?
+            WHERE name = ?`,
+        );
+        for (const row of rows) {
+          const name = String(row.name);
+          // Rewrap only: the DEK is unwrapped with the old KEK and rewrapped with
+          // the new one, so no plaintext is ever produced and the secret ciphertext
+          // is untouched.
+          const rewrapped = rewrapEnvelope(kek, nextKek, name, rowToEnvelope(row));
+          update.run(
+            rewrapped.keyId,
+            rewrapped.wrappedDek,
+            rewrapped.wrapIv,
+            rewrapped.wrapTag,
+            name,
+          );
+          rotated += 1;
+        }
+        writeMetadata(db, ACTIVE_KEY_ID, nextKeyId);
+        db.exec("COMMIT");
+
+        kek.fill(0);
+        kek = nextKek;
+        activeKeyId = nextKeyId;
+        log(
+          redactSecrets({
+            event: "root_key_rotated",
+            rotated,
+            keyId: nextKeyId,
+          }),
+        );
+        return { rotated, keyId: nextKeyId };
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Already unwound.
+        }
+        throw asStorageError("secret_corrupt", "rotate-root-key", error);
+      }
+    };
+
     const storage: SecretStorage = {
       schemaVersion: database.schemaVersion,
       journalMode: database.journalMode,
       driver: database.driver,
       appliedMigrations: database.appliedMigrations,
       keyProvider: provider.kind,
-      keyId,
+      /**
+       * A getter, not a captured value.
+       *
+       * `/api/status` reports this fingerprint, and after a rotation a frozen value
+       * would tell an operator the rotation had not happened. `readonly` in the
+       * interface still holds: there is no setter.
+       */
+      get keyId(): string {
+        return activeKeyId;
+      },
       sql: db,
+      canRotateRootKey: isRotatableKeyProvider(provider),
 
       activeKeyId(): string | undefined {
         return readMetadata(db, ACTIVE_KEY_ID);
@@ -306,56 +434,35 @@ export function openSecretStorage(
         // Resolved before the transaction so an unusable replacement key cannot
         // half-rotate the database.
         const nextKek = next.loadKek();
-        const nextKeyId = computeKeyId(nextKek);
-        const rows = db.prepare("SELECT * FROM secrets").all();
+        return rewrapAll(nextKek);
+      },
 
-        db.exec("BEGIN IMMEDIATE");
-        try {
-          let rotated = 0;
-          const update = db.prepare(
-            `UPDATE secrets
-                SET key_id = ?, wrapped_dek = ?, wrap_iv = ?, wrap_tag = ?
-              WHERE name = ?`,
-          );
-          for (const row of rows) {
-            const name = String(row.name);
-            // Rewrap only: the DEK is unwrapped with the old KEK and rewrapped
-            // with the new one, so no plaintext is ever produced and the secret
-            // ciphertext is untouched.
-            const rewrapped = rewrapEnvelope(kek, nextKek, name, rowToEnvelope(row));
-            update.run(
-              rewrapped.keyId,
-              rewrapped.wrappedDek,
-              rewrapped.wrapIv,
-              rewrapped.wrapTag,
-              name,
-            );
-            rotated += 1;
-          }
-          writeMetadata(db, ACTIVE_KEY_ID, nextKeyId);
-          db.exec("COMMIT");
-
-          kek.fill(0);
-          kek = nextKek;
-          activeKeyId = nextKeyId;
-          log(
-            redactSecrets({
-              event: "root_key_rotated",
-              rotated,
-              keyId: nextKeyId,
-            }),
-          );
-          return { rotated, keyId: nextKeyId };
-        } catch (error) {
-          try {
-            db.exec("ROLLBACK");
-          } catch {
-            // Already unwound.
-          }
-          // A failed rotation degrades to "nothing happened": every record is
-          // still wrapped by the old KEK, which the caller still holds.
-          throw asStorageError("secret_corrupt", "rotate-root-key", error);
+      rotateManagedRootKey(): ManagedRotationResult {
+        const rotatable = isRotatableKeyProvider(provider) ? provider : undefined;
+        if (rotatable === undefined) {
+          // Refused before a single row is read. BAYZ cannot rewrite the operator's
+          // environment or change their passphrase, so committing a rewrap here would
+          // leave a database whose key nothing holds — the one failure that destroys
+          // every secret at once.
+          throw new StorageError("rotation_unsupported", provider.kind);
         }
+
+        const previousKeyId = activeKeyId;
+        const handle = rotatable.beginRotation();
+        let result: { rotated: number; keyId: string };
+        try {
+          result = rewrapAll(handle.kek);
+        } catch (error) {
+          // The rewrap did not commit, so the live key is still correct and the
+          // staged one is garbage.
+          handle.rollback();
+          throw error;
+        }
+        // Promotion is last: until it happens the database and the staged key
+        // disagree with the live file, and `openSecretStorage` recovers from exactly
+        // that state by fingerprint match.
+        handle.commit();
+        return { ...result, previousKeyId };
       },
 
       inspect(name: string): SecretEnvelopeView {

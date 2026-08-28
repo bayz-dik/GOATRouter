@@ -64,6 +64,9 @@ test("a fresh database gains exactly the tables of the current schema", () => {
       "runtime_metadata",
       "schema_migrations",
       "secrets",
+      // 9F Task 2: deployment-level audit, distinct from `identity_audit` because
+      // the subject is the root key rather than a client credential.
+      "security_audit",
       "usage_attempts",
       "usage_requests",
     ]);
@@ -1317,7 +1320,12 @@ test("migration v10 migrates every existing route to free-only", () => {
        VALUES ('legacy', 'gpt-4o', 'p1', NULL, 100, 1, '{}', 0, 'created', 'updated')`,
     ).run();
 
-    assert.equal(runMigrations(db), 1);
+    // Not a hardcoded 1: the ledger rule forbids pinning a head version, so this
+    // counts whatever remains above v9 and stays correct as later phases add more.
+    assert.equal(
+      runMigrations(db),
+      MIGRATIONS.filter((migration) => migration.version > 9).length,
+    );
 
     const route = db.prepare("SELECT * FROM routes WHERE id = 'legacy'").get();
     // The safe value, asserted explicitly. An upgrade that migrated existing rows to 0

@@ -85,6 +85,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   storage_unavailable: 503,
   master_key_invalid: 500,
   master_key_mismatch: 500,
+  // 409, not 500 or 501: the request was valid and the deployment's key custody is
+  // what refuses. The remedy is an operator decision about custody, not a retry.
+  rotation_unsupported: 409,
   secret_corrupt: 500,
 };
 
