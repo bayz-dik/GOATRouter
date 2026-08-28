@@ -246,16 +246,72 @@ export function lookupCapability(name: unknown): CapabilityHandler | undefined;
 
 **Create:** `scripts/injection-smoke.mjs`
 
-- [ ] Non-mocked: real listener, real origin scripted to emit hostile tool calls. Prove: a call for `read_provider_credentials` is refused with `unknown_capability`; a call with a traversal argument is refused; a chat-scope identity cannot dispatch anything requiring `providers.write`; a provider credential sentinel is unreachable through every hostile path attempted; scan db/wal/shm/logs/responses for the credential and prompt sentinels — zero occurrences.
-- [ ] Verify: `node scripts/injection-smoke.mjs` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add Bayz injection smoke`
+- [x] Non-mocked: real listener, real origin scripted to emit hostile tool calls. Prove: a call for `read_provider_credentials` is refused with `unknown_capability`; a call with a traversal argument is refused; a chat-scope identity cannot dispatch anything requiring `providers.write`; a provider credential sentinel is unreachable through every hostile path attempted; scan db/wal/shm/logs/responses for the credential and prompt sentinels — zero occurrences.
+- [x] Verify: `node scripts/injection-smoke.mjs` exits 0 (**179/179**); `git diff --check` clean. `npm run runtime:verify` as a **single command is unusable on this device** — its parallel fan-out exhausts the futex table and the run is SIGKILLed with GB of RAM free. Equivalent coverage was run as bounded sequential steps instead: twelve per-workspace test runs (**1897 tests**), twelve per-workspace builds (all exit 0), and all thirteen smoke scripts (**998 checks**). See the handoff's "Verification is run sequentially on this device".
+- [x] Commit — `test: add Bayz injection smoke`
+
+**Findings worth carrying forward:**
+- **Two layers refuse a malformed argument, and the smoke records *which*, rather than
+  smoothing it over.** `@bayz/router`'s 9B `parseToolCalls` validates the upstream
+  response before dispatch is reached and already requires `arguments` to parse to a JSON
+  object — so an unparseable blob, a bare array, and a bare scalar never become tool calls
+  at all: the whole response is refused as **`invalid_response` (502)**, the upstream's
+  fault, not the client's. Only what survives that gate reaches dispatch and refuses as
+  **`invalid_tool_arguments` (400)**. The first draft of the smoke asserted 400 for all
+  six and failed on three; changing the assertion to match reality — and pinning the
+  expected code per case — is the honest fix, and it means a future change that moves a
+  refusal between layers has to be a decision rather than silent drift.
+- **A pre-existing `no_free_route` breakage in `scripts/identity-smoke.mjs` was found and
+  fixed.** That script was last touched at `e1e2a71`, *before* free-only landed at
+  `6955443`, and it created its route without `freeOnly: false`. Free-only defaults ON
+  (§25 rule 6), the fixture origin publishes no pricing metadata so its model classifies
+  as undiscovered, and undiscovered is not free (rule 5) — so all three chats and the
+  admin-credential check refused with 409, 67/74. Every other smoke got the
+  `freeOnly: false` fixture note in `6955443`; this one was missed. The fix is the same
+  one-line fixture opt-out with the same explanatory comment. **Free-first itself was not
+  weakened** — the smoke now asserts positively that a route created *without* the field
+  still comes back `freeOnly: true`.
+- **The credential is asserted to reach the upstream, positively.** Requirement 5 is a
+  zero-occurrence scan, and a scan like that passes trivially if credentials are simply
+  broken. So the origin's captured `Authorization` headers are held separately from the
+  leak scan and checked to contain `Bearer <sentinel>`, while the scan covers what BAYZ
+  hands a client and what it writes down. The upstream request *bodies* are separately
+  asserted to be credential-free.
+- **The forwarded-unregistered-call behaviour is asserted, not worked around.** A hostile
+  name BAYZ never registered is handed back to the client (reviewed Task 3 behaviour: BAYZ
+  has nothing to run, and inventing a refusal breaks every client with its own tools), so
+  the smoke proves the `unknown_capability` / `dispatch-lookup` refusal at the real
+  dispatch entry point and holds the HTTP path to the stronger claim — nothing executed,
+  and no credential travelled with the forward.
+- **The recursion bound is exercised through HTTP, not just in-process.** A registered
+  handler dispatches to itself and asks for ten levels; the recorded depth sequence is
+  exactly `[1, 2, 3, 4]`, and the fifth level's `dispatch_depth_exceeded` /
+  `dispatch-depth-bound` refusal is found in the **upstream request body** — proving the
+  refusal was serialized into the conversation the model saw, rather than merely returned.
+- **The accepted path is exercised on purpose.** It is where a credential could most
+  plausibly leak: a value travels to a handler, returns as a `role:"tool"` message, and
+  goes out to the upstream again. The smoke also re-checks the Task 3 wire fix there —
+  the replayed result must carry `tool_call_id`, never the internal `toolCallId`.
+- **Three mutations proved the smoke can fail**, then were reverted:
+  1. `parse` moved before the scope gate in `dispatch.ts` → 2 red (the privileged
+     capability validated an unauthorized caller's input).
+  2. The split-batch guard deleted from `tool-loop.ts` → 2 red (half-execution).
+  3. A third mutation (the loop escalating its principal to `admin`) was **prepared but
+     not run**: the command was blocked awaiting approval, and rather than retry a
+     destructive edit without consent it was abandoned. That property is already covered
+     by `tool-dispatch.test.ts`'s "a tool result claiming elevated scope does not widen
+     the next dispatch" and by the smoke's own chat-scope refusal, so the gap is in the
+     mutation count, not in the coverage. Both source files were verified byte-identical
+     to their pre-mutation backups and to `HEAD` afterwards.
 
 ## Completion checklist
 
-- [ ] Registry is a `Map`, bounded, empty by default, and no registered name reads a secret.
-- [ ] Dispatch validates in stages and checks scope before parsing input.
-- [ ] Depth bounded at 4, calls bounded at 8, arguments bounded at 32 KiB.
-- [ ] A model cannot name a capability into existence; refusal is structural.
-- [ ] Tool results cannot elevate scope.
-- [ ] `packages/capability` imports no secret store, no `node:fs`, no `node:child_process`.
-- [ ] No tool argument or result in telemetry, logs, or the database.
+- [x] Registry is a `Map`, bounded, empty by default, and no registered name reads a secret. — `registry.test.ts` (18), plus the injection smoke asserting an empty default registry and re-asserting it at the end of the run.
+- [x] Dispatch validates in stages and checks scope before parsing input. — measured with a counter in `dispatch.test.ts`, `tool-dispatch.test.ts`, and `injection-smoke.mjs` (`parsed() === 0` for an unauthorized caller); mutation A turns it red.
+- [x] Depth bounded at 4, calls bounded at 8, arguments bounded at 32 KiB. — `dispatch.test.ts`, `injection-adversarial.test.ts` (genuinely recursive handler, 10,000-call flood), and the smoke over real HTTP.
+- [x] A model cannot name a capability into existence; refusal is structural. — `unknown_capability` at `dispatch-lookup` for 5 secret-reading names under an `admin` principal, plus 13 lookups returning `undefined`; no blocklist anywhere in `registerCapability`.
+- [x] Tool results cannot elevate scope. — `dispatch.test.ts`, `injection-adversarial.test.ts`, `tool-dispatch.test.ts`, all with the forged fields inert and the next privileged call still refused.
+- [x] `packages/capability` imports no secret store, no `node:fs`, no `node:child_process`. — source scan with a module allowlist plus a named forbidden list, the manifest pinned, and both `@bayz/capability` and `@bayz/identity` export lists scanned.
+- [x] No tool argument or result in telemetry, logs, or the database. — `tool-dispatch.test.ts` on both the rejected and accepted paths, and `injection-smoke.mjs` scanning every response body, every log line, and the raw `bayz.db` / `-wal` / `-shm` bytes with a positive check that the scan reads real content.
+
+**Phase 9G is COMPLETE.** Tasks 1–5, five commits, verified sequentially on this device.

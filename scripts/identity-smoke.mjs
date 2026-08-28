@@ -178,7 +178,17 @@ async function main() {
       "the route was created",
       (
         await call("POST", "/api/routes", {
-          body: { id: "r1", model: "smoke-model", providerId: "smoke" },
+          body: {
+            id: "r1",
+            model: "smoke-model",
+            providerId: "smoke",
+            // The fixture origin publishes no pricing metadata, so its models classify
+            // as undiscovered — and undiscovered is not free (spec §25 rule 5).
+            // Free-only is ON by default, so leaving this out refuses every chat below
+            // with `no_free_route`, which is not what this smoke proves. Free-only
+            // routing has dedicated coverage in packages/router/test/free-only.test.ts.
+            freeOnly: false,
+          },
         })
       ).status === 201,
     );

@@ -24,9 +24,8 @@
     `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, `40b517b`, + Task 9), `runtime:verify`
     green.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
-  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–4 **COMPLETE**
-    (`0539536`, `d243a3f`, `ab0fbc5`, + Task 4). Task 5 (injection smoke) is next and
-    **NOT STARTED**.
+  - 9G Agent / Tool Injection Security: **COMPLETE.** Tasks 1–5
+    (`0539536`, `d243a3f`, `ab0fbc5`, `400aa8d`, + Task 5). Verified sequentially.
     New package `@bayz/capability`; `runtime:build` is now **twelve** targets, with
     `@bayz/capability` after `@bayz/identity` per the spec §4 order.
     Task 3 also fixed a **live 9B wire bug**: `wireBody` emitted the internal camelCase
@@ -35,6 +34,11 @@
     Task 4 is the only 9G task that changed **no `src` file**: 24 adversarial cases were
     written to break Tasks 1–3 and all refused on the first run, so seven mutations were
     applied and reverted to prove the suite can fail rather than asserting it.
+    Task 5 found and fixed a **pre-existing breakage in `scripts/identity-smoke.mjs`**:
+    it was last touched before free-only landed and created its route without
+    `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
+    not weakened — the new smoke asserts a route created *without* the field still comes
+    back `freeOnly: true`.
   - 9H–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -74,24 +78,48 @@
 
 ## Verified totals
 
-Current as of 9G Task 4. Every figure below was measured on this device, not carried
-forward from a plan.
+Current as of 9G Task 5. Every figure below was measured on this device, not carried
+forward from a plan. Tests and builds were run **one workspace per command**; smokes one
+script per command.
 
+### Tests — 1897 across twelve workspaces
+
+- `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `@bayz/telemetry`: 55 tests pass.
 - `@bayz/storage`: 246 tests pass (schema is **v11**).
+- `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: **72** (18 registry +
+  30 dispatch + 24 injection adversarial).
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 121 tests pass.
 - `@bayz/router`: 289 tests pass.
 - `@bayz/server`: 336 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: **72** (18 registry +
-  30 dispatch + 24 injection adversarial).
 - `@bayz/dashboard`: 340 tests pass across 23 files.
-- `@bayz/contracts`: 3, `@bayz/security`: 6.
-- All **twelve** `runtime:build` targets exit 0, verified one workspace at a time rather
-  than through `runtime:verify` — see the verification note below.
-- `node scripts/api-smoke.mjs`: 70/70 against a **real listener** driven by real `fetch`.
-- `node scripts/security-smoke.mjs`: **82/82** against a real verified-TLS listener,
-  three spawned entry-point boots, a real upstream origin, and a 200-request burst.
+
+### Builds — all twelve `runtime:build` targets exit 0
+
+Run one at a time: contracts, security, storage, telemetry, identity, capability,
+providers, proxy, gateway, router, dashboard, server.
+
+### Smokes — 998 checks across thirteen scripts, all PASS
+
+```text
+storage-smoke           42/42     provider-smoke          36/36
+proxy-smoke             39/39     router-smoke            46/46
+api-smoke               70/70     usage-smoke            119/119
+dashboard-smoke         48/48     identity-smoke          74/74
+custom-provider-smoke   73/73     proxy-ux-smoke         127/127
+stream-smoke            63/63     security-smoke          82/82
+injection-smoke        179/179
+```
+
+`injection-smoke.mjs` is 9G Task 5: a real listener on a real loopback port driven by
+real `fetch`, a real SQLite database with real envelope crypto, and a real upstream
+origin scripted per turn to emit hostile tool calls — through the real
+gateway → router → `runToolLoop` → `@bayz/capability` path.
+
+`identity-smoke` was **repaired** during Task 5. It had been failing 67/74 since
+free-only landed (`6955443`) because its route fixture predated the field; see the 9G
+Task 5 findings.
 
 ### Verification is run sequentially on this device
 
@@ -102,10 +130,10 @@ followed by SIGKILL, with several GB of RAM still free. It is a process/thread-c
 limit, not memory pressure.
 
 So verification is done as bounded sequential steps — one `npm run test --workspace …`
-per package, then one `npm run build --workspace …` per target — which produces the same
-coverage with a flat process count. Totals above were measured that way. `runtime:verify`
-as a single command remains unusable on this device and should not be treated as the
-gate; the per-workspace sequence is.
+per package, then one `npm run build --workspace …` per target, then one smoke script per
+command — which produces the same coverage with a flat process count. Every total above
+was measured that way. `runtime:verify` as a single command remains unusable on this
+device and should not be treated as the gate; the per-workspace sequence is.
 
 ### Known pre-existing flakes
 
@@ -878,7 +906,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
-| 9G Agent / Tool Injection Security | **IN PROGRESS** | Tasks 1–4 done; `@bayz/capability` 72 tests; Task 5 (injection smoke) next |
+| 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2043,20 +2071,116 @@ Verified: `@bayz/capability` **72/72** (18 registry + 30 dispatch + 24 injection
 336/336, all twelve `runtime:build` targets exit 0 run one at a time, `api-smoke` 70/70,
 `security-smoke` 82/82.
 
+### Task 5 — Injection smoke
+
+`scripts/injection-smoke.mjs`, **179 checks**, non-mocked end to end: a real listener on
+a real loopback port driven by real `fetch` (not `app.inject`), a real SQLite database
+under a temp `dataDir` with the real envelope crypto, a real provider credential and
+proxy password under custody, and a real upstream origin on its own port scripted per
+turn to emit hostile tool calls — reaching the real gateway → router → `runToolLoop` →
+`@bayz/capability` path. The registry is process-wide, so a capability registered by the
+script is the capability the HTTP path finds, not a double.
+
+Eleven sections, in the order an auditor would want them:
+
+1. **Real listener, real database, real hostile origin** — including the free-first
+   assertion below.
+2. **The registry is empty by default**, the bounds are 8 and 4, and thirteen
+   secret-reaching names resolve to `undefined`.
+3. **`read_provider_credentials` and four siblings refuse** with `unknown_capability` at
+   `dispatch-lookup` under an **`admin`** principal — the refusal is about existence, so
+   the widest authority in the system must not change it. Then over HTTP, where an
+   unregistered name is forwarded to the client with nothing executed and no credential
+   attached.
+4. **Ten traversal-style arguments** (`../../etc/passwd`, `file://`, `169.254.169.254`,
+   `metadata.google.internal`, command substitution, `; rm -rf /`, a header-injection
+   newline) each refuse as `invalid_tool_arguments`, reach `parse` exactly once, reach
+   `run` never, echo nothing, and produce no second upstream turn.
+5. **A chat-scope identity cannot dispatch a `providers.write` capability** — 403
+   `capability_forbidden` with `parsed() === 0`, `ran() === 0`, and `seen()` empty; then
+   the complement, an admin caller dispatching the same capability successfully, so the
+   gate cannot be passing by refusing everything.
+6. **The credential is unreachable through every hostile path exercised** — nine
+   management routes 403 to the chat client, no credential read endpoint exists for
+   anyone including admin, and the provider row reports custody without the value.
+7. **Unknown capabilities and malformed arguments fail closed** — six malformed blobs, a
+   nine-call batch, a 40 KiB argument, and a split batch, each with nothing executed.
+8. **A recursive chain stops at depth four**, driven through HTTP against a handler that
+   dispatches to itself and asks for ten levels.
+9. **The credential reached the upstream**, asserted positively.
+10. **Zero occurrences** across every response body, every log line, and the raw
+    `bayz.db` / `-wal` / `-shm` bytes, with positive checks that each scan read real
+    content.
+11. **No boundary was weakened** — bounds re-asserted, the secret-reaching names still
+    unregistered at the end of the run, and no registered name matching
+    `/credential|password|secret|token|key|export/i`.
+
+Decisions worth carrying forward:
+
+- **Two layers refuse a malformed argument, and the smoke records which.** The router's
+  9B `parseToolCalls` runs before dispatch and already requires `arguments` to parse to a
+  JSON object, so an unparseable blob, a bare array, and a bare scalar never become tool
+  calls: the response is refused as **`invalid_response` (502)** — the upstream's fault,
+  not the client's. What survives reaches dispatch and refuses as
+  **`invalid_tool_arguments` (400)**. The first draft asserted 400 for all six and failed
+  three; pinning the expected code per case is the honest fix and makes a future move
+  between layers a decision rather than drift.
+- **The credential is asserted to reach the upstream, positively.** A zero-occurrence
+  scan passes trivially if credentials are simply broken, so the origin's captured
+  `Authorization` headers are held apart from the scan and checked to contain
+  `Bearer <sentinel>`. The upstream request *bodies* are separately asserted
+  credential-free.
+- **The accepted path is exercised on purpose**, because it is where a value could most
+  plausibly be persisted — it travels to a handler, returns as a `role:"tool"` message,
+  and goes out again. The Task 3 wire fix is re-checked there: the replayed result must
+  carry `tool_call_id`, never the internal `toolCallId`.
+- **The depth refusal is found in the upstream request body**, not merely in a return
+  value, which proves it was serialized into the conversation the model saw.
+- **FREE-FIRST is preserved and asserted, not assumed.** A route created with no
+  `freeOnly` field must still come back `freeOnly: true` (§25 rule 6), and the smoke
+  checks exactly that before opting its own scenario route out explicitly.
+
+#### A pre-existing breakage this task found and fixed
+
+`scripts/identity-smoke.mjs` was failing **67/74** before this task touched anything. It
+was last edited at `e1e2a71`, *before* free-only landed at `6955443`, and it created its
+route without `freeOnly: false`. Free-only defaults ON, the fixture origin publishes no
+pricing metadata so its model classifies as undiscovered, and undiscovered is not free —
+so all three client chats and the admin-credential check refused with 409
+`no_free_route`. Every other smoke received the `freeOnly: false` fixture note in
+`6955443`; this one was missed. Fixed with the same one-line opt-out and the same
+explanatory comment: **74/74**. No free-first behaviour was changed.
+
+**Mutations.** Two were applied and reverted, each verified byte-identical to its backup
+and to `HEAD` afterwards: `parse` moved before the scope gate in `dispatch.ts` → 2 red;
+the split-batch guard deleted from `tool-loop.ts` → 2 red. A third — the loop escalating
+its own principal to `admin` — was **prepared but not run**, because the command was
+blocked awaiting approval and retrying a source mutation without consent was the wrong
+move. That property is already covered by `tool-dispatch.test.ts`'s elevated-scope test
+and by this smoke's own chat-scope refusal, so the shortfall is in the mutation count
+rather than in the coverage, and it is recorded here rather than glossed.
+
+### 9G completion checklist — all seven items GREEN
+
+Registry is a bounded `Map`, empty by default, with no secret-reading name. Dispatch
+validates in stages and checks scope before `parse`, measured with a counter in three
+places. Depth 4 / calls 8 / arguments 32 KiB all bounded and exercised. A model cannot
+name a capability into existence, and the refusal is structural rather than a blocklist
+hit. Tool results cannot elevate scope. `packages/capability` imports no secret store, no
+`node:fs`, no `node:child_process` — enforced by an allowlist plus a named forbidden
+list, the manifest, and both packages' export lists. No tool argument or result reaches
+telemetry, logs, or the database, on both the rejected and the accepted path.
+
 ### 9G resume point
 
-Task 5 — injection smoke. **NOT STARTED.** Next concrete step: create
-`scripts/injection-smoke.mjs`, non-mocked, against a real listener and a real origin
-scripted to emit hostile tool calls. It must prove: a call for
-`read_provider_credentials` is refused with `unknown_capability`; a call with a traversal
-argument is refused; a chat-scope identity cannot dispatch anything requiring
-`providers.write`; a provider credential sentinel is unreachable through every hostile
-path attempted; and a scan of `bayz.db` / `-wal` / `-shm`, the logs, and every response
-body finds zero occurrences of the credential and prompt sentinels. Then
-`node scripts/injection-smoke.mjs` exits 0, `git diff --check` clean, and commit
-`test: add Bayz injection smoke`.
+**Phase 9G is COMPLETE.** Tasks 1–5, five commits: `0539536`, `d243a3f`, `ab0fbc5`,
+`400aa8d`, and Task 5.
 
-Note for that task: run verification as the bounded per-workspace sequence described
+Next: **Phase 9H — Client Compatibility Matrix**, Task 1. Plan at
+`docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`. Read the plan
+before starting; nothing in 9H has been begun.
+
+Note for that phase: run verification as the bounded per-workspace sequence described
 under "Verification is run sequentially on this device" — `npm run runtime:verify` as a
 single command SIGKILLs this host.
 
