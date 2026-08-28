@@ -158,13 +158,49 @@ tests now pin all three rather than leaving them incidental.
 **Create:** `packages/storage/src/portable.ts`
 **Test:** `packages/storage/test/portable.test.ts`
 
-**Interface produced:** `exportSecrets(storage, passphrase): Uint8Array`, `importSecrets(storage, blob, passphrase): { imported: number }`
+**Interface produced:** `exportSecrets(storage, passphrase): Uint8Array`, `importSecrets(storage, blob, passphrase, { replace? }): { imported: number }`
 
-- [ ] RED `portable.test.ts`: an export blob is AES-256-GCM sealed under a scrypt-derived key using the Phase 2 `SCRYPT_PARAMS`; the plaintext of no secret appears in the blob bytes; a wrong passphrase fails with `master_key_invalid` and imports nothing; a bit-flipped blob fails closed; an import into a database with an existing secret of the same name refuses by default and replaces only with an explicit flag; the blob carries a format version and an unknown version is refused; the blob contains no root key.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/storage` exits 0.
-- [ ] Commit — `feat: add encrypted Bayz secret export and import`
+**Blob layout:** `BAYZEXP1` magic ‖ version byte ‖ 16-byte salt ‖ 12-byte IV ‖ 16-byte
+GCM tag ‖ ciphertext. The header is passed as AAD, so the version cannot be edited to
+steer a future reader down a different parse without failing the tag.
+
+**Two assertions beyond the plan text, both deliberate:**
+
+1. **Secret *names* are inside the sealed region, not just their values.** The plan
+   required no plaintext in the blob. A backup whose header leaked
+   `provider:openai:api_key` would tell an attacker exactly what the deployment holds
+   and which credentials are worth targeting, so the entire payload is sealed.
+2. **Two exports of identical content must produce different bytes.** Identical output
+   would mean a fixed salt or a reused IV, and a reused IV under one derived key leaks
+   the XOR of both payloads. A round-trip test alone would never catch that.
+
+**Deviation, as built:** a wrong passphrase and a tampered blob are indistinguishable
+at the GCM tag, so both raise `master_key_invalid` rather than `secret_corrupt` —
+nothing *stored* is corrupt, the supplied key is simply wrong. A blob that is not an
+export at all is refused on its magic with a distinct stage instead, because "this
+file is not a BAYZ export" and "your passphrase is wrong" are different operator
+problems with different remedies.
+
+- [x] RED `portable.test.ts`: an export blob is AES-256-GCM sealed under a scrypt-derived key using the Phase 2 `SCRYPT_PARAMS`; the plaintext of no secret appears in the blob bytes; a wrong passphrase fails with `master_key_invalid` and imports nothing; a bit-flipped blob fails closed; an import into a database with an existing secret of the same name refuses by default and replaces only with an explicit flag; the blob carries a format version and an unknown version is refused; the blob contains no root key.
+- [x] Verify RED. Failed at module load — `exportSecrets` did not exist — which is the correct RED for a new module.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/storage` exits 0 (**216/216**, up from 202); `tsc --noEmit -p packages/storage` exit 0; `node scripts/storage-smoke.mjs` still 42/42.
+- [x] Commit — `feat: add encrypted Bayz secret export and import`
+
+**Findings worth carrying forward:**
+- Import decrypts, parses, **and conflict-checks before writing a single row**. Without
+  that ordering an attacker grinding passphrases would accumulate rows on the way, and
+  a single name collision would leave a half-restored database.
+- The blob is deliberately **not** root-key-bound: it re-seals plaintext, so it
+  restores into a database with a different root key. That is the whole purpose of a
+  backup, and it is why the passphrase carries the full Phase 2 scrypt cost — offline
+  ciphertext an attacker can grind at leisure needs *at least* the hardness the live
+  root key gets.
+- `storage.get` rather than `find` when collecting: a corrupt row must fail the export
+  instead of being silently dropped, or the backup is quietly incomplete.
+- An empty database exports to a valid, importable blob reporting `imported: 0`. An
+  operator backing up before configuring anything should not get something
+  indistinguishable from a corrupt file.
 
 ### Task 5 — Tamper evidence and rollback detection
 

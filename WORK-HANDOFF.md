@@ -21,7 +21,8 @@
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
   - 9F Fortress Security: **IN PROGRESS.** Task 1 **COMPLETE** (`851dc68`), Task 2
-    **COMPLETE** (`d9340c7`), Task 3 **COMPLETE**. Task 4 is next and **NOT STARTED**.
+    **COMPLETE** (`d9340c7`), Task 3 **COMPLETE** (`83d169b`), Task 4 **COMPLETE**.
+    Task 5 is next and **NOT STARTED**.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -42,7 +43,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–3 done, Task 4 next**
+    Tasks 1–4 done, Task 5 next**
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -67,7 +68,7 @@ Current as of 9F Task 2. Every figure below was measured on this device, not car
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
-- `@bayz/storage`: 202 tests pass (schema is **v11**).
+- `@bayz/storage`: 216 tests pass (schema is **v11**).
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 112 tests pass.
 - `@bayz/router`: 276 tests pass.
@@ -1384,15 +1385,50 @@ Verified: `@bayz/providers` 286/286, `@bayz/proxy` 112/112, `@bayz/storage` 202/
 `@bayz/router` 276/276, `@bayz/server` 260/260, three `tsc --noEmit` clean,
 `storage-smoke` 42/42, `proxy-smoke` 39/39, `provider-smoke` 36/36.
 
+### Task 4 — Encrypted export and import
+
+`exportSecrets(storage, passphrase)` / `importSecrets(storage, blob, passphrase,
+{ replace? })` in `packages/storage/src/portable.ts`.
+
+Blob layout: `BAYZEXP1` ‖ version byte ‖ 16-byte salt ‖ 12-byte IV ‖ 16-byte GCM tag ‖
+ciphertext. The header is the AAD, so the version byte cannot be edited to steer a
+future reader down a different parse without failing the tag.
+
+Two guarantees stronger than the plan asked for, both deliberate:
+
+- **Secret names are sealed too, not just their values.** A backup whose header leaked
+  `provider:openai:api_key` would tell an attacker what the deployment holds and which
+  credentials are worth targeting.
+- **Two exports of identical content must differ byte-for-byte.** Identical output
+  would mean a fixed salt or a reused IV, and a reused IV under one derived key leaks
+  the XOR of both payloads. A round-trip test would never catch it.
+
+Import decrypts, parses, **and conflict-checks before writing a single row**. Without
+that ordering, an attacker grinding passphrases would accumulate rows on the way, and
+one name collision would leave a half-restored database.
+
+The blob is deliberately **not** root-key-bound — it re-seals plaintext, so it restores
+into a database with a different root key. That is the point of a backup, and it is why
+the passphrase carries the full Phase 2 scrypt cost: offline ciphertext an attacker can
+grind at leisure needs at least the hardness the live root key gets.
+
+Error-code split: a wrong passphrase and a tampered blob are indistinguishable at the
+GCM tag, so both raise `master_key_invalid` — nothing *stored* is corrupt, the supplied
+key is wrong. A file that is not an export at all is refused on its magic with a
+distinct stage, because that is a different operator problem with a different remedy.
+
+Verified: `@bayz/storage` **216/216**, `tsc --noEmit` clean, `storage-smoke` 42/42.
+
 ### 9F resume point
 
-Task 4 — encrypted export and import. **NOT STARTED.** Next concrete step: write RED
-`packages/storage/test/portable.test.ts` for `exportSecrets`/`importSecrets` — an
-AES-256-GCM blob sealed under a scrypt-derived key using the Phase 2 `SCRYPT_PARAMS`,
-no secret plaintext in the blob bytes, a wrong passphrase importing nothing, a
-bit-flipped blob failing closed, same-name collisions refused without an explicit
-replace flag, a versioned format refusing an unknown version, and no root key in the
-blob.
+Task 5 — tamper evidence and rollback detection. **NOT STARTED.** Next concrete step:
+write RED `packages/storage/test/tamper.test.ts` — a migration hash chain in
+`runtime_metadata`, an out-of-band `user_version` edit detected at open with a distinct
+stage, a monotonic open counter whose *decrease* is logged as a rollback warning
+(metadata only), a config HMAC over the provider/proxy/route registry detecting an
+out-of-band row edit, and an explicit assertion that a whole-database rollback is only
+**detected, never prevented**, naming the missing primitive (trusted monotonic
+storage).
 
 ## Phase 9 GOAT — planning state
 

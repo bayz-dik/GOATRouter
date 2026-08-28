@@ -111,3 +111,11 @@ export {
   scopedSecretStorage,
   type ScopedSecretView,
 } from "./scoped.js";
+export {
+  EXPORT_FORMAT_VERSION,
+  EXPORT_MAGIC,
+  exportSecrets,
+  importSecrets,
+  type ImportSecretsOptions,
+  type ImportSecretsResult,
+} from "./portable.js";
