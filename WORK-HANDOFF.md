@@ -20,9 +20,9 @@
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
-  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-6 **COMPLETE** (`851dc68`,
-    `d9340c7`, `83d169b`, `a850dd2`, `36c40bc`, + Task 6). Task 7 is next and
-    **NOT STARTED**.
+  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-7 **COMPLETE** (`851dc68`,
+    `d9340c7`, `83d169b`, `a850dd2`, `36c40bc`, `6f4782b`, + Task 7). Task 8 is next
+    and **NOT STARTED**.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -43,7 +43,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–6 done, Task 7 next**
+    Tasks 1–7 done, Task 8 next**
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -64,7 +64,7 @@
 
 ## Verified totals
 
-Current as of 9F Task 6. Every figure below was measured on this device, not carried
+Current as of 9F Task 7. Every figure below was measured on this device, not carried
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
@@ -72,7 +72,7 @@ forward from a plan.
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 112 tests pass.
 - `@bayz/router`: 276 tests pass.
-- `@bayz/server`: 286 tests pass (includes the `/api/health` Phase 1 contract guard).
+- `@bayz/server`: 319 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/identity`: 69, `@bayz/gateway`: 74.
 - `@bayz/dashboard`: 253 tests pass across 17 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.

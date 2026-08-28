@@ -310,12 +310,47 @@ and the HMAC is what makes it visible.
 **Create:** `apps/server/src/tls.ts`, `apps/server/src/signing.ts`
 **Test:** `apps/server/test/tls.test.ts`, `apps/server/test/signing.test.ts`
 
-- [ ] RED `tls.test.ts`: TLS is configured from `BAYZ_TLS_CERT` and `BAYZ_TLS_KEY` file paths; a missing or unreadable file is a startup failure with a fixed message that does not include the path; TLS 1.2 is the floor and 1.3 preferred; optional mTLS requires `BAYZ_TLS_CLIENT_CA` and rejects an unsigned client cert; a real HTTPS request over a self-signed pair succeeds end to end.
-- [ ] RED `signing.test.ts`: a signed request carries `x-bayz-timestamp`, `x-bayz-nonce`, and `x-bayz-signature` (HMAC-SHA256 over method, path, timestamp, nonce, and body hash, keyed by the client key); a stale timestamp beyond ±60s is refused; a replayed nonce is refused (bounded LRU of 4096 nonces); a tampered body is refused; the signature is compared with `timingSafeEqual`; signing is required only in `remote` posture.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0.
-- [ ] Commit — `feat: add Bayz TLS, optional mTLS, and request signing`
+- [x] RED `tls.test.ts`: TLS is configured from `BAYZ_TLS_CERT` and `BAYZ_TLS_KEY` file paths; a missing or unreadable file is a startup failure with a fixed message that does not include the path; TLS 1.2 is the floor and 1.3 preferred; optional mTLS requires `BAYZ_TLS_CLIENT_CA` and rejects an unsigned client cert; a real HTTPS request over a self-signed pair succeeds end to end.
+- [x] RED `signing.test.ts`: a signed request carries `x-bayz-timestamp`, `x-bayz-nonce`, and `x-bayz-signature` (HMAC-SHA256 over method, path, timestamp, nonce, and body hash, keyed by the client key); a stale timestamp beyond ±60s is refused; a replayed nonce is refused (bounded LRU of 4096 nonces); a tampered body is refused; the signature is compared with `timingSafeEqual`; signing is required only in `remote` posture.
+- [x] Verify RED. `tls.test.ts` failed at module load (`Cannot find module '../src/tls.js'`), the correct RED for a new module — re-confirmed by moving `tls.ts` aside after GREEN and watching the suite fail again. `signing.test.ts` went 6/19: the six pure-function cases that a stub could satisfy, and thirteen wire cases that could not. Two RED failures were fixture faults, corrected rather than worked around: the identity scope is `chat.completions` (not `chat`), and `signRequest` with an explicit `at`/`nonce` must echo them, so the header-shape assertions were split into an explicit-input case and a generated-input case.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/server` exits 0 (**319/319**, up from 286 — 13 TLS + 20 signing); `tsc --noEmit -p apps/server` exit 0; `node scripts/api-smoke.mjs` 70/70. The TLS assertions drive a **real HTTPS listener over a real socket** with an `openssl`-generated EC PKI: a CA-signed server pair, a CA-signed client pair, and a self-signed rogue client pair.
+- [x] Commit — `feat: add Bayz TLS, optional mTLS, and request signing`
+
+**Findings worth carrying forward:**
+- **Raw-body custody is the whole difficulty of signing.** Re-serialising the parsed
+  object cannot reproduce the bytes a client signed — key order, whitespace, and number
+  formatting all differ — so a `parseAs: "string"` content-type parser stashes
+  `request.rawBody` and hands the parse result on. It is registered **only when signing
+  is enabled**, so every existing install keeps the default parser and the Phase 6 error
+  map untouched; `FST_ERR_CTP_INVALID_JSON` is set explicitly so a malformed body is
+  still a clean 400 rather than a 500.
+- Verification runs at `preValidation`, not `onRequest`: the body has to exist to be
+  hashed. Authentication has already happened by then, which is why the refusals can be
+  distinguishable (`stale` / `replayed` / `invalid`) without helping an anonymous
+  attacker — but a **missing** header is one generic `signature_required`, because naming
+  which of the three is absent is a checklist for building a valid request.
+- The **nonce is spent only after the signature verifies.** Consuming it first would let
+  an unauthenticated flood of guesses evict every legitimate entry — replay protection
+  turned into a replay enabler.
+- The bounded cache is a **stated limitation, not a claim**: replay protection is the
+  *conjunction* of the 4096-entry FIFO and the ±60s window, and the test asserts the
+  eviction is real rather than pretending the cache is infinite. A replay only lands if
+  it arrives late enough to be evicted yet early enough to be in-window, which requires
+  thousands of signed requests inside a minute — which the rate limiter refuses.
+- The **query string is signed, not just the path.** `?limit=1` and `?limit=1000` are
+  different requests, and a path-only signature would leave every parameter free.
+- `presentedBearer` and `isGuardedPath` are exported from `auth.ts` rather than
+  reimplemented in `signing.ts`. Two independent path lists would eventually disagree,
+  and the disagreement would be an unsigned guarded route.
+- A TLS error names the **variable**, never the path, and the test asserts key material
+  reaches neither the message nor the stack. A client CA with no server certificate is
+  refused rather than ignored: silently dropping it would leave an operator believing
+  mTLS was in force.
+- `requestCert` alone asks for a certificate and accepts its absence; it is paired with
+  `rejectUnauthorized`, and the test proves both a rogue certificate **and no
+  certificate** fail the handshake.
+
 
 ### Task 8 — Outbound concurrency cap and egress hardening
 

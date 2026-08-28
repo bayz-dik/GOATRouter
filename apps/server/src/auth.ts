@@ -29,6 +29,19 @@ export const RATE_LIMIT_WINDOW_MS = 60_000;
 const BEARER_RE = /^Bearer ([A-Za-z0-9._~+/=-]+)$/;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
+/**
+ * The presented bearer, or `undefined`.
+ *
+ * Exported for request signing, which needs the key as the HMAC secret. Reading it
+ * back off the header rather than stashing it on the request is deliberate: the
+ * `principal` contract stays credential-free, so no handler can leak one.
+ */
+export function presentedBearer(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  const match = typeof header === "string" ? BEARER_RE.exec(header) : null;
+  return match === null ? undefined : match[1]!;
+}
+
 export type RateLimitOptions = {
   max?: number;
   authMax?: number;
@@ -93,7 +106,14 @@ function hostnameOf(value: string): string {
  */
 const UNGUARDED_PATHS = new Set(["/api/health"]);
 
-function isGuardedPath(url: string): boolean {
+/**
+ * Is this path behind the guard?
+ *
+ * Exported so request signing can gate exactly the same set the token gates. Two
+ * independent path lists would eventually disagree, and the disagreement would be an
+ * unsigned guarded route.
+ */
+export function isGuardedPath(url: string): boolean {
   const path = url.split("?")[0] ?? "";
   if (UNGUARDED_PATHS.has(path)) {
     return false;

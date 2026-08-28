@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { HealthResponse } from "@bayz/contracts";
-import { installApiGuards, type RateLimitOptions } from "./auth.js";
+import { installApiGuards, isGuardedPath, presentedBearer, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
 import type { BayzPosture } from "./posture.js";
 import type { IdentityResolver } from "./principal.js";
 import { requireScope } from "./scopes.js";
 import { installSecurityHeaders } from "./security-headers.js";
+import { installRequestSigning } from "./signing.js";
+import { fastifyHttpsOptions, type TlsConfig } from "./tls.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerIdentityRoutes } from "./routes/identities.js";
 import { registerProviderRoutes } from "./routes/providers.js";
@@ -47,6 +49,23 @@ export type BuildAppOptions = {
    * refusal keys off the peer address, so a wrong value here cannot weaken it.
    */
   posture?: BayzPosture;
+  /**
+   * TLS material. When present the listener speaks HTTPS and, if a client CA was
+   * configured, demands a client certificate.
+   *
+   * Passed as a resolved `TlsConfig` rather than as paths so this function never
+   * touches the filesystem and never holds a path that could reach a response.
+   */
+  https?: TlsConfig;
+  /**
+   * Require an HMAC signature on every guarded request.
+   *
+   * Off by default, so every existing install is unaffected. `remote` posture turns it
+   * on when mutual TLS was not configured — the ladder demands one or the other,
+   * because a reachable listener behind only a bearer token is one leaked header away
+   * from full access.
+   */
+  requireSigning?: boolean;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -57,6 +76,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     bodyLimit: MAX_BODY_BYTES,
     // No implementation fingerprint in responses.
     disableRequestLogging: false,
+    ...(options.https === undefined
+      ? {}
+      : { https: fastifyHttpsOptions(options.https) }),
     genReqId(request) {
       const supplied = request.headers["x-request-id"];
       return typeof supplied === "string" && SAFE_REQUEST_ID.test(supplied)
@@ -99,6 +121,16 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     });
   }
   installContentTypeGuard(app);
+
+  // After the token guard, so a signature is only ever demanded from a caller who
+  // already authenticated, and before any route, so no handler can be reached
+  // unsigned.
+  if (options.requireSigning === true && options.apiToken !== undefined) {
+    installRequestSigning(app, {
+      keyFor: presentedBearer,
+      exempt: (request) => !isGuardedPath(request.url),
+    });
+  }
 
   app.get("/api/health", async (): Promise<HealthResponse> => ({
     status: "ok",

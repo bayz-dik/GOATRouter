@@ -3,6 +3,7 @@ import { buildApp } from "./app.js";
 import { loadRuntimeConfig } from "./config.js";
 import { PostureError, resolvePosture } from "./posture.js";
 import { createBayzRuntime, type BayzRuntime } from "./runtime.js";
+import { TlsError, loadTlsConfig, type TlsConfig } from "./tls.js";
 
 const config = loadRuntimeConfig();
 
@@ -24,6 +25,23 @@ try {
     error,
     error instanceof StorageError ? error.code : "startup_failed",
     error instanceof StorageError ? error.stage : undefined,
+  );
+}
+
+/*
+ * TLS is loaded before the posture gate, so an unreadable certificate is reported as a
+ * TLS failure naming the variable rather than as "lan requires TLS" — which would send
+ * an operator who *did* configure TLS looking in the wrong place.
+ */
+let tls: TlsConfig | undefined;
+try {
+  tls = loadTlsConfig(process.env);
+} catch (error) {
+  runtime.close();
+  failStartup(
+    error,
+    "tls_refused",
+    error instanceof TlsError ? error.requirement : undefined,
   );
 }
 
@@ -62,6 +80,11 @@ const app = buildApp({
   posture: posture.posture,
   rateLimit: { max: posture.limits.max, authMax: posture.limits.authMax },
   concurrency: posture.limits.concurrency,
+  ...(tls === undefined ? {} : { https: tls }),
+  // Signing is required when the operator asked for it, and also whenever `remote`
+  // posture was satisfied by signing rather than by mutual TLS — otherwise the
+  // requirement would have been *declared* met and never enforced.
+  requireSigning: posture.requestSigning,
 });
 
 app.log.info(
