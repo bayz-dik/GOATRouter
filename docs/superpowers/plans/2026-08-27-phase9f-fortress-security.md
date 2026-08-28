@@ -204,14 +204,71 @@ problems with different remedies.
 
 ### Task 5 — Tamper evidence and rollback detection
 
-**Modify:** `packages/storage/src/migrations.ts`, `packages/storage/src/database.ts`
+**Create:** `packages/storage/src/integrity.ts`
+**Modify:** `packages/storage/src/database.ts`, `packages/storage/src/secret-repository.ts`
 **Test:** `packages/storage/test/tamper.test.ts`
 
-- [ ] RED `tamper.test.ts`: a migration hash chain is stored in `runtime_metadata`; editing `user_version` out of band is detected at open and raises `storage_unavailable` with a distinct stage; a monotonic open counter increments each open and a **decrease** is detected and logged as a rollback warning; the warning is metadata only; a config HMAC over the provider/proxy/route registry detects an out-of-band row edit; **the test asserts that an attacker restoring an older whole database is only detected, never prevented**, with a comment naming the missing primitive (trusted monotonic storage).
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/storage` exits 0; `node scripts/storage-smoke.mjs` exits 0.
-- [ ] Commit — `feat: add Bayz tamper evidence and rollback detection`
+**Deviation, as built — ordering was the real problem, not the digest.** The plan put
+the `user_version` check alongside the migration hash chain. That does not work:
+`runMigrations` decides what to apply *from* `user_version`, so by the time any
+post-migration check could speak the damage is done. A version edited **down** re-runs
+migrations over an existing schema (failing with an opaque `exec` error on a duplicate
+table), and one edited **up** silently skips migrations that never ran. So
+`verifyRecordedSchemaVersion` runs inside `openDatabase` **before** the runner, using
+`schema_migrations` as the independent witness of what actually executed. The chain
+digest is a separate, later check covering a different half of the attack.
+
+Four independent mechanisms, each with its own distinct stage:
+
+| Mechanism | Catches | Where |
+|---|---|---|
+| `verifyRecordedSchemaVersion` | edited `user_version`, forged/deleted audit row | before migrations |
+| `migrationChain` | altered migration SQL, reordered migrations | after migrations |
+| `checkRollback` | restored older `bayz.db` alone | at open, warning only |
+| `configHmac` | out-of-band registry row edit | at open, warning only |
+
+The chain hashes each migration's **version and its statements**, so a tampered build
+that changed a migration's SQL while keeping its number is visible — hashing version
+numbers alone would have missed it. Order-sensitivity is pinned too.
+
+The config HMAC is keyed by HKDF from the KEK with its own info string. Keyed, not a
+plain digest: an attacker who can edit rows can also edit a stored digest, so an
+unkeyed hash would detect nothing. The derived key is not the KEK and cannot unwrap a
+DEK. It closes 9C's residual risk — a valid `["admin"]` written straight into
+`client_identities.scopes_json` is honoured by scope validation *because it is valid*,
+and the HMAC is what makes it visible.
+
+**Honest boundaries, asserted rather than claimed:**
+
+- **A whole-directory rollback is NOT detected.** An attacker who restores `bayz.db`
+  *and* `integrity.json` together defeats `checkRollback` entirely, and a test proves
+  it instead of pretending otherwise. Prevention needs a monotonic counter in storage
+  the attacker cannot rewrite — TPM, secure element, or trusted remote service — none
+  of which exists on this target or is reachable from Node here.
+- **Rollback and config tampering warn; they do not refuse.** Failing closed would turn
+  a crash into an unbootable install, and the registries hold no secret whose exposure
+  would justify that. Structural schema damage *does* refuse, because running domain
+  SQL against an unknown shape is a different class of risk.
+- **An unclean shutdown after a config change leaves a stale HMAC**, reported as
+  `mismatch` indistinguishably from a genuine edit. Stated in the code, and the reason
+  the verdict is a warning surface.
+
+- [x] RED `tamper.test.ts`: a migration hash chain is stored in `runtime_metadata`; editing `user_version` out of band is detected at open and raises `storage_unavailable` with a distinct stage; a monotonic open counter increments each open and a **decrease** is detected and logged as a rollback warning; the warning is metadata only; a config HMAC over the provider/proxy/route registry detects an out-of-band row edit; **the test asserts that an attacker restoring an older whole database is only detected, never prevented**, with a comment naming the missing primitive (trusted monotonic storage).
+- [x] Verify RED. 3/15 passing, then 14/15, then 15/16 — each failure a real gap: the chain was checked too late for `user_version`, and a forged audit row needed the agreement check rather than the digest.
+- [x] GREEN. 17 tests.
+- [x] Verify: `npm run test --workspace @bayz/storage` exits 0 (**233/233**, up from 216); `node scripts/storage-smoke.mjs` exits 0 (42/42); `tsc --noEmit` clean; `@bayz/providers` 286, `@bayz/proxy` 112, `@bayz/router` 276, `@bayz/server` 260, `@bayz/identity` 69, `@bayz/telemetry` 55 all unaffected; `api-smoke` 70/70, `router-smoke` 46/46, `usage-smoke` 119/119.
+- [x] Commit — `feat: add Bayz tamper evidence and rollback detection`
+
+**Findings worth carrying forward:**
+- `storage_ready` gained a `configIntegrity` field, so the pinned key set in
+  `logging.test.ts` moved by one. That guard exists to stop content leaking into
+  diagnostics; the verdict is a three-value enum with no row data and no key material.
+- The canonical config serialization uses **explicit column lists**, not `SELECT *`. A
+  later migration adding a column would otherwise change the fingerprint and turn every
+  upgrade into a false tamper alarm.
+- A corrupt or hand-edited `integrity.json` is treated as absent rather than fatal: it
+  is evidence, not custody, and refusing to start over it would convert a detection aid
+  into a denial of service.
 
 ### Task 6 — Security posture ladder
 

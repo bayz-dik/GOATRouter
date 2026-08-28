@@ -20,9 +20,8 @@
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
-  - 9F Fortress Security: **IN PROGRESS.** Task 1 **COMPLETE** (`851dc68`), Task 2
-    **COMPLETE** (`d9340c7`), Task 3 **COMPLETE** (`83d169b`), Task 4 **COMPLETE**.
-    Task 5 is next and **NOT STARTED**.
+  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-5 **COMPLETE** (`851dc68`,
+    `d9340c7`, `83d169b`, `a850dd2`, + Task 5). Task 6 is next and **NOT STARTED**.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -43,7 +42,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–4 done, Task 5 next**
+    Tasks 1–5 done, Task 6 next**
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -68,7 +67,7 @@ Current as of 9F Task 2. Every figure below was measured on this device, not car
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
-- `@bayz/storage`: 216 tests pass (schema is **v11**).
+- `@bayz/storage`: 233 tests pass (schema is **v11**).
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 112 tests pass.
 - `@bayz/router`: 276 tests pass.
@@ -1419,16 +1418,66 @@ distinct stage, because that is a different operator problem with a different re
 
 Verified: `@bayz/storage` **216/216**, `tsc --noEmit` clean, `storage-smoke` 42/42.
 
+### Task 5 — Tamper evidence and rollback detection
+
+`packages/storage/src/integrity.ts`. Four independent mechanisms, each with its own
+distinct error stage:
+
+| Mechanism | Catches | Where | Fatal? |
+|---|---|---|---|
+| `verifyRecordedSchemaVersion` | edited `user_version`, forged/deleted audit row | before migrations | yes |
+| `migrationChain` | altered migration SQL, reordered migrations | after migrations | yes |
+| `checkRollback` | restored older `bayz.db` alone | at open | warning |
+| `configHmac` | out-of-band registry row edit | at open | warning |
+
+**The plan's ordering was wrong and measuring it proved why.** It grouped the
+`user_version` check with the chain digest. But `runMigrations` decides what to apply
+*from* `user_version`, so any post-migration check speaks too late: a version edited
+down re-runs migrations over an existing schema (opaque `exec` failure on a duplicate
+table), and one edited up silently skips migrations that never ran. The check now runs
+inside `openDatabase` **before** the runner, using `schema_migrations` as the
+independent witness of what actually executed.
+
+The chain hashes each migration's version **and its statements**, so a tampered build
+that altered a migration's SQL while keeping its number is caught. Version-only hashing
+would have missed that entirely. Order-sensitivity is pinned too.
+
+The config HMAC is keyed by HKDF from the KEK with its own info string — keyed rather
+than a plain digest, because an attacker who can edit rows can also edit a stored
+digest. The derived key is not the KEK and cannot unwrap a DEK. This closes 9C's
+residual risk: a valid `["admin"]` written straight into `client_identities.scopes_json`
+is honoured by scope validation *because it is valid*, and the HMAC is what surfaces it.
+
+Verified at open, resealed at close, so the property is precise — **rows that changed
+while BAYZ was not running** are what gets reported.
+
+#### Honest boundaries, asserted in tests rather than claimed away
+
+- **A whole-directory rollback is NOT detected.** Restoring `bayz.db` *and*
+  `integrity.json` together defeats `checkRollback`, and a test proves it. Prevention
+  needs a monotonic counter in storage an attacker cannot rewrite — TPM, secure element,
+  or trusted remote service — none present on this target or reachable from Node.
+- **Rollback and config mismatch warn, they do not refuse.** Failing closed would turn a
+  crash into an unbootable install, and the registries hold no secret whose exposure
+  justifies that. Structural schema damage *does* refuse: running domain SQL against an
+  unknown shape is a different class of risk.
+- **An unclean shutdown after a config change leaves a stale HMAC**, reported as
+  `mismatch` indistinguishably from a genuine edit. That is why it is a warning surface.
+
+Verified: `@bayz/storage` **233/233**, `tsc --noEmit` clean, `storage-smoke` 42/42,
+`api-smoke` 70/70, `router-smoke` 46/46, `usage-smoke` 119/119, and providers 286 /
+proxy 112 / router 276 / server 260 / identity 69 / telemetry 55 unaffected.
+
 ### 9F resume point
 
-Task 5 — tamper evidence and rollback detection. **NOT STARTED.** Next concrete step:
-write RED `packages/storage/test/tamper.test.ts` — a migration hash chain in
-`runtime_metadata`, an out-of-band `user_version` edit detected at open with a distinct
-stage, a monotonic open counter whose *decrease* is logged as a rollback warning
-(metadata only), a config HMAC over the provider/proxy/route registry detecting an
-out-of-band row edit, and an explicit assertion that a whole-database rollback is only
-**detected, never prevented**, naming the missing primitive (trusted monotonic
-storage).
+Task 6 — security posture ladder. **NOT STARTED.** Next concrete step: write RED
+`apps/server/test/posture.test.ts` — posture derived from the bind address rather than a
+flag; `lan` without TLS a **startup failure** not a warning; `remote` without mTLS or
+signing a startup failure; `remote` without `BAYZ_ALLOW_REMOTE` a startup failure
+(existing behaviour, pinned); a generated token refused for `lan`/`remote`; tightened
+rate limits plus a concurrency cap for both; `admin` scope rejected over a non-loopback
+connection even with a valid admin key; posture reported in `/api/status`; and binding
+loopback keeping today's behaviour exactly as a regression guard.
 
 ## Phase 9 GOAT — planning state
 

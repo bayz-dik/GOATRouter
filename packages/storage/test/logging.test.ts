@@ -57,6 +57,9 @@ test("storage diagnostics report only non-secret operational fields", () => {
   const opened = captured.find((entry) => entry.event === "storage_ready");
   assert.ok(opened, "expected a storage_ready diagnostic");
   assert.deepEqual(Object.keys(opened).sort(), [
+    // 9F Task 5: the config-HMAC verdict is operational shape, not content — one of
+    // "ok" | "unsealed" | "mismatch", with no row values and no key material.
+    "configIntegrity",
     "driver",
     "event",
     "journalMode",

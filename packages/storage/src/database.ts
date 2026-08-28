@@ -1,5 +1,6 @@
 import { StorageError, asStorageError } from "./errors.js";
 import { selectDriver } from "./drivers/node-sqlite.js";
+import { verifyRecordedSchemaVersion } from "./integrity.js";
 import { runMigrations, readSchemaVersion } from "./migrations.js";
 import { databasePath, ensureDataDir, restrictDatabaseFileModes } from "./paths.js";
 import type { SqlDatabase, SqlDriver } from "./sql.js";
@@ -68,6 +69,11 @@ export function openDatabase(options: OpenDatabaseOptions): BayzDatabase {
     );
 
     db.exec("PRAGMA synchronous = NORMAL");
+
+    // Checked against `schema_migrations` *before* the runner acts on it: a
+    // `user_version` edited down would otherwise re-apply migrations over an existing
+    // schema, and one edited up would silently skip migrations that never ran.
+    verifyRecordedSchemaVersion(db, readSchemaVersion(db));
 
     const appliedMigrations = runMigrations(db);
 

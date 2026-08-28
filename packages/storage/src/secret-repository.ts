@@ -12,12 +12,20 @@ import {
 } from "./crypto.js";
 import { StorageError, asStorageError } from "./errors.js";
 import {
+  checkRollback,
+  sealConfigHmac,
+  verifyConfigHmac,
+  verifyMigrationChain,
+  type ConfigIntegrity,
+} from "./integrity.js";
+import {
   isRotatableKeyProvider,
   resolveKeyProvider,
   type BayzSecurityMode,
   type KeyProvider,
   type KeyProviderKind,
 } from "./key-provider.js";
+import { MIGRATIONS } from "./migrations.js";
 import type { SqlDatabase, SqlRow } from "./sql.js";
 
 const ACTIVE_KEY_ID = "active_key_id";
@@ -197,6 +205,29 @@ export function openSecretStorage(
   const db = database.db;
 
   try {
+    /*
+     * Structural integrity before anything else.
+     *
+     * A database whose schema is not what this build applied must be refused before a
+     * single domain statement runs: the alternative is running Phase 3-9 SQL against
+     * an unknown shape. This precedes even the key check, because a rolled-back
+     * `user_version` would otherwise re-run migrations over an existing schema.
+     */
+    verifyMigrationChain(db, MIGRATIONS, database.schemaVersion);
+
+    const rollback = checkRollback(db, options.dataDir);
+    if (rollback.rolledBack) {
+      // Detected, not prevented, and deliberately not fatal — refusing here would turn
+      // a detection aid into an unbootable install. See `checkRollback` for why a
+      // whole-directory rollback defeats this and what primitive is missing.
+      log({
+        event: "storage_rollback_detected",
+        opens: rollback.opens,
+        witnessed: rollback.witnessed,
+        rolledBack: true,
+      });
+    }
+
     const recorded = readMetadata(db, ACTIVE_KEY_ID);
     let keyId = computeKeyId(kek);
 
@@ -513,10 +544,25 @@ export function openSecretStorage(
       },
 
       close(): void {
+        // Reseal before the connection goes away, so legitimate changes made through
+        // BAYZ do not look like out-of-band tampering on the next open. The property
+        // this buys is precise: rows that changed while BAYZ was *not running* are
+        // what gets reported.
+        try {
+          sealConfigHmac(db, kek);
+        } catch {
+          // A reseal failure must not prevent a clean shutdown; the next open reports
+          // `mismatch`, which is the safe direction to fail.
+        }
         kek.fill(0);
         database.close();
       },
     };
+
+    const configIntegrity: ConfigIntegrity = verifyConfigHmac(db, kek);
+    if (configIntegrity === "mismatch") {
+      log({ event: "storage_config_tampered", configIntegrity });
+    }
 
     log(
       redactSecrets({
@@ -526,6 +572,7 @@ export function openSecretStorage(
         driver: database.driver,
         keyProvider: provider.kind,
         keyId: activeKeyId,
+        configIntegrity,
       }),
     );
 

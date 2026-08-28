@@ -119,3 +119,19 @@ export {
   type ImportSecretsOptions,
   type ImportSecretsResult,
 } from "./portable.js";
+export {
+  CONFIG_HMAC_KEY,
+  INTEGRITY_WITNESS_FILENAME,
+  MIGRATION_CHAIN_KEY,
+  OPEN_COUNTER_KEY,
+  checkRollback,
+  configHmac,
+  integrityWitnessPath,
+  migrationChain,
+  sealConfigHmac,
+  verifyConfigHmac,
+  verifyMigrationChain,
+  verifyRecordedSchemaVersion,
+  type ConfigIntegrity,
+  type RollbackVerdict,
+} from "./integrity.js";
