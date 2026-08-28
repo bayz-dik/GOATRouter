@@ -10,6 +10,7 @@ export type RouterErrorCode =
   | "all_routes_failed"
   | "invalid_response"
   | "response_too_large"
+  | "rate_limited"
   | "tools_unsupported";
 
 /**
@@ -34,6 +35,10 @@ const MESSAGES: Record<RouterErrorCode, string> = {
   all_routes_failed: "all_routes_failed: every candidate route failed",
   invalid_response: "invalid_response: the upstream response could not be interpreted",
   response_too_large: "response_too_large: the upstream response exceeded the byte cap",
+  // Names no provider and no queue depth: an operator reads the configured cap from
+  // their own settings, and telling a caller how full the queue is would let it probe
+  // the process's load.
+  rate_limited: "rate_limited: too many upstream requests are already in flight",
   tools_unsupported: "tools_unsupported: the selected provider does not support tool calling",
 };
 

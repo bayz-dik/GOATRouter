@@ -354,16 +354,53 @@ and the HMAC is what makes it visible.
 
 ### Task 8 — Outbound concurrency cap and egress hardening
 
-**Create:** `packages/router/src/concurrency.ts`
-**Modify:** `packages/router/src/transport.ts`, `packages/proxy/src/dial.ts`
-**Test:** `packages/router/test/concurrency.test.ts`
+**Create:** `packages/router/src/concurrency.ts`, `packages/proxy/src/self.ts`
+**Modify:** `packages/router/src/transport.ts`, `packages/proxy/src/dial.ts`, `apps/server/src/index.ts`
+**Test:** `packages/router/test/concurrency.test.ts`, `packages/proxy/test/pivot.test.ts`
 
-- [ ] RED `concurrency.test.ts`: a bounded semaphore caps in-flight upstream requests (default 32, configurable 1–512); the 33rd request waits rather than opening a socket (assert via origin connection count); a queued request beyond a bounded queue depth is rejected with `rate_limited` rather than queued forever; releasing happens on success, failure, and abort (assert the cap recovers after 100 mixed outcomes); the cap applies per-process, not per-provider, since sockets are a process resource.
-- [ ] RED same file: a proxy pivot is refused — a proxy whose target resolves to the BAYZ listener itself is rejected, preventing a self-referential loop.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/router` and `--workspace @bayz/proxy` exit 0.
-- [ ] Commit — `feat: cap Bayz outbound concurrency and refuse proxy pivots`
+- [x] RED `concurrency.test.ts`: a bounded semaphore caps in-flight upstream requests (default 32, configurable 1–512); the 33rd request waits rather than opening a socket (assert via origin connection count); a queued request beyond a bounded queue depth is rejected with `rate_limited` rather than queued forever; releasing happens on success, failure, and abort (assert the cap recovers after 100 mixed outcomes); the cap applies per-process, not per-provider, since sockets are a process resource.
+- [x] RED `pivot.test.ts`: a proxy pivot is refused — a proxy whose target is the BAYZ listener itself is rejected, preventing a self-referential loop.
+- [x] Verify RED. `concurrency.test.ts` went 9/12 — the three transport cases failed because `sendChatRequest` had no `semaphore` option at all. `pivot.test.ts` went 6/9 (module-load RED first, since `self.ts` did not exist). Two RED failures were fixture faults, corrected rather than assertions weakened: the loopback egress opt-in is `egress: { allowLoopback: true }` on the provider rather than a bare `allowLoopback` field, and a `connect` stub must fail the socket **asynchronously** via an `error` event — a synchronous throw escapes `openSocket` as a raw `Error`, which made "the pivot check refused this" indistinguishable from "the fake blew up", collapsing the narrow-refusal assertions.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/router` exits 0 (**288/288**, up from 276) and `--workspace @bayz/proxy` exits 0 (**121/121**, up from 112); `tsc --noEmit` clean for `packages/router`, `packages/proxy`, and `apps/server`; `router-smoke` 46/46, `proxy-smoke` 39/39, `api-smoke` 70/70, `usage-smoke` 119/119.
+- [x] Commit — `feat: cap Bayz outbound concurrency and refuse proxy pivots`
+
+**Findings worth carrying forward:**
+- **The permit is taken after the cheap refusals and immediately before the socket.**
+  An unsupported provider kind or a denied egress target must not occupy a slot, and
+  nothing between the acquire and `performRequest` can open a connection.
+- **A streaming request holds its permit for the whole generator**, released in the same
+  `finally` that destroys the socket. Anything shorter would let N streams sit open while
+  the limiter believed nothing was in flight — and a stream is the longest-lived outbound
+  resource BAYZ holds, so it is the case the cap most exists for.
+- **The release closure is idempotent.** Without that, a `finally` racing an error path
+  returns two permits and the cap drifts upward until it stops capping anything — the
+  worst failure mode available, because the counter still looks plausible.
+- **An abandoned waiter leaves the queue and the pump skips its slot.** Handing a freed
+  permit to a departed waiter would lose it permanently, so the cap would erode one
+  aborted request at a time.
+- An out-of-range limit is **refused, not clamped**. Serving 512 when the operator asked
+  for 5000 is a protection that lies about the value it enforces; and an invalid limit
+  leaves the *previous* semaphore in force rather than leaving the process uncapped.
+- The queue depth is bounded (256) for the same reason the cap exists: an unbounded queue
+  converts a slow upstream into unbounded memory and unbounded latency, where every
+  caller waits and none is told.
+- **The pivot check needed its own loose-IPv4 parser.** `2130706433`, `127.1`,
+  `0x7f000001`, and `0177.0.0.1` all reach 127.0.0.1. `@bayz/proxy` cannot import
+  `@bayz/providers`' egress filter — the dependency runs the other way — so this is a
+  deliberate second copy with the reason recorded in the source, rather than an inverted
+  dependency that would make the proxy layer depend on provider configuration.
+- **A wildcard listener claims every local address on its port.** Recording `0.0.0.0`
+  as the literal address would leave every real interface address open.
+- The pivot match is on **address and port, not address class**. A `lan` deployment binds
+  one private address; a different private address is somebody else's machine and a
+  legitimate target, so refusing everything private would break the feature instead of
+  protecting it.
+- With **no listener registered nothing is refused**, so every existing caller — the
+  smoke scripts, the proxy health check, a library embedder — behaves exactly as before.
+  An *invalid* registration throws rather than being ignored: a silent failure would
+  leave the check believing it protects a listener it knows nothing about.
+
 
 ### Task 9 — Fortress adversarial suite and security smoke
 

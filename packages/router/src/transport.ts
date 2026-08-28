@@ -9,6 +9,7 @@ import {
   safeCustomHeaders,
 } from "@bayz/providers";
 import { parseChatChunk, type ChatChunk } from "./chunk.js";
+import { outboundSemaphore, type Semaphore } from "./concurrency.js";
 import { RouterError } from "./errors.js";
 import type { ChatRequest } from "./request.js";
 import { parseChatResponse, type ChatResponse } from "./response.js";
@@ -36,6 +37,13 @@ export type SendChatRequestOptions = {
   /** Supplied by the router when the route binds a proxy. */
   agent?: HttpAgent | HttpsAgent;
   maxResponseBytes?: number;
+  /**
+   * The outbound in-flight limiter. Defaults to the process-wide one.
+   *
+   * Injectable so a test can use a limit of two without touching global state, and so
+   * a future embedder can share one semaphore across several routers.
+   */
+  semaphore?: Semaphore;
 };
 
 export type SendChatRequestStreamingOptions = SendChatRequestOptions & {
@@ -211,7 +219,23 @@ export async function sendChatRequest(
   assertToolsSupported(options);
   await assertEgressForAttempt(options);
 
-  const raw = await performRequest(options, wireBody(options.request, false));
+  /*
+   * The permit is taken *after* the cheap refusals and immediately before the socket.
+   *
+   * That ordering is the point: an unsupported provider or a denied egress target must
+   * not occupy a slot, and nothing between here and `performRequest` can open a
+   * connection. `finally` returns it on success, failure, and throw alike — a limiter
+   * that leaks on the error path degrades into a permanent outage, which is worse than
+   * having no limiter at all.
+   */
+  const semaphore = options.semaphore ?? outboundSemaphore();
+  const release = await semaphore.acquire();
+  let raw: RawResponse;
+  try {
+    raw = await performRequest(options, wireBody(options.request, false));
+  } finally {
+    release();
+  }
 
   const failure = mapStatus(raw.status);
   if (failure !== undefined) {
@@ -326,6 +350,16 @@ export async function* sendChatRequestStreaming(
     throw new ProviderError("unreachable", "stream-aborted");
   }
   await assertEgressForAttempt(options);
+
+  /*
+   * A stream holds its socket for as long as the consumer keeps reading, so the permit
+   * is held for the whole generator and returned in the `finally` below — the same
+   * `finally` that destroys the socket. Anything shorter would let N streams sit open
+   * while the limiter believed nothing was in flight, which is precisely the case the
+   * cap exists for: a stream is the longest-lived outbound resource BAYZ holds.
+   */
+  const semaphore = options.semaphore ?? outboundSemaphore();
+  const releasePermit = await semaphore.acquire(options.signal);
 
   const { provider, maxResponseBytes = MAX_RESPONSE_BYTES } = options;
   const idleTimeoutMs = provider.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -471,5 +505,6 @@ export async function* sendChatRequestStreaming(
   } finally {
     options.signal?.removeEventListener("abort", onAbort);
     destroy();
+    releasePermit();
   }
 }

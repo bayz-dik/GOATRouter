@@ -5,6 +5,7 @@ import type { ProxyConfig } from "./config.js";
 import { httpConnect } from "./http-connect.js";
 import { ProxyError } from "./errors.js";
 import type { ProxyKind } from "./endpoint.js";
+import { assertNotSelfPivot } from "./self.js";
 import { socks5Connect } from "./socks5.js";
 
 /** The subset of a proxy record a dial actually needs. */
@@ -89,6 +90,10 @@ export async function dialThroughProxy(
     // cause a connection attempt.
     throw new ProxyError("invalid_proxy_config", "dial-kind");
   }
+  // Same reasoning, one step further: a tunnel back into this process's own listener
+  // is refused before a socket exists, so a hostile or mistaken configuration cannot
+  // buy even one live connection per attempt.
+  assertNotSelfPivot(target);
 
   const timeoutMs = proxy.config.connectTimeoutMs;
   const socket = await openSocket(proxy, connect, timeoutMs);

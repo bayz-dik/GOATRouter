@@ -64,6 +64,19 @@ export {
   type TransportProvider,
 } from "./transport.js";
 export {
+  OUTBOUND_CONCURRENCY_DEFAULT,
+  OUTBOUND_CONCURRENCY_MAX,
+  OUTBOUND_CONCURRENCY_MIN,
+  OUTBOUND_QUEUE_DEPTH_DEFAULT,
+  configureOutboundConcurrency,
+  createSemaphore,
+  outboundSemaphore,
+  resetOutboundConcurrency,
+  type CreateSemaphoreOptions,
+  type ReleaseFn,
+  type Semaphore,
+} from "./concurrency.js";
+export {
   parseChatChunk,
   type ChatChunk,
   type ToolCallDelta,

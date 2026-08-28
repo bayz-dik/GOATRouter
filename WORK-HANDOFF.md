@@ -20,9 +20,9 @@
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
-  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-7 **COMPLETE** (`851dc68`,
-    `d9340c7`, `83d169b`, `a850dd2`, `36c40bc`, `6f4782b`, + Task 7). Task 8 is next
-    and **NOT STARTED**.
+  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-8 **COMPLETE** (`851dc68`,
+    `d9340c7`, `83d169b`, `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, + Task 8).
+    Task 9 is next and **NOT STARTED**.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -43,7 +43,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–7 done, Task 8 next**
+    Tasks 1–8 done, Task 9 next**
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -64,14 +64,14 @@
 
 ## Verified totals
 
-Current as of 9F Task 7. Every figure below was measured on this device, not carried
+Current as of 9F Task 8. Every figure below was measured on this device, not carried
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
 - `@bayz/storage`: 233 tests pass (schema is **v11**).
 - `@bayz/providers`: 286 tests pass.
-- `@bayz/proxy`: 112 tests pass.
-- `@bayz/router`: 276 tests pass.
+- `@bayz/proxy`: 121 tests pass.
+- `@bayz/router`: 288 tests pass.
 - `@bayz/server`: 319 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/identity`: 69, `@bayz/gateway`: 74.
 - `@bayz/dashboard`: 253 tests pass across 17 files.
@@ -1469,16 +1469,166 @@ Verified: `@bayz/storage` **233/233**, `tsc --noEmit` clean, `storage-smoke` 42/
 `api-smoke` 70/70, `router-smoke` 46/46, `usage-smoke` 119/119, and providers 286 /
 proxy 112 / router 276 / server 260 / identity 69 / telemetry 55 unaffected.
 
+### Task 6 — Security posture ladder (`6f4782b`)
+
+`apps/server/src/posture.ts`. Exposure is **derived from the bind address**, never
+configured — a flag would let an operator bind `0.0.0.0` and declare it `loopback`,
+which is the exact silent downgrade the ladder exists to prevent.
+
+| Posture | Bind | Mandatory | Limits (window / auth / in-flight) |
+|---|---|---|---|
+| `loopback` | any `127.x`, `::1`, `localhost` | token | 120 / 10 / 64 |
+| `lan` | RFC 1918, link-local, CGNAT, `fc00::/7`, `fe80::/10` | + opt-in, explicit token, TLS | 60 / 5 / 32 |
+| `remote` | anything else, **including `0.0.0.0` and `::`** | + mTLS **or** signing | 30 / 3 / 16 |
+
+Three decisions worth keeping:
+
+1. **A wildcard bind is `remote`, not `lan`.** It binds every interface the host has,
+   including any public one, so treating it as merely local would be the single most
+   dangerous misclassification available. An unresolvable name is `remote` too: the safe
+   direction for an unknown is the strictest posture.
+2. **`admin` over the wire keys off `request.ip`, not off the posture.** An admin key can
+   rotate the root key and reach every provider credential, so a proxy in front or a
+   spoofed posture value must not re-open it. A test refuses admin from a `10.x` peer
+   *while in `loopback` posture* to prove the check is about the connection, not the flag.
+3. **The declared concurrency cap is now enforced**, not merely reported. It was a hollow
+   field when the SIGKILL interrupted the task. It lives in `installApiGuards` beside the
+   window limiter, acquired **after** authentication so a slot represents real work rather
+   than a stranger's ability to hold one, released on `onResponse` **and**
+   `onRequestAbort`, tracked in a `WeakSet` so a double release cannot drift the count
+   upward. An invalid cap leaves the listener **uncapped** — coercing to 0 would turn a
+   typo into the outage the protection exists to prevent.
+
+Nothing warns. A `lan` listener missing TLS is a startup failure, because a warning in a
+log nobody reads is indistinguishable from no protection. Each absence raises a distinct
+`PostureError` naming the requirement, and a test **enumerates** all seven mandatory
+protections across the three postures and asserts each fails on its own — so "no silent
+downgrade" is mechanical rather than sampled.
+
+`loadRuntimeConfig` now shares `derivePosture`. Its old inline set knew only `127.0.0.1`,
+`::1`, and `localhost`, so a bind to `127.0.0.53` — a real loopback address, the one
+systemd-resolved uses — was refused as remote.
+
+Verified: `@bayz/server` **286/286**, `tsc --noEmit` clean, `api-smoke` 70/70, and a live
+boot on `127.0.0.1:21056` reporting `"posture":"loopback"` with `concurrency=64` in the
+log and no root key or API token anywhere in it.
+
+### Task 7 — TLS, mTLS, and request signing (`9541f6f`)
+
+`apps/server/src/tls.ts` and `apps/server/src/signing.ts`. The two protections the
+ladder demanded but could previously only ask for.
+
+**TLS** holds file *contents*, never paths: a path on a live object eventually reaches a
+log line or an error body, and the layout of an operator's key material is not a client's
+business, so errors name the **variable** instead. Half a configuration is refused rather
+than ignored — a client CA with no server certificate would leave an operator believing
+mTLS was in force while the listener spoke plain HTTP. `requestCert` is paired with
+`rejectUnauthorized`, and the suite proves a rogue certificate **and** no certificate both
+fail the handshake against a real HTTPS listener over a real socket, using an
+`openssl`-generated EC PKI (CA-signed server, CA-signed client, self-signed rogue). 1.2
+floor, 1.3 ceiling, both pinned as constants.
+
+**Signing** is HMAC-SHA256 over method, URL *including query*, timestamp, nonce, and a
+hash of the body, keyed by the presented client key, compared with `timingSafeEqual` over
+fixed-width digests so length cannot become an oracle.
+
+Four things that were not obvious before building it:
+
+1. **Raw-body custody is the whole difficulty.** Re-serialising the parsed object cannot
+   reproduce the bytes the client signed — key order, whitespace, and number formatting
+   all differ. A `parseAs: "string"` parser stashes `request.rawBody`, and it is
+   registered **only when signing is enabled**, so every existing install keeps the
+   default parser and the Phase 6 error map untouched. `FST_ERR_CTP_INVALID_JSON` is set
+   explicitly so malformed JSON stays a clean 400 rather than becoming a 500.
+2. **Verification runs at `preValidation`**, not `onRequest`, because the body must exist
+   to be hashed. Authentication has already happened by then, which is why `stale` /
+   `replayed` / `invalid` can be distinguishable for the operator — but a **missing**
+   header is one generic `signature_required`, since naming which of the three is absent
+   is a checklist for forging a request.
+3. **The nonce is spent only after the signature verifies.** Consuming it first would let
+   an unauthenticated flood of guesses evict every legitimate entry — replay protection
+   turned into a replay enabler.
+4. **The 4096-entry cache is a stated bound, not a claim.** Replay protection is the
+   *conjunction* of the FIFO and the ±60s window, and a test asserts eviction really
+   happens rather than pretending the cache is infinite. A replay only lands if it
+   arrives late enough to be evicted yet early enough to be in-window, which needs
+   thousands of signed requests inside a minute — which the rate limiter refuses.
+
+`presentedBearer` and `isGuardedPath` are exported from `auth.ts` rather than
+reimplemented: two independent path lists would eventually disagree, and the disagreement
+would be an unsigned guarded route.
+
+Verified: `@bayz/server` **319/319**, `tsc --noEmit` clean, `api-smoke` 70/70. The
+absence of `tls.ts` was re-confirmed as a genuine RED by moving the module aside after
+GREEN and watching the suite fail to load.
+
+### Task 8 — Outbound concurrency cap and proxy pivot refusal
+
+`packages/router/src/concurrency.ts` and `packages/proxy/src/self.ts`.
+
+**The cap.** A rate limit bounds requests per window; it says nothing about how many are
+being served at one instant. A hundred slow upstream calls stay inside a 120/minute
+budget while holding a hundred sockets, file descriptors, and response buffers open.
+Default 32, configurable 1–512, queue depth 256 — and **per-process, not per-provider**,
+because twenty providers with a cap of 32 each would open 640 sockets while every
+individual cap looked perfectly respected.
+
+Four properties, each asserted:
+
+- The permit is taken **after** the cheap refusals and immediately before the socket, so
+  an unsupported provider or a denied egress target never occupies a slot.
+- A **streaming** request holds its permit for the whole generator, released in the same
+  `finally` that destroys the socket. Anything shorter would let N streams sit open while
+  the limiter believed nothing was in flight — and a stream is the longest-lived outbound
+  resource BAYZ holds.
+- The release closure is **idempotent**. Without that, a `finally` racing an error path
+  returns two permits and the cap drifts upward until it stops capping anything: the worst
+  failure mode available, because the counter still looks plausible.
+- An **abandoned waiter leaves the queue** and the pump skips its slot. Handing a freed
+  permit to a departed waiter would lose it permanently, eroding the cap one aborted
+  request at a time.
+
+An out-of-range limit is **refused, not clamped** — serving 512 when the operator asked
+for 5000 is a protection that lies about what it enforces — and a rejected reconfiguration
+leaves the *previous* semaphore in force rather than leaving the process uncapped.
+
+**The pivot refusal.** A proxy asked to tunnel back to BAYZ's own listener makes the
+router a relay into itself: each hop consumes a socket and a permit until the process
+exhausts one. The cap makes that bounded rather than unbounded, which is precisely why
+the loop is refused outright instead of merely throttled — and refused **before any
+socket is opened**, so a hostile configuration cannot buy one live connection per attempt.
+
+- The check needed **its own loose-IPv4 parser**: `2130706433`, `127.1`, `0x7f000001`,
+  and `0177.0.0.1` all reach 127.0.0.1. `@bayz/proxy` cannot import `@bayz/providers`'
+  egress filter — the dependency runs the other way — so this is a deliberate second copy
+  with the reason recorded in the source, not an inverted dependency.
+- A **wildcard listener claims every local address on its port**; recording `0.0.0.0` as a
+  literal address would leave every real interface open.
+- The match is on **address and port, not address class**. A `lan` deployment binds one
+  private address; a different private address is somebody else's machine and a legitimate
+  target, so refusing everything private would break the feature instead of protecting it.
+- With **no listener registered nothing is refused**, so the smoke scripts, the proxy
+  health check, and a library embedder behave exactly as before. An *invalid* registration
+  throws rather than being ignored: a silent failure would leave the check believing it
+  protects a listener it knows nothing about.
+
+`index.ts` registers the listener and applies the posture's cap to outbound requests
+**before** `listen`, so there is no window in which a request is served unprotected.
+
+Verified: `@bayz/router` **288/288**, `@bayz/proxy` **121/121**, three `tsc --noEmit`
+clean, `router-smoke` 46/46, `proxy-smoke` 39/39, `api-smoke` 70/70, `usage-smoke`
+119/119.
+
 ### 9F resume point
 
-Task 6 — security posture ladder. **NOT STARTED.** Next concrete step: write RED
-`apps/server/test/posture.test.ts` — posture derived from the bind address rather than a
-flag; `lan` without TLS a **startup failure** not a warning; `remote` without mTLS or
-signing a startup failure; `remote` without `BAYZ_ALLOW_REMOTE` a startup failure
-(existing behaviour, pinned); a generated token refused for `lan`/`remote`; tightened
-rate limits plus a concurrency cap for both; `admin` scope rejected over a non-loopback
-connection even with a valid admin key; posture reported in `/api/status`; and binding
-loopback keeping today's behaviour exactly as a regression guard.
+Task 9 — fortress adversarial suite and security smoke. **NOT STARTED.** Next concrete
+step: write RED `packages/storage/test/fortress-adversarial.test.ts` — the Phase 2
+adversarial suite still passing unchanged; a swapped `master.key` detected before any
+ciphertext is touched; a bit-flip in each of six columns failing closed; an export blob
+refused into a database with a different root key without the passphrase; the migration
+hash chain detecting a forged `schema_migrations` row; and `keystoreSupport()` asserted to
+report `UNVERIFIED` on this device rather than expected to succeed. Then
+`scripts/security-smoke.mjs` against real listeners.
 
 ## Phase 9 GOAT — planning state
 

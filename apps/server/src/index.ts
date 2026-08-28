@@ -1,4 +1,6 @@
 import { StorageError } from "@bayz/storage";
+import { registerLocalListener } from "@bayz/proxy";
+import { configureOutboundConcurrency } from "@bayz/router";
 import { buildApp } from "./app.js";
 import { loadRuntimeConfig } from "./config.js";
 import { PostureError, resolvePosture } from "./posture.js";
@@ -112,6 +114,26 @@ async function shutdown(signal: string): Promise<void> {
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+/*
+ * Tell the proxy layer where this process listens (9F Task 8).
+ *
+ * Registered before `listen`, so no request can be served during a window in which a
+ * proxy-bound route could tunnel back into BAYZ itself. The registry lives in
+ * `@bayz/proxy` rather than being a constant there because the bind address is
+ * configuration: a hard-coded `127.0.0.1:20128` would miss a `lan` deployment and miss
+ * a non-default port.
+ */
+registerLocalListener({ host: config.host, port: config.port });
+
+/*
+ * Apply the posture's in-flight cap to outbound requests too.
+ *
+ * The server-side cap bounds how many callers BAYZ serves; this bounds how many
+ * upstream sockets it holds. They are different resources and a limit on one says
+ * nothing about the other.
+ */
+configureOutboundConcurrency({ limit: posture.limits.concurrency });
 
 await app.listen({ host: config.host, port: config.port });
 app.log.info(

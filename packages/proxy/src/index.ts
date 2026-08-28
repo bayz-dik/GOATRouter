@@ -49,6 +49,14 @@ export {
   type DialThroughProxyOptions,
 } from "./dial.js";
 export {
+  assertNotSelfPivot,
+  clearLocalListeners,
+  isSelfPivot,
+  localListenerCount,
+  registerLocalListener,
+  type LocalListener,
+} from "./self.js";
+export {
   createProxyManager,
   type CreateProxyManagerOptions,
   type ProxyCheckResult,
