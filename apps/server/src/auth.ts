@@ -38,6 +38,18 @@ export type RateLimitOptions = {
 export type InstallApiGuardsOptions = {
   apiToken: string;
   rateLimit?: RateLimitOptions;
+  /**
+   * Maximum guarded requests in flight at once. Omitted, non-integer, or below 1
+   * leaves the listener uncapped, which is the Phase 6 behaviour every existing
+   * loopback install already has.
+   *
+   * The cap is acquired *after* authentication succeeds, not before. A slot therefore
+   * represents real work — a handler, a database read, an upstream call — rather than
+   * an unauthenticated stranger's ability to occupy one. Credential-free floods are
+   * bounded by `authMax` instead, so the two protections do not overlap and neither
+   * can be used to starve the other.
+   */
+  concurrency?: number;
   /** Extra hostnames an operator has explicitly bound the listener to. */
   allowedHosts?: readonly string[];
   /**
@@ -109,6 +121,59 @@ export function installApiGuards(
     ...(options.allowedHosts ?? []).map((host) => host.toLowerCase()),
   ]);
   const counters = new Map<string, Counter>();
+
+  /*
+   * The in-flight cap.
+   *
+   * A rate limit bounds requests *per window*; it does not bound how many are being
+   * served at the same instant. A hundred slow upstream calls stay inside a 120/minute
+   * budget while holding a hundred sockets, file handles, and database reads open, so
+   * the posture ladder's `concurrency` figure needs its own enforcement.
+   *
+   * `undefined` means uncapped, and so does any value that is not an integer of at
+   * least 1: coercing nonsense to 0 would refuse every request, turning a
+   * misconfiguration into an outage.
+   */
+  const concurrency =
+    typeof options.concurrency === "number" &&
+    Number.isInteger(options.concurrency) &&
+    options.concurrency >= 1
+      ? options.concurrency
+      : undefined;
+  let inFlight = 0;
+  // Which requests hold a slot. A `WeakSet` rather than a request property because a
+  // release must be idempotent and must not depend on a field a handler could clear:
+  // double-releasing would let the cap drift upward until it stopped capping anything.
+  const holders = new WeakSet<FastifyRequest>();
+
+  const release = (request: FastifyRequest): void => {
+    if (holders.delete(request)) {
+      inFlight -= 1;
+    }
+  };
+
+  /**
+   * Take a slot, or refuse.
+   *
+   * Refusal is `429 rate_limited` with `retry-after`, the same shape the window
+   * limiter already uses: to a client both mean "you are being throttled, come back",
+   * and inventing a second code would make every caller special-case a distinction it
+   * cannot act on differently.
+   */
+  const acquire = (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): FastifyReply | undefined => {
+    if (concurrency === undefined) {
+      return undefined;
+    }
+    if (inFlight >= concurrency) {
+      return reject(reply, request, 429, "rate_limited", "Too many requests");
+    }
+    inFlight += 1;
+    holders.add(request);
+    return undefined;
+  };
 
   const counterFor = (key: string): Counter => {
     const now = Date.now();
@@ -221,7 +286,7 @@ export function installApiGuards(
     // resolver can never shadow or weaken the Phase 6 credential.
     if (verifyApiToken(options.apiToken, presented)) {
       request.principal = bootstrapPrincipal();
-      return;
+      return acquire(request, reply);
     }
 
     const identity = options.resolveIdentity?.(presented);
@@ -238,5 +303,17 @@ export function installApiGuards(
       );
     }
     request.principal = identity;
+    return acquire(request, reply);
+  });
+
+  // Release on every terminal outcome Fastify has: a sent response (success or
+  // error), and a client that disconnected before one could be sent. Registering
+  // both is what makes the cap recover — a slot released only on success would let a
+  // handful of failures or abandoned requests wedge the listener for good.
+  app.addHook("onResponse", async (request) => {
+    release(request);
+  });
+  app.addHook("onRequestAbort", async (request) => {
+    release(request);
   });
 }

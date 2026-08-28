@@ -4,6 +4,7 @@ import type { HealthResponse } from "@bayz/contracts";
 import { installApiGuards, type RateLimitOptions } from "./auth.js";
 import { installContentTypeGuard } from "./content-type.js";
 import { installErrorHandling } from "./errors.js";
+import type { BayzPosture } from "./posture.js";
 import type { IdentityResolver } from "./principal.js";
 import { requireScope } from "./scopes.js";
 import { installSecurityHeaders } from "./security-headers.js";
@@ -28,11 +29,24 @@ export type BuildAppOptions = {
   /** When present, every `/api/*` and `/v1/*` route requires this token. */
   apiToken?: string;
   rateLimit?: RateLimitOptions;
+  /**
+   * Maximum guarded requests in flight at once. Omitted leaves the listener uncapped,
+   * which is the Phase 6 behaviour. `index.ts` supplies the posture's figure.
+   */
+  concurrency?: number;
   allowedHosts?: readonly string[];
   /** When present, the managed API surface is registered. */
   runtime?: BayzRuntime;
   /** Resolve a non-bootstrap bearer to a scoped principal; 9C supplies the registry. */
   resolveIdentity?: IdentityResolver;
+  /**
+   * The derived exposure posture, reported by `/api/status`.
+   *
+   * Defaults to `loopback` so an app built without it behaves exactly as it did before
+   * 9F Task 6. It is a *report*, not the enforcement point: the `admin`-over-the-wire
+   * refusal keys off the peer address, so a wrong value here cannot weaken it.
+   */
+  posture?: BayzPosture;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -78,6 +92,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       apiToken: options.apiToken,
       ...(resolveIdentity === undefined ? {} : { resolveIdentity }),
       ...(options.rateLimit === undefined ? {} : { rateLimit: options.rateLimit }),
+      ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
       ...(options.allowedHosts === undefined
         ? {}
         : { allowedHosts: options.allowedHosts }),
@@ -97,7 +112,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       // Status reports schema version, driver, key fingerprint, and counts. That is
       // operational shape, not content, but it is still more than a chat client has
       // any need for.
-      requireScope(request, reply, "providers.read") ?? runtime.describe(),
+      requireScope(request, reply, "providers.read") ?? {
+        ...runtime.describe(),
+        posture: options.posture ?? "loopback",
+      },
     );
     registerIdentityRoutes(app, runtime);
     registerSecurityRoutes(app, runtime);

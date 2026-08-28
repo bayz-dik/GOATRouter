@@ -282,12 +282,28 @@ and the HMAC is what makes it visible.
 | `lan` | private range | token + TLS + tightened limits + no `admin` over the wire |
 | `remote` | anything else | token + TLS + (mTLS or request signing) + strict limits + explicit opt-in |
 
-- [ ] RED `posture.test.ts`: the posture is derived from the bind address, not from a flag; `lan` without TLS is a **startup failure**, not a warning; `remote` without mTLS or signing is a startup failure; `remote` without `BAYZ_ALLOW_REMOTE` is a startup failure (existing behaviour, pinned); a generated token is refused for `lan` and `remote` (existing behaviour, extended); `lan` and `remote` tighten the rate limit and add a concurrency cap; `admin` scope is rejected over a non-loopback connection even with a valid admin key; the posture appears in `/api/status` as a string; binding loopback keeps today's behaviour exactly (regression guard).
-- [ ] RED same file: **no silent downgrade** — enumerate every mandatory protection per posture and assert each absence produces a distinct startup error naming what is missing.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/server` exits 0; `node scripts/api-smoke.mjs` still 62/62.
-- [ ] Commit — `feat: add the Bayz security posture ladder`
+- [x] RED `posture.test.ts`: the posture is derived from the bind address, not from a flag; `lan` without TLS is a **startup failure**, not a warning; `remote` without mTLS or signing is a startup failure; `remote` without `BAYZ_ALLOW_REMOTE` is a startup failure (existing behaviour, pinned); a generated token is refused for `lan` and `remote` (existing behaviour, extended); `lan` and `remote` tighten the rate limit and add a concurrency cap; `admin` scope is rejected over a non-loopback connection even with a valid admin key; the posture appears in `/api/status` as a string; binding loopback keeps today's behaviour exactly (regression guard).
+- [x] RED same file: **no silent downgrade** — enumerate every mandatory protection per posture and assert each absence produces a distinct startup error naming what is missing.
+- [x] Verify RED. Recovered after a SIGKILL mid-task: the derivation, ladder, and wire-level halves were already GREEN (18/18), but `POSTURE_LIMITS.concurrency` was reported and never enforced — a hollow field. The six added in-flight-cap tests went RED on the over-limit request (`did not settle within 2000ms`, since the un-capped request reached the deferred handler and waited on the gate), which is exactly the missing enforcement.
+- [x] GREEN. The cap lives in `installApiGuards` beside the window limiter, acquired **after** authentication so a slot represents real work rather than a stranger's ability to occupy one, released on `onResponse` **and** `onRequestAbort` so failures and abandoned requests cannot wedge it, tracked in a `WeakSet` so a double release cannot drift the count upward.
+- [x] Verify: `npm run test --workspace @bayz/server` exits 0 (**286/286**, up from 280); `tsc --noEmit -p apps/server` exit 0; `node scripts/api-smoke.mjs` **70/70** (62/62 was the Phase 6 figure the plan was written against; 9A–9E added checks). Live boot on `127.0.0.1:21056`: `/api/status` reports `"posture":"loopback"`, the log records `posture=loopback tls=false concurrency=64`, and the root key and API token appear nowhere in it.
+- [x] Commit — `feat: add the Bayz security posture ladder`
+
+**Findings worth carrying forward:**
+- `loadRuntimeConfig` now shares `derivePosture` with the ladder. Its old inline set knew
+  only `127.0.0.1`, `::1`, and `localhost`, so a bind to `127.0.0.53` — a real loopback
+  address, the one systemd-resolved uses — was refused as if it were remote. One
+  classifier means the gate and the ladder cannot disagree.
+- The `admin`-over-the-wire refusal keys off `request.ip`, **not** off the configured
+  posture. A wrong or spoofed posture value therefore cannot re-open it, and the test
+  suite pins that by refusing admin from a `10.x` peer while in `loopback` posture.
+- A wildcard bind (`0.0.0.0`, `::`) resolves to `remote`, not `lan`. It binds every
+  interface the host has, so treating it as merely local would be the single most
+  dangerous misclassification available.
+- An invalid concurrency value leaves the listener **uncapped** rather than coercing to
+  0. Coercing would turn a typo into a total outage — a protection that produces the
+  denial of service it exists to prevent.
+
 
 ### Task 7 — TLS, mTLS, and request signing
 

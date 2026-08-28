@@ -17,6 +17,28 @@ test("rejects invalid ports and public binding without explicit opt-in", () => {
   );
 });
 
+test("the whole loopback range is accepted without an opt-in", () => {
+  // 9F Task 6 shares one classifier with the posture ladder. The old inline set knew
+  // only 127.0.0.1, so binding 127.0.0.53 — a real loopback address, and the one
+  // systemd-resolved uses — was refused as if it were remote.
+  for (const host of ["127.0.0.1", "127.0.0.53", "::1", "localhost"]) {
+    assert.doesNotThrow(
+      () => loadRuntimeConfig({ BAYZ_HOST: host }),
+      `${host} must be treated as loopback`,
+    );
+  }
+});
+
+test("a private-range bind still requires the opt-in", () => {
+  for (const host of ["192.168.1.10", "10.0.0.5", "172.16.0.1"]) {
+    assert.throws(
+      () => loadRuntimeConfig({ BAYZ_HOST: host }),
+      /BAYZ_ALLOW_REMOTE=true/,
+      `${host} must require an explicit opt-in`,
+    );
+  }
+});
+
 test("allows an explicit remote binding", () => {
   const config = loadRuntimeConfig({
     BAYZ_HOST: "0.0.0.0",
