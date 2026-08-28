@@ -180,10 +180,73 @@ did not move.
 **Create:** `docs/clients/opencode.md`, `docs/clients/antigravity.md`, `docs/clients/hermes.md`, `docs/clients/generic-openai.md`
 **Modify:** `apps/dashboard/src/panels/IdentitiesPanel.tsx` (preset selector already added in 9C)
 
-- [ ] Each document gives the exact configuration a user needs: base URL `http://127.0.0.1:20128/v1`, the API key field to paste a scoped client key into, the model name form, and any capability the client will not find. No product-name branching in code is introduced — these are user documents.
-- [ ] Each document states explicitly which capabilities are `UNVERIFIED` for that client on this device and why.
-- [ ] Verify: `node --test tests/matrix-integrity.test.mjs` still exits 0 (docs do not change cell status without evidence).
-- [ ] Commit — `docs: add Bayz client configuration guides`
+- [x] Each document gives the exact configuration a user needs: base URL `http://127.0.0.1:20128/v1`, the API key field to paste a scoped client key into, the model name form, and any capability the client will not find. No product-name branching in code is introduced — these are user documents. — **five files**: the four guides plus `docs/clients/README.md` as an index and shared-preamble.
+- [x] Each document states explicitly which capabilities are `UNVERIFIED` for that client on this device and why.
+- [x] Verify: `node --test tests/matrix-integrity.test.mjs` still exits 0 (docs do not change cell status without evidence). **9/9**, and no matrix cell moved — the tally is unchanged at 13/2/0/87/0.
+- [x] Commit — `docs: add Bayz client configuration guides`
+
+**`apps/dashboard/src/panels/IdentitiesPanel.tsx` was NOT modified**, contrary to the plan's
+Modify list. The preset selector 9C added is already correct: it renders
+`CLIENT_PRESET_NAMES`, seeds `PRESET_SCOPES[preset]` on change, and leaves the scope
+checkboxes editable. Task 3 needs no UI change, and editing a working panel to satisfy a
+checklist entry would be change without a reason. **Zero runtime source files were touched**
+in this task.
+
+**A new guard was added, because the guides are reachable by no existing test.**
+`tests/client-docs.test.mjs` (6 tests). The matrix's cells are machine-checked; its *prose
+documentation* was not, so a guide asserting "streaming works" for a client whose `stream`
+cell is `UNVERIFIED` would have been a fake compatibility claim that
+`tests/matrix-integrity.test.mjs` cannot see — it reads the matrix, not `docs/`. The new test
+holds the documentation to the matrix:
+
+1. All four guides plus the index exist.
+2. Every guide states `http://127.0.0.1:20128/v1`, and **no guide may name any other
+   `127.0.0.1` port** — a wrong port is a wrong instruction a user would paste.
+3. A guide may write a bare `VERIFIED` only if that client's matrix row genuinely has one.
+   For `opencode`, `hermes`, and `antigravity` — every cell `UNVERIFIED` — the word may
+   appear only in a negation.
+4. Where a guide restates a status table, **every row must match the matrix cell for cell**
+   and every citation must be one the matrix carries. `generic-openai` is asserted to compare
+   exactly 17 cells, so the test cannot pass by comparing nothing.
+5. Every repository path referenced must exist, except three explicitly-enumerated future
+   artefacts (`scripts/verify-{opencode,hermes,antigravity}.mjs`, which Tasks 4–5 create).
+6. `antigravity.md` may contain **no copyable client-config assignment**, since the client is
+   absent and any field name would be invented.
+
+**Findings worth carrying forward:**
+- **Client config forms disagree on nearly every field, which is why nothing was
+  generalised.** Read from the live files on this host: OpenCode uses
+  `~/.config/opencode/opencode.json` with **camelCase** `options.baseURL` / `options.apiKey`,
+  `npm: "@ai-sdk/openai-compatible"`, an explicit `models` map, and a **`<provider>/<model>`
+  prefixed** top-level `model`. Hermes uses `~/.hermes/config.yaml` with **snake_case**
+  `model.base_url`, `api_mode: chat_completions`, **bare** model ids, and reads the key from
+  `~/.hermes/.env` under a **host-and-port-derived** variable —
+  `HERMES_CUSTOM_127_0_0_1_20128_API_KEY`. No safe default exists between those two, so
+  `antigravity.md` documents no config block at all rather than guessing.
+- **The model-name form differs per client and is the likeliest user error.** OpenCode needs
+  the bare id as the `models` key *and* the prefixed form in `model`; BAYZ ids may themselves
+  contain `/` (`^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,126}[A-Za-z0-9])?$`), so
+  `bayz/openai/gpt-4o` is one provider label plus a two-segment id. Both guides say so
+  explicitly.
+- **Every documented behaviour was measured against a live listener, not read off the
+  source.** Confirmed this way: `freeOnly` defaults to `true` on a route created without the
+  field; the first chat against an unclassified provider is **409 `no_free_route`**;
+  `GET /v1/models` excludes wildcard patterns; `response_format` / `user` / `n` are **400**
+  rather than ignored; `stop` as a bare string and `max_tokens` as a string are accepted; 257
+  messages, 65 tools, 5 stop sequences, a 129,000-character message and a `__proto__` tool
+  name are each **400**; `usage` is **absent** when the upstream omits it and per-field
+  `null` when partial; `x-bayz-route` / `x-bayz-provider` / `x-request-id` are present and
+  `x-bayz-proxy` is absent on a direct route.
+- **Five mutations proved the doc guard can fail**, then were reverted: a `VERIFIED` claim in
+  the OpenCode guide (1 red), a cell promoted past the matrix in `generic-openai.md` (1 red),
+  a wrong port in the Hermes YAML (1 red), an invented JSON config block in
+  `antigravity.md` (1 red), and a non-existent source path in the README (1 red).
+- **The invented-config guard was wrong twice before it worked**, and both holes are recorded
+  in the test. First it exempted any line containing `127.0.0.1:20128`, so the invented block
+  passed because it cited the real URL. Then `baseURL\s*[:=]` failed to match JSON, where the
+  text is `"baseURL":` with a quote between key and colon — a YAML-shaped pattern silently
+  ignored the shape most likely to be fabricated. Only the third version caught the mutation.
+  A guard that has never been shown to fail is not a guard.
 
 ### Task 4 — OpenCode real-client verification
 

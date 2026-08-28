@@ -39,11 +39,12 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–2 **COMPLETE**.
-    Tasks 3–6 **NOT STARTED**.
+  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–3 **COMPLETE**.
+    Tasks 4–6 **NOT STARTED**.
     `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
-    `tests/matrix-integrity.test.mjs` (9/9) and `scripts/client-conformance.mjs`
-    (**55/55**). Matrix tally **13 VERIFIED / 2 PARTIAL / 0 BLOCKED / 87 UNVERIFIED**,
+    `tests/matrix-integrity.test.mjs` (9/9), `scripts/client-conformance.mjs` (**55/55**),
+    `docs/clients/` (4 guides + index) and `tests/client-docs.test.mjs` (6/6).
+    Matrix tally **13 VERIFIED / 2 PARTIAL / 0 BLOCKED / 87 UNVERIFIED**,
     every non-`UNVERIFIED` cell in the `generic-openai` row. **No real client has been
     driven against BAYZ yet** — every Core 3 cell is still `UNVERIFIED`.
     Status vocabulary **deviates from the plan text deliberately**:
@@ -923,7 +924,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–2 done; `matrix-integrity` 9/9, `client-conformance` 55/55; 13 VERIFIED / 2 PARTIAL / 87 UNVERIFIED; Task 3 (per-client docs) next |
+| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–3 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6; 13 VERIFIED / 2 PARTIAL / 87 UNVERIFIED; Task 4 (OpenCode real-client verification) next |
 | 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2430,17 +2431,106 @@ Verified: `client-conformance` **55/55** (twice), `matrix-integrity` **9/9**,
 `usage-smoke` 119/119 + `proxy-ux-smoke` 127/127 confirming the one-line error-map change
 moved nothing. `git diff --check` clean.
 
+### Task 3 — Per-client configuration presets and docs
+
+Five files under `docs/clients/`: `README.md` (index and shared preamble), plus
+`generic-openai.md`, `opencode.md`, `hermes.md`, `antigravity.md`. Guarded by
+`tests/client-docs.test.mjs` (6 tests). **Zero runtime source files were touched.**
+
+These are **configuration** guides, not compatibility claims, and each says so at the top.
+Only `generic-openai.md` carries evidence — it restates the matrix row cell for cell with
+`smoke:client-conformance#N` citations. The other three describe how to point a client at
+BAYZ while stating plainly that **no capability has been verified for that client**.
+
+#### Real config forms, read from this machine
+
+Nothing was composed from documentation. The two installed clients disagree on nearly every
+field, which is the finding that shaped the whole task:
+
+| | OpenCode | Hermes |
+| --- | --- | --- |
+| file | `~/.config/opencode/opencode.json` | `~/.hermes/config.yaml` |
+| format | JSON | YAML |
+| base URL key | `options.baseURL` (**camelCase**) | `model.base_url` (**snake_case**) |
+| key location | `options.apiKey` in the config | `~/.hermes/.env`, variable **derived from host+port**: `HERMES_CUSTOM_127_0_0_1_20128_API_KEY` |
+| adapter | `npm: "@ai-sdk/openai-compatible"` | `api_mode: chat_completions` |
+| model form | bare id as the `models` key, **`<provider>/<model>`** in `model` | **bare id** everywhere |
+
+There is no safe default between those two. So `antigravity.md` — the client absent from this
+host — documents **no config block at all**, and says why: inventing a field name would be
+indistinguishable from a correct guide until someone tried it.
+
+**The model-name form is the likeliest user error.** BAYZ ids may themselves contain `/`
+(`^[A-Za-z0-9](?:[A-Za-z0-9._:/-]{0,126}[A-Za-z0-9])?$`), so OpenCode's
+`bayz/openai/gpt-4o` is one provider label plus a two-segment id — not a three-part path.
+Both guides state it explicitly.
+
+#### Every documented behaviour was measured, not read off the source
+
+A probe against a live listener confirmed each claim before it was written: `freeOnly`
+defaults to `true` on a route created without the field; a first chat against an unclassified
+provider is **409 `no_free_route`**; `GET /v1/models` excludes wildcard patterns;
+`response_format` / `user` / `n` are **400** rather than ignored; `stop` as a bare string and
+`max_tokens` as a string are accepted; 257 messages, 65 tools, 5 stop sequences, a
+129,000-character message, and a `__proto__` tool name are each **400**; `usage` is **absent**
+when the upstream omits it entirely and per-field `null` when partial; `x-bayz-route`,
+`x-bayz-provider`, and `x-request-id` are present while `x-bayz-proxy` is absent on a direct
+route.
+
+#### The guides needed a guard of their own
+
+`tests/matrix-integrity.test.mjs` reads the matrix, not `docs/`. So a guide asserting
+"streaming works" for a client whose `stream` cell is `UNVERIFIED` would have been a fake
+compatibility claim no existing test could see — prose is the one place such a claim can
+hide. `tests/client-docs.test.mjs` holds the documentation to the matrix: all four guides plus
+the index exist; every guide states the base URL and **no other `127.0.0.1` port**; a bare
+`VERIFIED` is permitted only where that client's row genuinely has one; a restated status
+table must match the matrix **cell for cell** with citations the matrix carries (17 compared
+for `generic-openai`, asserted, so it cannot pass by comparing nothing); every referenced
+repository path must exist bar three enumerated future artefacts; and `antigravity.md` may
+contain no copyable config assignment.
+
+#### Decisions worth carrying forward
+
+- **`IdentitiesPanel.tsx` was not modified**, contrary to the plan's Modify list. The 9C
+  preset selector is already correct — it renders `CLIENT_PRESET_NAMES` and seeds
+  `PRESET_SCOPES[preset]` while leaving the checkboxes editable. Editing a working panel to
+  satisfy a checklist entry would be change without a reason.
+- **Presets are re-stated as inert in every guide.** A preset seeds the default scope set and
+  labels the key; `packages/gateway/src/presets.ts` is the only file where these names may
+  appear, and `packages/gateway/test/adversarial.test.ts` scans every other gateway source to
+  keep it so. Naming a key `opencode` does not change how a request is served.
+- **The invented-config guard was wrong twice before it worked**, and both holes are recorded
+  in the test rather than quietly fixed. It first exempted any line containing
+  `127.0.0.1:20128`, so an invented block passed *because* it cited the real URL. Then
+  `baseURL\s*[:=]` failed to match JSON, where the text is `"baseURL":` with a quote between
+  key and colon — a YAML-shaped pattern silently ignored the shape most likely to be
+  fabricated. Only the third version caught the mutation. A guard never shown to fail is not
+  a guard.
+
+**Five mutations proved the doc guard can fail**, then were reverted: a `VERIFIED` claim in
+the OpenCode guide (1 red), a cell promoted past the matrix in `generic-openai.md` (1 red), a
+wrong port in the Hermes YAML (1 red), an invented JSON config block in `antigravity.md`
+(1 red), and a non-existent source path in the README (1 red).
+
+Verified: `client-docs` **6/6**, `matrix-integrity` **9/9** with **no cell moved** (tally
+still 13/2/0/87/0), `runtime-structure` **1/1** — 16/16 together — `client-conformance`
+**55/55**, `api-smoke` **70/70**. `git diff --check` clean, and `git diff --name-only` empty:
+Task 3 adds files only.
+
 ### 9H resume point
 
-Tasks 1–2 **COMPLETE**. Next: **Task 3 — Per-client configuration presets and docs.**
-Create `docs/clients/opencode.md`, `docs/clients/antigravity.md`, `docs/clients/hermes.md`,
-and `docs/clients/generic-openai.md`. Each gives the exact configuration a user needs — base
-URL `http://127.0.0.1:20128/v1`, the API-key field to paste a scoped client key into, the
-model-name form — and states explicitly which capabilities are `UNVERIFIED` for that client
-on this device and why. **No product-name branching may be introduced into any runtime
-path**; these are user documents, and the 9C preset selector already exists. Verify
-`node --test tests/matrix-integrity.test.mjs` still exits 0 — docs do not move a cell
-without evidence — and commit `docs: add Bayz client configuration guides`.
+Tasks 1–3 **COMPLETE**. Next: **Task 4 — OpenCode real-client verification.** Create
+`scripts/verify-opencode.mjs` and `docs/transcripts/opencode/` (populated at run time). Start
+a real BAYZ instance on a free port with a real loopback provider origin, create a scoped
+client identity, configure a real `opencode` invocation using the settings documented in
+`docs/clients/opencode.md`, and capture stdout, stderr, and the BAYZ usage rows. For each
+matrix column record `VERIFIED` with a transcript path, `BLOCKED` with the observed error, or
+`UNVERIFIED` with the reason it could not run here. **The script must exit non-zero if any
+cell it claims to verify lacks a transcript** — a cell may not become `VERIFIED` from a
+script's own opinion. Then the §25 amendment: configure a free-only route and record that cell
+from the transcript. Update the `opencode` matrix row and commit
+`test: verify Bayz against the real OpenCode client`.
 
 Note: verification stays the bounded per-workspace sequence described under "Verification
 is run sequentially on this device".
