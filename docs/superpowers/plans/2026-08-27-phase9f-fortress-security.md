@@ -111,13 +111,47 @@ to the deployment's own custody. Folding them together would have meant an
 ### Task 3 — Credential rotation, revocation, cryptographic erasure
 
 **Modify:** `packages/providers/src/manager.ts`, `packages/proxy/src/manager.ts`
-**Test:** `packages/providers/test/credential-lifecycle.test.ts`
+**Test:** `packages/providers/test/credential-lifecycle.test.ts`,
+`packages/proxy/test/password-lifecycle.test.ts`
 
-- [ ] RED `credential-lifecycle.test.ts`: replacing a credential produces a **new DEK and IV** (assert via `inspect()` that `wrappedDek` and `iv` both changed); deleting a credential removes the row so the ciphertext is unrecoverable — the honest erasure guarantee; after deletion the old ciphertext bytes may still exist in the WAL until checkpoint, and the test **asserts that fact** rather than claiming otherwise, with a comment explaining flash storage cannot be securely overwritten from Node; a revoked credential fails the next request with `credential_missing`, not with a stale success; rotation is atomic — a mid-write failure leaves the previous credential intact.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/providers` and `--workspace @bayz/proxy` exit 0.
-- [ ] Commit — `feat: add Bayz credential rotation with honest erasure semantics`
+**Deviation, as built — the WAL caveat was understated, and measuring it found a
+real defect.** The plan said to assert that deleted ciphertext "may still exist in
+the WAL until checkpoint" and to comment that flash cannot be securely overwritten.
+A probe of the actual on-disk bytes showed something worse: with SQLite's default
+`secure_delete = 0`, deleting a secret left its superseded page in the WAL and the
+next checkpoint **copied that page into `bayz.db`**, where it persisted indefinitely.
+The exposure was not a transient WAL window; it was permanent recoverable ciphertext
+in the main database file.
+
+`openDatabase` now sets `PRAGMA secure_delete = ON`, measured to remove the bytes
+from both files after a checkpoint. Two things this deliberately does **not** become:
+
+- It is **not** a secure-overwrite claim. The physical NAND page is not rewritten in
+  place by this or by anything reachable from Node; the FTL may retain the old page
+  until wear levelling reclaims it. Stated in the code and in the test.
+- It does **not** replace the erasure guarantee. That is still cryptographic — the
+  wrapped DEK is gone, so surviving bytes cannot be decrypted. `secure_delete` only
+  removes a needless forensic exposure that one pragma was already able to close.
+
+No manager code needed changing: per-write DEK/IV freshness, pre-transaction
+validation, and credential-deletion-before-row-deletion were already correct, and the
+tests now pin all three rather than leaving them incidental.
+
+- [x] RED `credential-lifecycle.test.ts`: replacing a credential produces a **new DEK and IV** (assert via `inspect()` that `wrappedDek` and `iv` both changed); deleting a credential removes the row so the ciphertext is unrecoverable — the honest erasure guarantee; after deletion the old ciphertext bytes may still exist in the WAL until checkpoint, and the test **asserts that fact** rather than claiming otherwise, with a comment explaining flash storage cannot be securely overwritten from Node; a revoked credential fails the next request with `credential_missing`, not with a stale success; rotation is atomic — a mid-write failure leaves the previous credential intact.
+- [x] RED `password-lifecycle.test.ts`: proxy parity, plus a revoked password failing `agentFor` **before a socket is opened** (a SOCKS5 greeting that offers username/password and cannot supply one would hang or, worse, downgrade to no-auth) and a password without a username refused rather than stored as dead state.
+- [x] Verify RED. 8/10 on the provider file; both failures genuine, not fixture faults — the checkpoint assertion and the `secure_delete` pin.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/providers` exits 0 (**286/286**, up from 276) and `--workspace @bayz/proxy` exits 0 (**112/112**, up from 105); `@bayz/storage` 202/202, `@bayz/router` 276/276, `@bayz/server` 260/260 unaffected; three `tsc --noEmit` clean; `storage-smoke` 42/42, `proxy-smoke` 39/39, `provider-smoke` 36/36.
+- [x] Commit — `feat: add Bayz credential rotation with honest erasure semantics`
+
+**Findings worth carrying forward:**
+- A 25-round rotation sweep asserting 25 distinct wrapped DEKs and 25 distinct IVs is
+  cheap and catches the one bug that would be catastrophic and invisible: an IV reused
+  under a single key. A single before/after comparison would not have caught a
+  counter-style IV.
+- Deleting a *provider* must delete its credential first, and deleting a *proxy* its
+  password, or the secret is orphaned — undeletable through any API, because the
+  resource it was scoped to no longer exists. Both directions are now pinned.
 
 ### Task 4 — Encrypted export and import
 

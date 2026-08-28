@@ -35,6 +35,25 @@ export function openDatabase(options: OpenDatabaseOptions): BayzDatabase {
 
     db.exec("PRAGMA busy_timeout = 5000");
 
+    /*
+     * Zero freed pages rather than leaving their contents on disk.
+     *
+     * Measured, not assumed: with SQLite's default `secure_delete = 0`, deleting a
+     * secret leaves its superseded page in the WAL, and the next checkpoint copies
+     * that page *into* `bayz.db`, where it persists indefinitely. So "delete the
+     * credential" left recoverable ciphertext in the main database file.
+     *
+     * The honest erasure guarantee is cryptographic — the wrapped DEK is gone, so
+     * surviving bytes cannot be decrypted — but leaving the bytes there when one
+     * pragma removes them is a needless forensic exposure. The cost is extra writes
+     * on delete, which is negligible at this scale.
+     *
+     * This is explicitly **not** a secure-overwrite claim. On flash storage the
+     * physical NAND page is not rewritten in place by this or by anything reachable
+     * from Node; the FTL may retain the old page until wear levelling reclaims it.
+     */
+    db.exec("PRAGMA secure_delete = ON");
+
     // WAL is best-effort. A filesystem that refuses it (some Android mounts,
     // network shares) keeps whatever mode SQLite fell back to; that is not a
     // startup failure.

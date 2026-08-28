@@ -21,8 +21,8 @@
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
   - 9F Fortress Security: **IN PROGRESS.** Task 1 **COMPLETE** (`851dc68`), Task 2
-    **COMPLETE**. Task 3 is next and **NOT STARTED**. Migration numbering: 9F Task 2
-    took **v11** (`security_audit`).
+    **COMPLETE** (`d9340c7`), Task 3 **COMPLETE**. Task 4 is next and **NOT STARTED**.
+    Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -42,7 +42,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–2 done, Task 3 next**
+    Tasks 1–3 done, Task 4 next**
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -68,8 +68,8 @@ forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
 - `@bayz/storage`: 202 tests pass (schema is **v11**).
-- `@bayz/providers`: 276 tests pass.
-- `@bayz/proxy`: 105 tests pass.
+- `@bayz/providers`: 286 tests pass.
+- `@bayz/proxy`: 112 tests pass.
 - `@bayz/router`: 276 tests pass.
 - `@bayz/server`: 260 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/identity`: 69, `@bayz/gateway`: 74.
@@ -1346,13 +1346,53 @@ into a secret-name index.
 Verified: `@bayz/server` 260/260, `@bayz/storage` 202/202, both `tsc --noEmit` clean,
 `storage-smoke` 42/42, `api-smoke` 70/70.
 
+### Task 3 — Credential rotation, revocation, cryptographic erasure
+
+Provider credentials and proxy passwords now have pinned lifecycle semantics, and
+measuring the erasure claim found a **real defect** rather than confirming the plan.
+
+The plan expected to *document* a WAL caveat. Measured on this device, with SQLite's
+default `secure_delete = 0`, the situation was worse than the caveat described:
+deleting a secret left its superseded page in the WAL, and the next checkpoint copied
+that page **into `bayz.db`**, where it persisted indefinitely. Permanent recoverable
+ciphertext in the main database file, not a transient window.
+
+`openDatabase` now sets `PRAGMA secure_delete = ON`. Measured after the fix: the
+ciphertext is in the WAL after the write, still in the WAL immediately after the
+delete (asserted, not hidden), and absent from both files after a checkpoint.
+
+Two claims deliberately **not** made:
+
+- **Not secure overwrite.** The physical NAND page is not rewritten in place by this
+  or by anything reachable from Node; the FTL may retain the old page until wear
+  levelling reclaims it. Said plainly in both the code and the test.
+- **Not a replacement for cryptographic erasure.** That remains the guarantee — the
+  wrapped DEK is gone, so surviving bytes cannot be decrypted. `secure_delete` closes
+  a needless forensic exposure that one pragma was already able to close.
+
+No manager code changed. Per-write DEK/IV freshness, pre-transaction validation, and
+secret-deletion-before-row-deletion were already correct; the tests pin them now
+instead of leaving them incidental. A 25-round rotation sweep asserts 25 distinct
+wrapped DEKs and 25 distinct IVs, which is what would catch a counter-style IV — the
+one bug here that would be catastrophic and invisible.
+
+On the proxy side a revoked password fails `agentFor` **before a socket is opened**.
+A SOCKS5 greeting that offers username/password and then cannot supply one would hang
+or, worse, downgrade to no-auth.
+
+Verified: `@bayz/providers` 286/286, `@bayz/proxy` 112/112, `@bayz/storage` 202/202,
+`@bayz/router` 276/276, `@bayz/server` 260/260, three `tsc --noEmit` clean,
+`storage-smoke` 42/42, `proxy-smoke` 39/39, `provider-smoke` 36/36.
+
 ### 9F resume point
 
-Task 3 — credential rotation, revocation, cryptographic erasure. **NOT STARTED.**
-Next concrete step: write RED `packages/providers/test/credential-lifecycle.test.ts`
-asserting a replaced credential produces a new DEK *and* IV, that deletion makes the
-ciphertext unrecoverable, that the WAL caveat is stated rather than papered over, and
-that a revoked credential fails the next request with `credential_missing`.
+Task 4 — encrypted export and import. **NOT STARTED.** Next concrete step: write RED
+`packages/storage/test/portable.test.ts` for `exportSecrets`/`importSecrets` — an
+AES-256-GCM blob sealed under a scrypt-derived key using the Phase 2 `SCRYPT_PARAMS`,
+no secret plaintext in the blob bytes, a wrong passphrase importing nothing, a
+bit-flipped blob failing closed, same-name collisions refused without an explicit
+replace flag, a versioned format refusing an unknown version, and no root key in the
+blob.
 
 ## Phase 9 GOAT — planning state
 
