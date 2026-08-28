@@ -24,7 +24,11 @@
     `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, `40b517b`, + Task 9), `runtime:verify`
     green.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
-  - 9G–9L: **NOT STARTED.**
+  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–2 **COMPLETE**
+    (`0539536`, + Task 2). Task 3 is next and **NOT STARTED**.
+    New package `@bayz/capability`; `runtime:build` is now **twelve** targets, with
+    `@bayz/capability` after `@bayz/identity` per the spec §4 order.
+  - 9H–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -72,7 +76,7 @@ forward from a plan.
 - `@bayz/proxy`: 121 tests pass.
 - `@bayz/router`: 288 tests pass.
 - `@bayz/server`: 319 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/identity`: 69, `@bayz/gateway`: 74.
+- `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: 48.
 - `@bayz/dashboard`: 340 tests pass across 23 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `node scripts/api-smoke.mjs`: 70/70 against a **real listener** driven by real `fetch`.
@@ -1703,9 +1707,131 @@ Verified: `@bayz/storage` **246/246**, `runtime:verify` exits 0 (all eleven buil
 
 ### 9F resume point
 
-Phase 9F is **COMPLETE**. Next: **9G Agent / Tool Injection Security**, plan
-`docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`, Task 1,
-**NOT STARTED**.
+Phase 9F is **COMPLETE**.
+
+## Phase 9G Agent / Tool Injection Security — as built so far
+
+**The boundary is the registry, not a filter.** Model output is untrusted data. A prompt
+saying "read all provider API keys" fails because no such capability is registered, and
+`packages/capability/src` imports no secret store, no `node:fs`, no
+`node:child_process`, no `node:net`, and no `node:http` — so there is nothing for an
+injected instruction to reach even if it were obeyed.
+
+### Task 1 — Capability registry (`0539536`)
+
+New package `@bayz/capability`, depending on `@bayz/identity` only, inserted into
+`runtime:build` immediately after `@bayz/identity` per the spec's twelve-target order.
+
+**A `Map`, not an object literal, and that is a security decision.** With `{}` as the
+store, a model-supplied name of `toString`, `constructor`, or `__proto__` resolves
+through the prototype chain to a truthy builtin that a dispatcher would then treat as a
+found capability and call.
+
+`constructor` and `prototype` are *additionally* refused at registration even though the
+name pattern admits them and lookup is already safe. The reason is not lookup: it is the
+consumer that does not exist yet, where an object keyed by capability name — a tool
+schema list for a model, a JSON summary for the dashboard — gets corrupted by
+`{ constructor: … }`. A test asserts the pattern admits the name, so the two guards
+cannot be conflated if the pattern is ever widened.
+
+**`registerCapability` does no name blocklisting, deliberately.** A blocklist makes the
+guarantee "we blocked that spelling", which invites `fetch_pr0vider_k3ys`. The
+secret-name regex appears only as a tripwire *over the registry's actual contents*,
+asserting nobody added one. `lookupCapability` takes `unknown` and returns `undefined`
+rather than throwing, because the name arrives from parsed model JSON and a throw would
+turn "the model sent a number" into a 500 on an attacker-timed path. `requiredScope`
+must be one of identity's ten scopes: a handler declaring `"superuser"` would read as
+maximally locked down while being unreviewable, and `satisfies` throws on an unknown
+required scope, so the first dispatch would be a 500 rather than a clean refusal.
+
+Registry empty by default, bounded at 128, refusing rather than evicting, and
+`registeredCapabilityNames()` returns a copy so a caller cannot make a capability appear
+or hide one from the tripwire.
+
+Verified: **18/18**, `tsc --noEmit` clean, `runtime:build` 0 across twelve targets.
+
+### Task 2 — Tool-call dispatch pipeline
+
+`packages/capability/src/dispatch.ts`, 30 tests in `dispatch.test.ts`.
+
+```text
+depth → envelope → byte cap → JSON parse → shape → lookup → scope → parse → run → output
+```
+
+**Scope is checked before `parse`, and the ordering is the security property.** A
+handler's `parse` walks a structure the model authored, so it is attacker-reachable
+code; running it for a caller with no right to the capability would put untrusted input
+through the least-exercised path in the system on behalf of somebody who should already
+have been turned away. Measured with a counter rather than asserted by reading the
+source — the test fails if `parse` runs even once for an unauthorized caller.
+
+Refusals are **per call**, not per batch: one hostile call from the model must not deny
+service to the client's real work. Only batch-level violations throw, because there is
+no per-call outcome to attach them to. An over-bound batch is refused **wholesale rather
+than truncated** — running the first eight and dropping the rest is both a partial
+execution nobody asked for and an unreportable outcome for what was dropped. A
+10,000-call flood costs one length comparison.
+
+Bounds match `@bayz/router`'s 9B tool parsing on purpose (8 calls, 32 KiB): two
+different bounds on the same wire array would mean one layer accepted what the other
+refused, and the disagreement would be the interesting case for an attacker. Depth is
+bounded at 4 against a **genuinely recursive** handler that dispatches to itself, not a
+faked counter.
+
+Decisions worth carrying forward:
+
+- **An invalid depth is treated as past the bound, not coerced to 1.** Coercing would
+  let a buggy or hostile handler reset the recursion budget on every hop, turning the
+  bound into decoration. `NaN`, `0`, `-1`, `1.5`, and `Infinity` all refuse.
+- **The byte cap is `Buffer.byteLength`, not `.length`.** A cap on UTF-16 code units
+  admits roughly three times the intended payload for CJK text; the test uses 12,000 `あ`
+  to prove it.
+- **`isPlainObject` compares the prototype, and a key-set check alone cannot replace
+  it.** `Object.create({ id, type, function })` reads as a perfectly valid call while
+  `Object.keys` returns `[]`. That test asserts the **stage**, not just the code:
+  refusing it incidentally at `dispatch-call-type` would pass a code-only assertion
+  while the real guard was gone.
+- **Unknown envelope keys are refused, not ignored.** A call carrying
+  `{ scopes: ["admin"] }` is a hard refusal. Ignoring it is safe today and a silent hole
+  the moment any future field on that object is read.
+- **A malformed granted-scope set authorizes nothing.** An array, a plain object, a
+  string, or `undefined` are each things a permissive implementation could read as
+  "scopes unknown, so allow" — the same class of bug as a missing `default:` in an
+  authorization switch. Only a real `Set` is accepted.
+- **Capability output is validated before it is returned.** A cycle or a >32 KiB blob
+  would otherwise fail at HTTP serialization time in Task 3, past the point where a
+  clean refusal is possible. `undefined` is refused too: it would become an empty tool
+  result, which reads to the model as "the tool ran and found nothing".
+- **No refusal echoes model text.** Not the arguments, not the handler's own error
+  message. The only model-supplied value that crosses the boundary is the capability
+  *name*, and only when it matched the bounded 64-character ASCII pattern; otherwise a
+  fixed placeholder. A refusal reaches an operator's log and a client response, so
+  quoting model text would let an upstream plant instructions where a human or a
+  downstream agent later reads them.
+- **Calls run sequentially.** Concurrency would multiply whatever resource the
+  capabilities touch by the batch size at exactly the moment a hostile response is
+  trying to, and 9F's outbound cap bounds sockets rather than handler work.
+
+**Four mutations were applied to prove the suite can fail**, then reverted: running
+`parse` before the scope gate turned 3 tests red; coercing a bad depth to 1 turned the
+depth test red; measuring the cap with `.length` turned the UTF-8 test red; deleting the
+prototype comparison turned the inherited-envelope test red. The first draft of that
+last test passed under the mutation — it was refused incidentally at
+`dispatch-call-type` — which is why it now pins the stage.
+
+Verified: `@bayz/capability` **48/48** (18 registry + 30 dispatch), `@bayz/identity`
+69/69 unaffected, `tsc --noEmit` clean, `runtime:build` exits 0 across all twelve
+targets, no `node:fs` / `node:child_process` / `node:net` / `node:http` / secret-store
+import anywhere in `packages/capability/src`.
+
+### 9G resume point
+
+Task 3 — gateway and router wiring. **NOT STARTED.** Next concrete step: RED
+`apps/server/test/tool-dispatch.test.ts`, dispatching an upstream response's tool calls
+only when the identity holds the capability's scope, returning an undispatchable call to
+the client rather than swallowing it, turning a dispatched output into a `role:"tool"`
+message on the next turn, and asserting no tool argument reaches telemetry, logs, or the
+database.
 
 ## Phase 9 GOAT — planning state
 

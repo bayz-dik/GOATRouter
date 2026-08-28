@@ -4,7 +4,9 @@ export type CapabilityErrorCode =
   | "invalid_capability_scope"
   | "capability_already_registered"
   | "capability_registry_full"
-  | "unknown_capability";
+  | "unknown_capability"
+  | "invalid_tool_call"
+  | "too_many_tool_calls";
 
 /**
  * Fixed, caller-independent messages.
@@ -27,6 +29,8 @@ const MESSAGES: Record<CapabilityErrorCode, string> = {
   capability_registry_full:
     "capability_registry_full: the capability registry is at its bound",
   unknown_capability: "unknown_capability: no capability is registered with that name",
+  invalid_tool_call: "invalid_tool_call: the tool call was rejected",
+  too_many_tool_calls: "too_many_tool_calls: the tool call batch exceeds its bound",
 };
 
 export class CapabilityError extends Error {

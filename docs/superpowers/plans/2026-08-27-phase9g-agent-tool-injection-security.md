@@ -30,12 +30,33 @@ export function registerCapability(handler): void;
 export function lookupCapability(name: unknown): CapabilityHandler | undefined;
 ```
 
-- [ ] RED `registry.test.ts`: registering a valid handler then looking it up returns it; `lookupCapability` returns `undefined` for an unknown name, a non-string, `__proto__`, `constructor`, and `toString` (prototype-chain lookup guard — a `Map`, not an object literal); a duplicate registration throws; a name outside the pattern throws; the registry is bounded at 128 capabilities; `lookupCapability` never returns a handler for a name that was not explicitly registered.
-- [ ] RED same file: **there is no secret-reading capability** — assert no registered name matches `/credential|password|secret|token|key|export/i`, and that the registry is empty by default so a capability must be added deliberately.
-- [ ] Verify RED: `node --import tsx --test packages/capability/test/registry.test.ts` fails with `ERR_MODULE_NOT_FOUND`.
-- [ ] GREEN. Deps: `@bayz/identity` only.
-- [ ] Verify: `npm run test --workspace @bayz/capability` and `npm run build --workspace @bayz/capability` exit 0.
-- [ ] Commit — `feat: add the Bayz capability registry`
+- [x] RED `registry.test.ts`: registering a valid handler then looking it up returns it; `lookupCapability` returns `undefined` for an unknown name, a non-string, `__proto__`, `constructor`, and `toString` (prototype-chain lookup guard — a `Map`, not an object literal); a duplicate registration throws; a name outside the pattern throws; the registry is bounded at 128 capabilities; `lookupCapability` never returns a handler for a name that was not explicitly registered.
+- [x] RED same file: **there is no secret-reading capability** — assert no registered name matches `/credential|password|secret|token|key|export/i`, and that the registry is empty by default so a capability must be added deliberately.
+- [x] Verify RED: `node --import tsx --test packages/capability/test/registry.test.ts` fails with `MODULE_NOT_FOUND` on `../src/index.js` — the file-level failure a new module produces.
+- [x] GREEN. Deps: `@bayz/identity` only.
+- [x] Verify: `npm run test --workspace @bayz/capability` (**18/18**) and `npm run build --workspace @bayz/capability` exit 0; `runtime:build` exits 0 across all twelve targets with `@bayz/capability` after `@bayz/identity`.
+- [x] Commit — `feat: add the Bayz capability registry`
+
+**Findings worth carrying forward:**
+- **`constructor` and `prototype` needed a reserved-name guard the plan did not
+  anticipate.** Both are lowercase ASCII, so `CAPABILITY_NAME_PATTERN` admits them, and
+  the plan grouped them with `__proto__` as pattern failures. `__proto__` *is* refused by
+  the leading-letter rule; these two are not. The reason to refuse them is **not** lookup
+  safety — a `Map` already returns `undefined` — but the consumer that does not exist yet:
+  any object keyed by capability name, such as a tool schema list for a model or a JSON
+  summary for the dashboard, is corrupted by `{ constructor: … }`. The test asserts the
+  pattern admits the name, so a later pattern change cannot conflate the two guards.
+- **The secret-name regex is a tripwire over the registry's contents, not a blocklist in
+  `registerCapability`.** A blocklist would make the guarantee "we refused that spelling",
+  which invites the next spelling; the real guarantee is that adding a secret-reading
+  capability requires a reviewed code change.
+- **`lookupCapability` takes `unknown` and refuses rather than throwing.** The name comes
+  from parsed model JSON, so a throw converts "the model sent a number" into a 500 on a
+  path an attacker times.
+- **`requiredScope` is validated against the identity vocabulary at registration.** A
+  handler declaring `"superuser"` would read as maximally locked down while being
+  unreviewable, and `satisfies` throws on an unknown required scope — so the first
+  dispatch would be a 500 instead of a clean refusal.
 
 ### Task 2 — Tool-call dispatch pipeline
 
@@ -44,13 +65,51 @@ export function lookupCapability(name: unknown): CapabilityHandler | undefined;
 
 **Pipeline:** model output → JSON parse → schema validation → capability lookup → scope check → run
 
-- [ ] RED `dispatch.test.ts`: a well-formed tool call for a registered capability with a granted scope runs and returns its output; each stage rejects independently and the error names the **stage**, not the model's text: unparseable JSON, schema mismatch, unknown capability, missing scope; a call naming a registered capability the identity lacks scope for is refused **before** `parse` runs (so a handler never sees unauthorized input); dispatch depth is bounded at 4 and a nested chain beyond it is refused; a single dispatch is bounded at 8 tool calls; an argument blob beyond 32 KiB is refused before parsing.
-- [ ] RED same file: **the model cannot name a capability into existence** — a call for `read_provider_credentials` fails with `unknown_capability`, and the test comments that this is because nothing registered it, not because a name was blocked.
-- [ ] RED same file: a tool *result* claiming elevated scope is ignored — scope comes only from the authenticated identity.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/capability` exits 0.
-- [ ] Commit — `feat: add Bayz tool-call dispatch with staged validation`
+- [x] RED `dispatch.test.ts`: a well-formed tool call for a registered capability with a granted scope runs and returns its output; each stage rejects independently and the error names the **stage**, not the model's text: unparseable JSON, schema mismatch, unknown capability, missing scope; a call naming a registered capability the identity lacks scope for is refused **before** `parse` runs (so a handler never sees unauthorized input); dispatch depth is bounded at 4 and a nested chain beyond it is refused; a single dispatch is bounded at 8 tool calls; an argument blob beyond 32 KiB is refused before parsing.
+- [x] RED same file: **the model cannot name a capability into existence** — a call for `read_provider_credentials` fails with `unknown_capability`, and the test comments that this is because nothing registered it, not because a name was blocked.
+- [x] RED same file: a tool *result* claiming elevated scope is ignored — scope comes only from the authenticated identity.
+- [x] Verify RED. Module-load RED first (`does not provide an export named 'DISPATCH_ARGUMENT_MAX_BYTES'`), the correct RED for a new module. 30 tests.
+- [x] GREEN.
+- [x] Verify: `npm run test --workspace @bayz/capability` exits 0 (**48/48**, 18 registry + 30 dispatch); `tsc --noEmit` clean; `runtime:build` exits 0 across all twelve targets; `@bayz/identity` 69/69 unaffected.
+- [x] Commit — `feat: add Bayz tool-call dispatch with staged validation`
+
+**Findings worth carrying forward:**
+- **Scope before `parse` is the ordering that matters, and it is measured, not asserted
+  by reading the source.** A handler's `parse` walks a model-authored structure, so it is
+  attacker-reachable code; running it for an unauthorized caller puts untrusted input
+  through the least-exercised path in the system on behalf of somebody who should already
+  have been refused. A counter in the test fixture fails if `parse` runs even once.
+- **An invalid depth is treated as past the bound, never coerced to 1.** Coercing lets a
+  buggy or hostile handler reset the recursion budget on every hop, which turns the bound
+  into decoration. Depth is exercised against a **genuinely recursive** handler that
+  dispatches to itself; a faked counter would test the guard against nothing.
+- **Per-call refusals, batch-level throws.** One hostile call must not deny service to
+  the client's real work, and an over-bound batch is refused **wholesale rather than
+  truncated** — running eight and dropping the rest is a partial execution nobody asked
+  for plus an unreportable outcome for what was dropped.
+- **The bounds deliberately equal 9B's** (8 calls, 32 KiB). Two different bounds on the
+  same wire array would mean one layer accepted what the other refused, and that
+  disagreement is the interesting case for an attacker.
+- **`Buffer.byteLength`, not `.length`.** A cap on UTF-16 code units admits roughly three
+  times the payload for CJK text.
+- **A key-set check cannot replace the prototype comparison.**
+  `Object.create({ id, type, function })` reads as a valid call while `Object.keys`
+  returns `[]`. The test pins the **stage**, because the first draft passed under a
+  mutation that deleted the prototype check — it was being refused incidentally at
+  `dispatch-call-type`.
+- **Unknown envelope keys are refused, not ignored.** `{ scopes: ["admin"] }` on a call
+  is a hard refusal; ignoring it is safe today and a silent hole the moment any future
+  field on that object is read.
+- **Only a real `Set` authorizes.** An array, an object, a string, or `undefined` are
+  each readable as "scopes unknown, so allow" by a permissive implementation — the same
+  class of bug as a missing `default:` in an authorization switch.
+- **Capability output is validated before return.** A cycle or an oversized blob would
+  otherwise fail at HTTP serialization in Task 3, past the point where a clean refusal is
+  possible; `undefined` is refused because it would read to the model as "the tool ran
+  and found nothing".
+- **Four mutations proved the suite can fail**, then were reverted: `parse` before the
+  scope gate (3 red), depth coerced to 1 (1 red), `.length` byte cap (1 red), prototype
+  check deleted (1 red).
 
 ### Task 3 — Gateway and router wiring
 
