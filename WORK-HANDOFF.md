@@ -39,14 +39,17 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–3 **COMPLETE**.
-    Tasks 4–6 **NOT STARTED**.
+  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–4 **COMPLETE**.
+    Tasks 5–6 **NOT STARTED**.
     `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
     `tests/matrix-integrity.test.mjs` (9/9), `scripts/client-conformance.mjs` (**55/55**),
-    `docs/clients/` (4 guides + index) and `tests/client-docs.test.mjs` (6/6).
-    Matrix tally **13 VERIFIED / 2 PARTIAL / 0 BLOCKED / 87 UNVERIFIED**,
-    every non-`UNVERIFIED` cell in the `generic-openai` row. **No real client has been
-    driven against BAYZ yet** — every Core 3 cell is still `UNVERIFIED`.
+    `docs/clients/` (4 guides + index), `tests/client-docs.test.mjs` (6/6), and
+    `scripts/verify-opencode.mjs` (**16 VERIFIED / 1 UNVERIFIED, exit 0**) with
+    transcripts in `docs/transcripts/opencode/`.
+    Matrix tally **29 VERIFIED / 2 PARTIAL / 0 BLOCKED / 71 UNVERIFIED**.
+    Two rows carry evidence: `generic-openai` (13 V, 2 P, `smoke:` citations) and
+    `opencode` (16 V, `transcript:` citations). **Antigravity and Hermes remain
+    entirely `UNVERIFIED`**, so the Core 3 gate is still expected to block.
     Status vocabulary **deviates from the plan text deliberately**:
     `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, with `PASS`/`FAIL` refused as
     placeholders. `BLOCKED` (tried, did not work) vs `UNVERIFIED` (not tried) is the split
@@ -56,6 +59,9 @@
     Task 2 fixed a **live 400-vs-500 bug**: no `GatewayError` code was mapped in
     `apps/server/src/http-errors.ts`, so a malformed body returned `500 internal_error`
     and told a client to retry forever. Four codes now map to 400.
+    **Task 4 fixed three defects that protocol conformance could not see** — see the
+    9H resume point below; the short version is that before Task 4 **no real OpenCode
+    session could reach a provider at all**.
   - 9I–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -924,7 +930,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–3 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6; 13 VERIFIED / 2 PARTIAL / 87 UNVERIFIED; Task 4 (OpenCode real-client verification) next |
+| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–4 done; `matrix-integrity` 9/9, `client-conformance` 55/55, `client-docs` 6/6, `verify-opencode` 16V/1U exit 0; 29 VERIFIED / 2 PARTIAL / 71 UNVERIFIED; Task 5 (Antigravity + Hermes attempts) next |
 | 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2518,22 +2524,123 @@ still 13/2/0/87/0), `runtime-structure` **1/1** — 16/16 together — `client-c
 **55/55**, `api-smoke` **70/70**. `git diff --check` clean, and `git diff --name-only` empty:
 Task 3 adds files only.
 
+### Task 4 — OpenCode real-client verification
+
+`scripts/verify-opencode.mjs` (entry + relaunch guard), `scripts/verify-opencode-lib.mjs`
+(fixtures), `scripts/verify-opencode-scenarios.mjs` (nine scenarios), and
+`docs/transcripts/opencode/` (README + 8 transcripts). **Exit 0**, tally
+**16 VERIFIED / 0 PARTIAL / 0 BLOCKED / 1 UNVERIFIED**, confirmed on two consecutive full
+runs.
+
+This drives the **real `opencode` binary** (v1.18.23) as a child process: a real config file
+in an isolated HOME with every XDG dir redirected, real stdout and stderr, a real BAYZ
+listener on a real port, real SQLite with real envelope crypto, real loopback provider
+origins, a real HTTP CONNECT proxy requiring Basic auth, and scoped identities created
+through the management API. No `fetch` standing in for the client, no `app.inject`.
+
+**The script refuses to self-certify.** An end-of-run pass `existsSync`-checks every
+transcript a claimed cell cites, and separately asserts that all 17 capabilities recorded a
+verdict — so a scenario that silently failed to run cannot leave a cell quietly absent.
+
+#### Three defects that protocol conformance could not see
+
+None is a protocol violation, which is precisely why 55 generic checks missed all three.
+Each is a mismatch between what BAYZ accepted and what a real agent client sends.
+
+1. **`stream_options` refused outright.** OpenCode sends
+   `{"include_usage": true}` on every request; the strict allow-list had no entry, so the
+   whole body failed `invalid_request (unknown-key)`. The first capture shows
+   `origin chat hits: 0` — **no real OpenCode session could reach a provider at all.** Fixed
+   as `assertStreamOptions` in `packages/gateway/src/normalize.ts`: validated, not dropped,
+   because `include_usage: false` asks BAYZ to suppress usage and it cannot (usage feeds the
+   accounting rows), so accepting it would claim a setting took effect that never did.
+2. **Streamed `tool_calls` silently dropped.** `packages/router/src/chunk.ts` always parsed
+   `toolCallDeltas`, and the non-streaming path always rendered them, but `chunkBody` in
+   `apps/server/src/routes/chat.ts` built a `content`-only delta. The client received
+   `finish_reason: "tool_calls"` with no calls attached, treated it as an empty turn, and
+   re-sent the identical request **18 times** before the run was killed. A client cannot
+   recover from this — nothing in the response says a call was lost. Fixed with the OpenAI
+   streaming fragment shape: `index` on every fragment, `id`/`type` and `function.name` only
+   where the router observed them.
+3. **The 1 KiB tool-description cap refused the client's payload.** Measured on the wire:
+   `bash` 4,628 chars, `task` 3,019, `todowrite` 2,012. Agent clients put their whole usage
+   contract in the description, so 1 KiB was an incompatibility rather than a boundary — it
+   had been set against hand-written examples. Raised to 16 KiB per tool; the aggregate 1 MiB
+   `MAX_REQUEST_BYTES` check, applied last to the *validated* request, is what actually
+   bounds input.
+
+Regression tests pin the measured numbers so a future tightening fails with the client that
+would break: +6 in `packages/gateway/test/normalize.test.ts`, +2 in
+`packages/router/test/tools.test.ts`, +2 in `apps/server/test/chat-stream.test.ts` — one
+reassembling fragments to the exact arguments the provider sent, one asserting a text-only
+stream carries **no** `tool_calls` key so a strict client never sees a call that did not happen.
+
+#### What the transcripts show
+
+`configure-authenticate.md` the documented JSON config accepted, a corrupted key refused,
+**zero** `GET /v1/models`. `chat-stream.md` `stream:true` by default, SSE rendered, usage in
+the final chunk. `tool-roundtrip.md` a streamed call reassembled by `index`, `bash` executed,
+`role:"tool"` result answered. `large-request.md` 67,447 bytes served intact.
+`cancel.md` SIGINT mid-flight destroyed the upstream socket before the response completed.
+`error-surface-and-keys.md` a legible one-line error not a stack trace; rotation kills the old
+key; deletion locks the client out. `routing.md` a custom provider, a CONNECT proxy logging
+the origin authority, `routingMode:"combo"`, failover after the primary was killed.
+`free-only.md` `freeOnly` defaults true, a PAID-classified non-loopback provider refused with
+**0 upstream requests**, an explicit opt-out then routes.
+
+#### Decisions worth carrying forward
+
+- **`models.list` stays `UNVERIFIED` by measurement.** OpenCode offers the models in its own
+  config `models` map and never calls `GET /v1/models`. `opencode models bayz` prints the
+  right model with zero gateway requests, so promoting the cell would have been easy and
+  wrong. Practical consequence for users: adding a route in BAYZ does not make it appear in
+  OpenCode.
+- **A harness bug was found and fixed rather than blamed on BAYZ.** Run 1 reported
+  `key revoke/rotate` BLOCKED. The cause was mine: `content-type: application/json` on
+  bodyless `DELETE`/`POST` calls, which Fastify correctly refuses `400 invalid_json`, so
+  nothing was ever revoked. The scenario was also restructured to rotate the *same* identity
+  — deleting and recreating answered `409 identity_already_exists` and returned no key, so
+  the rotation half would have tested nothing. Rotation now runs before revocation, because
+  revocation is destructive.
+- **Free-only needs a non-loopback origin.** `allowLoopback` short-circuits classification to
+  LOCAL, and LOCAL is free, so a loopback origin cannot exercise the PAID path at all. The
+  scenario uses the host's private IPv4 and skips honestly when there is none.
+- **Redaction is by name, not by shape.** Admin token, provider credential, proxy password,
+  master key, and every per-scenario client key are replaced by literal, so a credential
+  cannot survive because it happened not to look like one. Ports, temp paths, UUIDs,
+  timestamps, and latencies are normalised so a re-run reproduces the same bytes. Sections
+  over 4,000 chars are truncated **with the real total stated** — the client's own body is
+  ~30 KiB of system prompt and tool schemas. A grep for every secret literal and for any
+  64-hex run across the transcripts returns nothing.
+
+Verified sequentially, one command per step: `@bayz/server` **338/338**, `@bayz/gateway`
+**80/80**, `@bayz/router` **291/291**, `matrix-integrity` **9/9**, `client-docs` **6/6**,
+`runtime-structure` **1/1**, `client-conformance` **55/55**, `api-smoke` **70/70**,
+`stream-smoke` **63/63**, `security-smoke` **82/82**, `injection-smoke` **179/179**,
+`usage-smoke` **119/119**, `proxy-ux-smoke` **127/127**, `@bayz/server` build exit 0.
+`git diff --check` clean.
+
 ### 9H resume point
 
-Tasks 1–3 **COMPLETE**. Next: **Task 4 — OpenCode real-client verification.** Create
-`scripts/verify-opencode.mjs` and `docs/transcripts/opencode/` (populated at run time). Start
-a real BAYZ instance on a free port with a real loopback provider origin, create a scoped
-client identity, configure a real `opencode` invocation using the settings documented in
-`docs/clients/opencode.md`, and capture stdout, stderr, and the BAYZ usage rows. For each
-matrix column record `VERIFIED` with a transcript path, `BLOCKED` with the observed error, or
-`UNVERIFIED` with the reason it could not run here. **The script must exit non-zero if any
-cell it claims to verify lacks a transcript** — a cell may not become `VERIFIED` from a
-script's own opinion. Then the §25 amendment: configure a free-only route and record that cell
-from the transcript. Update the `opencode` matrix row and commit
-`test: verify Bayz against the real OpenCode client`.
+Tasks 1–4 **COMPLETE**. Next: **Task 5 — Antigravity and Hermes verification attempts.**
+Create `scripts/verify-hermes.mjs` and `scripts/verify-antigravity.mjs`.
+
+**Hermes is present on this host** (v0.20.5), so it must be genuinely driven, not merely
+prepared for. Its configuration differs from OpenCode's at nearly every field and the real
+form was already read from this machine at Task 3: `~/.hermes/config.yaml`, **snake_case**
+`model.base_url`, `api_mode: chat_completions`, **bare** model ids (no provider prefix), and
+the key read from `~/.hermes/.env` under the **host-and-port-derived** variable
+`HERMES_CUSTOM_127_0_0_1_20128_API_KEY`. See `docs/clients/hermes.md`.
+
+**Antigravity is absent**, so its harness ships ready and every cell stays `UNVERIFIED` with
+the absence recorded as the reason — **not `BLOCKED`**, which would claim an attempt was made
+and failed. Both scripts must carry the same refusal-to-self-certify as
+`scripts/verify-opencode.mjs`. Then update both matrix rows from measured evidence only and
+commit `test: attempt Bayz verification against Antigravity and Hermes`.
 
 Note: verification stays the bounded per-workspace sequence described under "Verification
-is run sequentially on this device".
+is run sequentially on this device". Expect real-client runs to be slow — roughly 20 seconds
+per `opencode run`-equivalent — and run one client process at a time.
 
 ## Phase 9 GOAT — planning state
 

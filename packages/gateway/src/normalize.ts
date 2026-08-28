@@ -59,6 +59,10 @@ const FIELD_MAP = new Map<string, keyof NormalizedChatRequest | null>([
   // Consumed by the profile, which already recorded whether parallel calls were
   // requested. Forwarding it would duplicate one decision in two places.
   ["parallel_tool_calls", null],
+  // Validated by `assertStreamOptions` below rather than forwarded. The router has
+  // no field for it, and the only setting it can express is one BAYZ already
+  // satisfies — see that function for why `false` is refused instead of dropped.
+  ["stream_options", null],
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -85,6 +89,54 @@ function strictInteger(value: string): number | undefined {
 }
 
 /**
+ * Validate `stream_options` without forwarding it.
+ *
+ * Sent by the real `opencode` client (v1.18.23) on every request as
+ * `{"include_usage": true}`, and by the OpenAI SDK's own streaming helper. Before
+ * this, the strict allow-list refused the whole request with
+ * `invalid_request (unknown-key)` and no real OpenCode session could reach a
+ * provider at all — the blocker Phase 9H Task 4 found.
+ *
+ * It is **validated, not dropped**, and the distinction is the whole point:
+ *
+ * - `include_usage: true` asks for token counts in the final stream chunk. BAYZ
+ *   already emits them unconditionally (`chunkBody` in
+ *   `apps/server/src/routes/chat.ts`), so the request is honoured as asked.
+ * - `include_usage: false` asks BAYZ to *suppress* usage. It cannot: usage feeds
+ *   the accounting rows every route depends on, and the emitting path has no
+ *   opt-out. Silently accepting would tell a client a setting took effect that
+ *   never did — the Phase 5 posture this file already applies to unknown keys.
+ * - Any other key inside the object is refused for the same reason a top-level
+ *   unknown key is: an unrecognised setting must never look like it applied.
+ *
+ * Refused without `stream: true`, matching the OpenAI contract, so a client that
+ * asks for stream options on a non-streaming request is told rather than ignored.
+ */
+function assertStreamOptions(body: Record<string, unknown>): void {
+  const options = body.stream_options;
+  if (options === undefined || options === null) {
+    return;
+  }
+  if (body.stream !== true) {
+    throw new GatewayError("invalid_request", "stream-options-without-stream");
+  }
+  if (!isPlainObject(options)) {
+    throw new GatewayError("invalid_request", "stream-options-shape");
+  }
+  for (const [key, value] of Object.entries(options)) {
+    if (key !== "include_usage") {
+      throw new GatewayError("invalid_request", "stream-options-unknown-key");
+    }
+    if (typeof value !== "boolean") {
+      throw new GatewayError("invalid_request", "stream-options-include-usage-type");
+    }
+    if (value === false) {
+      throw new GatewayError("invalid_request", "stream-options-include-usage-unsupported");
+    }
+  }
+}
+
+/**
  * Map an OpenAI-shaped body onto the router's request shape.
  *
  * This layer maps names and applies declared quirks. It deliberately does **not**
@@ -102,6 +154,8 @@ export function normalizeRequest(
   if (!isPlainObject(body)) {
     throw new GatewayError("invalid_request", "body-shape");
   }
+
+  assertStreamOptions(body);
 
   const normalized: Record<string, unknown> = {};
 

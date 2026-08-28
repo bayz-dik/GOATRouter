@@ -39,6 +39,54 @@ test("description and parameters are optional", () => {
   assert.deepEqual(parsed, [{ type: "function", function: { name: "ping" } }]);
 });
 
+test("a real agent client's tool descriptions are accepted", () => {
+  /*
+   * The lengths here are measured, not chosen: this is the `opencode` v1.18.23
+   * payload captured in docs/transcripts/opencode/. The previous 1024-character cap
+   * refused `bash` outright, which meant no real coding agent could call a tool
+   * through BAYZ at all.
+   *
+   * Pinning the real numbers means a future tightening of the cap fails here with
+   * the client that would break, rather than passing review and breaking OpenCode.
+   */
+  const measured = [
+    { name: "bash", length: 4628 },
+    { name: "task", length: 3019 },
+    { name: "todowrite", length: 2012 },
+    { name: "edit", length: 1369 },
+    { name: "read", length: 1158 },
+  ];
+  const parsed = parseToolDefinitions(
+    measured.map((entry) => ({
+      type: "function",
+      function: {
+        name: entry.name,
+        description: "d".repeat(entry.length),
+        parameters: { type: "object", properties: {} },
+      },
+    })),
+  );
+  assert.equal(parsed.length, measured.length);
+  for (const [index, entry] of measured.entries()) {
+    assert.equal(parsed[index]!.function.description?.length, entry.length);
+  }
+});
+
+test("a tool description is still bounded", () => {
+  // Raising the cap for real clients is not the same as removing it. 16 KiB is the
+  // per-tool limit; one character past it is refused.
+  const overLimit = "d".repeat(16 * 1024 + 1);
+  assert.throws(
+    () => parseToolDefinitions([{ type: "function", function: { name: "big", description: overLimit } }]),
+    (error: unknown) => error instanceof RouterError && error.code === "invalid_request",
+  );
+  const atLimit = "d".repeat(16 * 1024);
+  const parsed = parseToolDefinitions([
+    { type: "function", function: { name: "big", description: atLimit } },
+  ]);
+  assert.equal(parsed[0]!.function.description?.length, 16 * 1024);
+});
+
 test("only known keys survive parsing", () => {
   // A tool definition is forwarded to a provider. An unknown key would be either
   // silently dropped — leaving the client believing it took effect — or forwarded

@@ -3,23 +3,52 @@
 `opencode` is present on this host: `/usr/local/bin/opencode` →
 `/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe`, `--version` reports **1.18.23**.
 
-## Verification status: UNVERIFIED, all 17 capabilities
+## Verification status: VERIFIED, 16 of 17 capabilities
 
-**OpenCode has not been driven against BAYZ.** Every cell in the `opencode` row of
-[the compatibility matrix](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md)
-reads `UNVERIFIED`, and the reason recorded is exactly that: the binary is present, nothing
-has been run.
+**OpenCode has been driven against BAYZ for real.** `scripts/verify-opencode.mjs` runs the
+actual binary as a child process — a real config file in an isolated HOME, real stdout and
+stderr, a real BAYZ listener, real provider origins, a real HTTP CONNECT proxy — and writes
+a transcript per scenario under `docs/transcripts/opencode/`. Every cell in the `opencode`
+row of [the compatibility matrix](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md)
+cites one.
 
-The binary being installed is not evidence. 9H Task 4 owns the real verification — a real
-`opencode` invocation against a real BAYZ listener, with transcripts under
-`docs/transcripts/opencode/`, after which cells move individually with a
-`transcript:` citation each.
+| capability | status | evidence |
+| --- | --- | --- |
+| configure | VERIFIED | `docs/transcripts/opencode/configure-authenticate.md` |
+| authenticate | VERIFIED | `docs/transcripts/opencode/configure-authenticate.md` |
+| models.list | UNVERIFIED | the client never calls `GET /v1/models` — see below |
+| chat | VERIFIED | `docs/transcripts/opencode/chat-stream.md` |
+| stream | VERIFIED | `docs/transcripts/opencode/chat-stream.md` |
+| tool call | VERIFIED | `docs/transcripts/opencode/tool-roundtrip.md` |
+| tool result roundtrip | VERIFIED | `docs/transcripts/opencode/tool-roundtrip.md` |
+| large request | VERIFIED | `docs/transcripts/opencode/large-request.md` |
+| cancel | VERIFIED | `docs/transcripts/opencode/cancel.md` |
+| error surface | VERIFIED | `docs/transcripts/opencode/error-surface-and-keys.md` |
+| custom provider | VERIFIED | `docs/transcripts/opencode/routing.md` |
+| proxy-bound route | VERIFIED | `docs/transcripts/opencode/routing.md` |
+| combo | VERIFIED | `docs/transcripts/opencode/routing.md` |
+| failover | VERIFIED | `docs/transcripts/opencode/routing.md` |
+| restart/reconnect | VERIFIED | `docs/transcripts/opencode/restart-reconnect.md` |
+| key revoke/rotate | VERIFIED | `docs/transcripts/opencode/error-surface-and-keys.md` |
+| free-only routing | VERIFIED | `docs/transcripts/opencode/free-only.md` |
 
-What *is* proven is the protocol underneath: the generic OpenAI contract holds over real
-HTTP (`scripts/client-conformance.mjs`, 55/55). OpenCode speaks that contract through
-`@ai-sdk/openai-compatible`, so the configuration below is expected to work — **expected,
-not verified**. If you run it and it works, that is worth a transcript; if it does not, that
-is a `BLOCKED` cell and more valuable still.
+**`models.list` is UNVERIFIED by measurement, not omission.** OpenCode offers the models
+listed in the `models` map of its own config file and never calls `GET /v1/models`, so
+BAYZ's discovery endpoint is not exercised by this client. `opencode models bayz` prints
+`bayz/probe-model` without a single gateway request. The practical consequence for you: a
+model must appear in your `models` map to be selectable, and adding a route in BAYZ does not
+make it show up in OpenCode on its own.
+
+**Driving the real client found three defects that 55 generic protocol checks did not.**
+Recorded here because they are the reason to trust this row rather than a conformance run:
+`stream_options` (which this client sends on every request) was refused outright; streamed
+`tool_calls` were silently dropped, so the client re-sent the same request 18 times; and a
+1 KiB tool-description cap refused its payload, whose `bash` description alone is 4,628
+characters. All three are fixed, with regression tests.
+
+To re-verify on your own machine: `node scripts/verify-opencode.mjs`. It takes several
+minutes — one real client run at a time, roughly 20 seconds each — and exits non-zero if any
+cell it claims lacks a transcript.
 
 ## Configuration
 
@@ -73,8 +102,8 @@ it is the model id BAYZ knows. The live file on this host does exactly this with
 `9router/tabitoken-10/claude-opus-5-thinking`.
 
 Every model you want must be listed under `models`. OpenCode does not call
-`GET /v1/models` to discover them — which is why the `models.list` cell cannot be assumed
-either way until Task 4 observes what OpenCode actually requests.
+`GET /v1/models` to discover them — measured, not assumed: a full `opencode models bayz` run
+produced zero requests to that endpoint.
 
 ### `opencode auth`
 
@@ -116,38 +145,40 @@ HTTP 409. BAYZ is refusing to spend money you did not authorise. Publish the pro
 catalogue (`POST /api/providers/<id>/catalogue`) so its models get classified, or opt one
 route out with `PATCH /api/routes/<id>` `{"freeOnly": false}`.
 
-How OpenCode surfaces a 409 with that body — clean message, opaque error, or retry loop — is
-**unobserved**, and is one of the things Task 4's `error surface` cell will record.
+**Observed:** OpenCode surfaces this as a one-line `Error: …` on stderr and exits non-zero —
+no retry loop, no stack trace. `docs/transcripts/opencode/free-only.md` captures the refusal
+and, more importantly, records that the paid origin received **zero** requests, so nothing
+could have been spent before the refusal landed.
 
-## Capabilities: what is unknown, and why it matters per cell
+## Capabilities: what was observed per cell
 
-All seventeen are `UNVERIFIED`. These are the ones where OpenCode's behaviour, not BAYZ's,
-is the open question:
+Sixteen of seventeen are `VERIFIED` against the real client; each row of the table at the
+top of this document cites its transcript. What was actually observed, where OpenCode's
+behaviour rather than BAYZ's was the open question:
 
-| capability | the open question |
+| capability | what the real run showed |
 | --- | --- |
-| configure | does OpenCode accept this provider block and reach BAYZ at all |
-| authenticate | does it send `Authorization: Bearer` as BAYZ expects |
-| models.list | does it ever call `GET /v1/models`, or rely solely on the `models` map |
-| chat / stream | does it parse the response and SSE frames without complaint |
-| tool call | does it handle `finish_reason: "tool_calls"` with `content: null` |
-| tool result roundtrip | does it return `tool_call_id` matching the call |
-| large request | how does it behave against the 128,000-character message bound |
-| cancel | does Ctrl-C abort the HTTP request so BAYZ tears the upstream down |
-| error surface | does a 409 `no_free_route` reach the user legibly |
-| custom provider | does a `custom-openai` BAYZ provider serve it identically |
-| proxy-bound route | unobserved end to end |
-| combo / failover | does a mid-request failover stay invisible to it |
-| restart/reconnect | does it recover across a BAYZ restart |
-| key revoke/rotate | does it fail cleanly on a revoked key, or hang |
-| free-only routing | does the 409 reach the user as a comprehensible refusal |
-
-The BAYZ side of each is already covered by tests and smokes. What is missing is the
-client's half, and only running OpenCode supplies it.
+| configure | the provider block above is accepted and reaches BAYZ |
+| authenticate | it sends `Authorization: Bearer <key>`; a corrupted key exits non-zero |
+| models.list | it never calls `GET /v1/models` — it uses the `models` map alone |
+| chat / stream | it requests `stream:true` by default and renders the SSE frames |
+| tool call | it handles `finish_reason:"tool_calls"` and reassembles fragments by `index` |
+| tool result roundtrip | it returns `role:"tool"` with a matching `tool_call_id` |
+| large request | a 67,447-byte request is served intact |
+| cancel | SIGINT aborts the HTTP request and BAYZ tears the upstream down |
+| error surface | a 409 reaches the user as a legible one-line message |
+| custom provider | a custom `openai-compatible` provider serves it identically |
+| proxy-bound route | the CONNECT proxy logged the origin authority — it genuinely tunnels |
+| combo / failover | a mid-suite primary kill stayed invisible to the client |
+| restart/reconnect | the same key works across a BAYZ restart on the same port |
+| key revoke/rotate | the superseded key fails immediately; deletion locks the client out |
+| free-only routing | the 409 is comprehensible and the paid origin was never called |
 
 ## Not claimed here
 
-- No screenshot. None was taken.
-- No transcript. `docs/transcripts/opencode/` does not exist yet; Task 4 creates it.
-- No claim that any capability works. The configuration is documented; the outcome is not.
-- No `opencode`-specific behaviour in BAYZ. There is none, by design.
+- No screenshot. None was taken; the transcripts are text.
+- No claim about `opencode auth login` versus `options.apiKey`. Only the config-file form
+  was exercised.
+- No claim that `models.list` works for this client. It is not used by it.
+- No `opencode`-specific behaviour in BAYZ. There is none, by design — the preset seeds
+  scopes and labels a key, nothing more.

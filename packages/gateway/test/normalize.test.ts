@@ -130,6 +130,86 @@ test("an undocumented quirk cannot be asked for", () => {
   );
 });
 
+test("stream_options include_usage true is accepted and not forwarded", () => {
+  // The real `opencode` client (v1.18.23) sends this on every request. Before it
+  // was handled, the strict allow-list refused the whole body and no real OpenCode
+  // session could reach a provider — see docs/transcripts/opencode/.
+  const body = { ...MINIMAL, stream: true, stream_options: { include_usage: true } };
+  const normalized = normalizeRequest(chatProfile(body), body);
+  // Accepted, and absent from the router request: the router has no such field,
+  // and BAYZ already emits usage in the final chunk unconditionally.
+  assert.deepEqual(normalized, {
+    model: "gpt-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+  assert.equal("stream_options" in normalized, false);
+  assert.equal("streamOptions" in normalized, false);
+});
+
+test("stream_options include_usage false is refused, not silently ignored", () => {
+  // `false` asks BAYZ to suppress usage. It cannot — usage feeds the accounting
+  // rows — so accepting would claim a setting took effect that never did. This is
+  // the same posture the file applies to unknown top-level keys.
+  const body = { ...MINIMAL, stream: true, stream_options: { include_usage: false } };
+  assert.throws(
+    () => normalizeRequest(chatProfile(body), body),
+    (error: unknown) => error instanceof GatewayError && error.code === "invalid_request",
+  );
+});
+
+test("stream_options is refused when the request is not streaming", () => {
+  for (const body of [
+    { ...MINIMAL, stream_options: { include_usage: true } },
+    { ...MINIMAL, stream: false, stream_options: { include_usage: true } },
+  ]) {
+    assert.throws(
+      () => normalizeRequest(chatProfile(body), body),
+      (error: unknown) => error instanceof GatewayError && error.code === "invalid_request",
+      `accepted stream_options without stream: ${JSON.stringify(body)}`,
+    );
+  }
+});
+
+test("an unrecognised key inside stream_options is refused", () => {
+  // Accepting the object wholesale would let any future setting look applied.
+  for (const options of [
+    { include_usage: true, chunk_size: 10 },
+    { chunk_size: 10 },
+    { include_usage: "true" },
+    { include_usage: 1 },
+    { __proto__: { polluted: true } },
+  ]) {
+    const body = { ...MINIMAL, stream: true, stream_options: options };
+    assert.throws(
+      () => normalizeRequest(chatProfile(body), body),
+      (error: unknown) => error instanceof GatewayError && error.code === "invalid_request",
+      `accepted stream_options ${JSON.stringify(options)}`,
+    );
+  }
+});
+
+test("a non-object stream_options is refused", () => {
+  for (const options of [42, "yes", [], true]) {
+    const body = { ...MINIMAL, stream: true, stream_options: options };
+    assert.throws(
+      () => normalizeRequest(chatProfile(body), body),
+      (error: unknown) => error instanceof GatewayError && error.code === "invalid_request",
+      `accepted stream_options ${JSON.stringify(options)}`,
+    );
+  }
+});
+
+test("stream_options null is tolerated on a streaming request", () => {
+  // Some SDKs serialise an unset option as an explicit null. That is the absence
+  // of a request, not a request for something unsupported.
+  const body = { ...MINIMAL, stream: true, stream_options: null };
+  const normalized = normalizeRequest(chatProfile(body), body);
+  assert.deepEqual(normalized, {
+    model: "gpt-test",
+    messages: [{ role: "user", content: "hi" }],
+  });
+});
+
 test("normalization refuses a request whose profile lacks the chat capability", () => {
   const profile = deriveProfile({
     path: "/v1/chat/completions",

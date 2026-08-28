@@ -194,6 +194,142 @@ test("stream true returns SSE headers and a terminated frame sequence", async (t
   assert.deepEqual(deltas, ["hello ", "world"]);
 });
 
+test("streamed tool calls reach the client instead of being dropped", async (t) => {
+  /*
+   * Phase 9H Task 4 regression.
+   *
+   * `apps/server/src/routes/chat.ts` built a `content`-only delta, so on a streaming
+   * request every tool call the provider emitted was discarded. The router had always
+   * parsed them (`packages/router/src/chunk.ts`) and the non-streaming path had always
+   * rendered them, which is why no test caught it.
+   *
+   * The real-client symptom is in docs/transcripts/opencode/: `opencode` v1.18.23
+   * streams by default, got `finish_reason: "tool_calls"` with no calls attached, and
+   * re-sent the identical request 18 times before the run was killed.
+   */
+  const origin = await startOrigin((write, end) => {
+    // Fragmented exactly as a provider streams it: identity on the first fragment,
+    // arguments split across later ones sharing the same index.
+    write(
+      `data: ${JSON.stringify({
+        model: "stream-model",
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: "call_stream_1", type: "function", function: { name: "get_weather", arguments: '{"ci' } },
+              ],
+            },
+          },
+        ],
+      })}\n\n`,
+    );
+    write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'ty":"Oslo"}' } }] } }],
+      })}\n\n`,
+    );
+    write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: {}, finish_reason: "tool_calls" }],
+      })}\n\n`,
+    );
+    write("data: [DONE]\n\n");
+    end();
+  });
+  const { app, runtime } = harness();
+  t.after(async () => {
+    await app.close();
+    runtime.close();
+    await origin.close();
+  });
+  seed(runtime, origin.port);
+  const { base } = await listen(app);
+
+  const response = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: AUTH,
+    body: JSON.stringify({
+      ...REQUEST,
+      stream: true,
+      tools: [
+        {
+          type: "function",
+          function: { name: "get_weather", parameters: { type: "object", properties: { city: { type: "string" } } } },
+        },
+      ],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const text = await response.text();
+  const frames = text
+    .split("\n\n")
+    .filter((line) => line.length > 0 && line !== "data: [DONE]")
+    .map((line) => JSON.parse(line.slice("data: ".length)));
+
+  const fragments = frames.flatMap((chunk) => chunk.choices[0].delta.tool_calls ?? []);
+  assert.ok(fragments.length > 0, "no tool_calls survived the stream");
+
+  // The first fragment carries the identity a client needs to open the call.
+  assert.equal(fragments[0].index, 0);
+  assert.equal(fragments[0].id, "call_stream_1");
+  assert.equal(fragments[0].type, "function");
+  assert.equal(fragments[0].function.name, "get_weather");
+
+  // Reassembling by index yields the arguments the provider actually sent, which is
+  // what a client does — so this asserts the fragments are usable, not merely present.
+  const byIndex = new Map<number, string>();
+  for (const fragment of fragments) {
+    const previous = byIndex.get(fragment.index) ?? "";
+    byIndex.set(fragment.index, previous + (fragment.function?.arguments ?? ""));
+  }
+  assert.deepEqual(JSON.parse(byIndex.get(0) as string), { city: "Oslo" });
+
+  // A later fragment must NOT repeat the identity: a client keyed on `id` would open a
+  // second call for the same one.
+  assert.equal(fragments.at(-1).id, undefined);
+  assert.equal(fragments.at(-1).function.name, undefined);
+
+  assert.equal(frames.at(-1).choices[0].finish_reason, "tool_calls");
+});
+
+test("a content-only stream carries no tool_calls key at all", async (t) => {
+  // The other half of the fix: `delta` must not gain an empty `tool_calls` array on
+  // ordinary text, or a strict client would see a tool call that never happened.
+  const origin = await startOrigin((write, end) => {
+    write(frame("plain"));
+    write("data: [DONE]\n\n");
+    end();
+  });
+  const { app, runtime } = harness();
+  t.after(async () => {
+    await app.close();
+    runtime.close();
+    await origin.close();
+  });
+  seed(runtime, origin.port);
+  const { base } = await listen(app);
+
+  const response = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: AUTH,
+    body: JSON.stringify({ ...REQUEST, stream: true }),
+  });
+  const text = await response.text();
+  const frames = text
+    .split("\n\n")
+    .filter((line) => line.length > 0 && line !== "data: [DONE]")
+    .map((line) => JSON.parse(line.slice("data: ".length)));
+  for (const chunk of frames) {
+    assert.equal(
+      "tool_calls" in chunk.choices[0].delta,
+      false,
+      "a text-only stream must not advertise tool_calls",
+    );
+  }
+});
+
 test("each streamed frame carries the OpenAI chunk object name", async (t) => {
   const origin = await startOrigin((write, end) => {
     write(frame("x"));

@@ -36,8 +36,50 @@ function profileFor(request: FastifyRequest): ClientProfile {
   });
 }
 
-/** Render one router chunk as an OpenAI streaming chunk object. */
+/**
+ * Render one router chunk as an OpenAI streaming chunk object.
+ *
+ * **`tool_calls` was missing here until Phase 9H Task 4**, and the omission was
+ * invisible to every existing test. `packages/router/src/chunk.ts` has always parsed
+ * `toolCallDeltas` off the upstream frame, and the non-streaming path renders
+ * `tool_calls` via `denormalizeResponse` — but this function only ever built a
+ * `content` delta, so on a **streaming** request every tool call the provider
+ * emitted was silently dropped.
+ *
+ * What that looked like with a real client: `opencode` v1.18.23 streams by default,
+ * so it received a stream that finished with `finish_reason: "tool_calls"` and no
+ * calls attached, treated it as an empty assistant turn, and re-sent the same
+ * request — eighteen times in the captured transcript before the run was killed. A
+ * client cannot recover from this, because nothing in the response says a call was
+ * lost.
+ *
+ * The fragment shape is the OpenAI streaming contract, which differs from the
+ * non-streaming one: `index` is on every fragment and is load-bearing (it says which
+ * call the fragment belongs to), while `id`, `type`, and `function.name` appear only
+ * on a call's first fragment. Emitting a key whose value the router did not observe
+ * would invent data, so each is included only when present — and `type: "function"`
+ * rides with `id` because that is exactly when OpenAI sends it.
+ */
 function chunkBody(id: string, created: number, chunk: ChatChunk): Record<string, unknown> {
+  const delta: Record<string, unknown> = {};
+  if (chunk.contentDelta !== undefined) {
+    delta.content = chunk.contentDelta;
+  }
+  if (chunk.toolCallDeltas !== undefined) {
+    delta.tool_calls = chunk.toolCallDeltas.map((call) => ({
+      index: call.index,
+      ...(call.id === undefined ? {} : { id: call.id, type: "function" }),
+      ...(call.name === undefined && call.argumentsDelta === undefined
+        ? {}
+        : {
+            function: {
+              ...(call.name === undefined ? {} : { name: call.name }),
+              ...(call.argumentsDelta === undefined ? {} : { arguments: call.argumentsDelta }),
+            },
+          }),
+    }));
+  }
+
   return {
     id,
     object: "chat.completion.chunk",
@@ -46,7 +88,7 @@ function chunkBody(id: string, created: number, chunk: ChatChunk): Record<string
     choices: [
       {
         index: 0,
-        delta: chunk.contentDelta === undefined ? {} : { content: chunk.contentDelta },
+        delta,
         finish_reason: chunk.finishReason ?? null,
       },
     ],

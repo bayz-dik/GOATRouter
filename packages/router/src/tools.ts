@@ -5,7 +5,27 @@ export const MAX_TOOL_CALLS = 8;
 /** 32 KiB per argument or result blob. */
 export const MAX_TOOL_ARGUMENT_BYTES = 32 * 1024;
 export const MAX_TOOL_NAME_LENGTH = 64;
-const MAX_TOOL_DESCRIPTION_LENGTH = 1024;
+/**
+ * 16 KiB of description text per tool.
+ *
+ * **Raised from 1024 in Phase 9H Task 4, because 1024 blocked every real agent
+ * client.** The measured payload from `opencode` v1.18.23 carries ten tools whose
+ * descriptions run to **4,628 characters** (`bash`), 3,019 (`task`), and 2,012
+ * (`todowrite`) — see `docs/transcripts/opencode/`. Agent clients put their entire
+ * usage contract in the description, so a 1 KiB cap is not a security boundary, it
+ * is an incompatibility: no real coding agent could call a tool through BAYZ at
+ * all, and the previous limit was set against hand-written examples rather than a
+ * real client's payload.
+ *
+ * A description is inert text forwarded to the provider — never parsed, executed,
+ * or used as a key. The bound that actually protects the process is the aggregate
+ * one: `MAX_REQUEST_BYTES` (1 MiB) is checked last in
+ * `packages/router/src/request.ts` on the *validated* request, so 64 tools at this
+ * cap cannot get through even though 64 × 16 KiB exceeds it. Per-tool generosity
+ * plus a hard aggregate ceiling is the combination that admits real clients
+ * without admitting unbounded input.
+ */
+const MAX_TOOL_DESCRIPTION_LENGTH = 16 * 1024;
 const MAX_TOOL_CALL_ID_LENGTH = 128;
 /** How deep a JSON-Schema `parameters` blob may nest. */
 const MAX_PARAMETERS_DEPTH = 16;

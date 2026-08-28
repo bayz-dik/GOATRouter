@@ -252,11 +252,71 @@ holds the documentation to the matrix:
 
 **Create:** `scripts/verify-opencode.mjs`, `docs/transcripts/opencode/` (populated at run time)
 
-- [ ] Start a real BAYZ instance on a free port with a real loopback provider origin. Create a scoped client identity. Configure a real `opencode` invocation against it using the documented settings. Capture stdout, stderr, and the BAYZ usage rows.
-- [ ] For each matrix column, record `PASS` with a transcript path, or `FAIL` with the observed error, or `UNVERIFIED` with the reason the check could not run in this environment.
-- [ ] **The script must exit non-zero if any cell it claims to verify lacks a transcript.** A cell may not become `PASS` from a script's own opinion.
-- [ ] Verify: `node scripts/verify-opencode.mjs` exits 0 and writes transcripts; update the matrix `opencode` row from them.
-- [ ] Commit — `test: verify Bayz against the real OpenCode client`
+- [x] Start a real BAYZ instance on a free port with a real loopback provider origin. Create a scoped client identity. Configure a real `opencode` invocation against it using the documented settings. Capture stdout, stderr, and the BAYZ usage rows. — `scripts/verify-opencode.mjs` plus `scripts/verify-opencode-lib.mjs` and `scripts/verify-opencode-scenarios.mjs`, nine scenarios, **transcripts in `docs/transcripts/opencode/`**.
+- [x] For each matrix column, record `PASS` with a transcript path, or `FAIL` with the observed error, or `UNVERIFIED` with the reason the check could not run in this environment. — recorded in the project's `VERIFIED`/`BLOCKED`/`UNVERIFIED` vocabulary rather than the plan's `PASS`/`FAIL`, consistent with Task 1's deliberate deviation.
+- [x] **The script must exit non-zero if any cell it claims to verify lacks a transcript.** A cell may not become `PASS` from a script's own opinion. — implemented as an explicit end-of-run evidence pass that `existsSync`-checks every claimed transcript, plus a check that all 17 capabilities recorded a verdict at all.
+- [x] Verify: `node scripts/verify-opencode.mjs` exits 0 and writes transcripts; update the matrix `opencode` row from them. — **exit 0**, tally `{VERIFIED: 16, PARTIAL: 0, BLOCKED: 0, UNVERIFIED: 1}`, confirmed on two consecutive full runs.
+- [x] Commit — `test: verify Bayz against the real OpenCode client`
+
+**Driving the real client found three defects that the 55 generic protocol checks could not
+see.** None is a protocol violation; each is a mismatch between what BAYZ accepted and what
+a real agent client actually sends. This is the argument for real-client verification,
+stated as a measured result rather than a principle:
+
+1. **`stream_options` was refused outright.** OpenCode sends
+   `stream_options: {"include_usage": true}` on every request. The gateway's strict
+   allow-list had no entry, so the whole body failed `invalid_request (unknown-key)` and
+   **no real OpenCode session could reach a provider at all** — the first capture shows
+   `origin chat hits: 0`. Fixed in `packages/gateway/src/normalize.ts` as
+   `assertStreamOptions`: validated rather than dropped, because `include_usage: false` asks
+   BAYZ to suppress usage and it cannot (usage feeds the accounting rows), so accepting it
+   would claim a setting took effect that never did.
+2. **Streamed `tool_calls` were silently dropped.** `packages/router/src/chunk.ts` had always
+   parsed `toolCallDeltas` and `denormalizeResponse` had always rendered the non-streaming
+   form, but `chunkBody` in `apps/server/src/routes/chat.ts` built a `content`-only delta. A
+   streaming client received `finish_reason: "tool_calls"` with no calls attached, treated it
+   as an empty turn, and re-sent the identical request **18 times** before the run was killed.
+   Fixed with the OpenAI streaming fragment shape: `index` on every fragment, `id`/`type` and
+   `function.name` only where the router observed them.
+3. **The 1 KiB tool-description cap refused the client's payload.** Measured from the wire:
+   `bash` 4,628 characters, `task` 3,019, `todowrite` 2,012. Agent clients put their entire
+   usage contract in the description, so the cap was an incompatibility rather than a
+   boundary — it was set against hand-written examples. Raised to 16 KiB per tool in
+   `packages/router/src/tools.ts`; the aggregate 1 MiB `MAX_REQUEST_BYTES` check, applied last
+   to the *validated* request, is what actually bounds input.
+
+Each fix carries a regression test pinning the real measured numbers, so a future tightening
+fails with the client that would break rather than passing review: `+6` tests in
+`packages/gateway/test/normalize.test.ts`, `+2` in `packages/router/test/tools.test.ts`, `+2`
+in `apps/server/test/chat-stream.test.ts` (one asserting fragments reassemble to the exact
+arguments the provider sent, one asserting a text-only stream carries **no** `tool_calls` key
+so a strict client never sees a call that did not happen).
+
+**`models.list` stays `UNVERIFIED` by measurement, not omission.** OpenCode offers the models
+listed in its own config `models` map and never calls `GET /v1/models`; a full
+`opencode models bayz` run recorded zero requests to that endpoint. The command prints the
+right model, so promoting the cell would have been easy and wrong — BAYZ's discovery endpoint
+was never exercised by this client.
+
+**A harness bug was found and fixed rather than blamed on BAYZ.** Run 1 reported
+`key revoke/rotate` as `BLOCKED`. The cause was in the verification script: it sent
+`content-type: application/json` on bodyless `DELETE`/`POST` calls, so Fastify correctly
+answered `400 invalid_json` and nothing was ever revoked. BAYZ was right throughout. The
+scenario was also restructured to rotate the *same* identity instead of deleting and
+recreating one — the recreate answered `409 identity_already_exists` and returned no key, so
+the rotation half of the cell would have tested nothing.
+
+Rotation is now exercised before revocation, because revocation is destructive: rotate, prove
+the superseded key dies and the new key works, then delete and prove the client is locked out.
+
+**Transcripts are committed, so redaction is deterministic.** Secrets are replaced **by
+name** — admin token, provider credential, proxy password, master key, and every
+per-scenario client key — rather than by pattern-matching a shape, so a credential cannot
+survive because it happened not to look like one. Ports, temp paths, UUIDs, timestamps, and
+latencies are normalised so a re-run reproduces the same bytes. Sections over 4,000
+characters are truncated **with the real total stated**, since the client's own request body
+is ~30 KiB of system prompt and tool schemas. A grep for every secret literal and for any
+64-hex-character run across `docs/transcripts/opencode/` returns nothing.
 
 ### Task 5 — Antigravity and Hermes verification attempts
 

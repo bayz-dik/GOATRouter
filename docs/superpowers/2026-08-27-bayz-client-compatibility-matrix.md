@@ -1,9 +1,11 @@
 # BAYZ Router — Client Compatibility Matrix
 
-**Phase:** 9H Task 1 · **Spec:** `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md` §12, amended by §25
-**Status of this document:** the matrix skeleton exists and the vocabulary is enforced by
-`tests/matrix-integrity.test.mjs`. **Every cell is `UNVERIFIED`.** No client has been
-driven against BAYZ yet.
+**Phase:** 9H Tasks 1–4 · **Spec:** `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md` §12, amended by §25
+**Status of this document:** the matrix exists and the vocabulary is enforced by
+`tests/matrix-integrity.test.mjs`. **Two rows now carry evidence:** `generic-openai` from
+the protocol conformance harness, and `opencode` from a real-client run against the
+installed binary. Every Antigravity, Hermes, Cline, and Continue cell is still
+`UNVERIFIED`.
 
 ## What this document is, and what it is not
 
@@ -118,7 +120,7 @@ Measured directly, not assumed:
 
 | client | measurement | consequence |
 | --- | --- | --- |
-| `opencode` | **present** — `/usr/local/bin/opencode` → `opencode-ai/bin/opencode.exe`, `--version` reports `1.18.23` | can be driven here; 9H Task 4 |
+| `opencode` | **present** — `/usr/local/bin/opencode` → `opencode-ai/bin/opencode.exe`, `--version` reports `1.18.23` | **driven for real; 9H Task 4 filled the row** |
 | `hermes` | **present** — `/root/.local/bin/hermes` → `hermes-agent/venv/bin/hermes`, `--version` reports `Hermes Agent v0.20.5` | can be driven here; 9H Task 5 |
 | `antigravity` | **absent** — `command -v antigravity` finds nothing | not executable here; harness ships ready |
 | `cline` | **absent** — `command -v cline` finds nothing | not executable here |
@@ -132,8 +134,10 @@ but 9H Task 5 can attempt it for real rather than only shipping a harness.
 
 `opencode`, `antigravity`, and `hermes` are release-blocking. 9H Task 6's
 `scripts/client-gate.mjs --enforce` must exit non-zero while any Core 3 mandatory cell is
-`UNVERIFIED` or `BLOCKED`. Today every Core 3 cell is `UNVERIFIED`, so the gate is
-expected to block — that is the correct current state, not a defect.
+`UNVERIFIED` or `BLOCKED`. `opencode` is now verified (16 of 17, with `models.list`
+`UNVERIFIED` because the client does not use that surface); `antigravity` and `hermes` are
+entirely `UNVERIFIED`, so the gate is still expected to block — that is the correct current
+state, not a defect.
 
 ## How a cell moves to `VERIFIED`
 
@@ -192,25 +196,56 @@ client's availability on this host and which task owns filling the row in.
 
 ### opencode
 
+Filled by 9H Task 4 from `scripts/verify-opencode.mjs`, which drives the **real `opencode`
+binary** (v1.18.23) as a child process against a real BAYZ listener — a real config file in
+an isolated HOME, real stdout and stderr, real loopback provider origins, a real HTTP
+CONNECT proxy, and a scoped identity created through the management API. The script exits
+non-zero if it claims a cell whose transcript is not on disk.
+
+Driving the real client found **three defects the 55 generic protocol checks could not
+see**, all fixed with regression tests before any cell was filled:
+
+1. `stream_options` — sent by this client on every request — hit the strict allow-list and
+   the whole request was refused `invalid_request (unknown-key)`. No real OpenCode session
+   could reach a provider.
+2. Streamed `tool_calls` were **silently dropped**: the streaming renderer built a
+   `content`-only delta, so the client saw `finish_reason: "tool_calls"` with no calls
+   attached and re-sent the identical request 18 times before the run was killed.
+3. The 1 KiB tool-description cap refused this client's payload outright — its `bash`
+   description alone is 4,628 characters.
+
+What each transcript demonstrates:
+
+| transcript | what it captures |
+| --- | --- |
+| `configure-authenticate.md` | the documented JSON config accepted; a corrupted key refused; zero `GET /v1/models` |
+| `chat-stream.md` | `stream:true` by default, SSE frames rendered, usage in the final chunk |
+| `tool-roundtrip.md` | a streamed call reassembled by `index`, `bash` executed, `role:"tool"` result answered |
+| `large-request.md` | a 67,447-byte request served intact, not truncated |
+| `cancel.md` | SIGINT mid-flight destroyed the upstream socket before the response completed |
+| `error-surface-and-keys.md` | a legible one-line error, not a stack trace; rotation kills the old key, deletion locks the client out |
+| `routing.md` | a custom provider; a CONNECT proxy logging the origin authority; `routingMode:"combo"`; failover after the primary was killed |
+| `free-only.md` | `freeOnly` defaults true; a PAID-classified provider refused with **0 upstream requests**; an explicit opt-out then routes |
+
 | capability | status | evidence / reason |
 | --- | --- | --- |
-| configure | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| authenticate | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| models.list | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| chat | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| stream | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| tool call | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| tool result roundtrip | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| large request | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| cancel | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| error surface | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| custom provider | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| proxy-bound route | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| combo | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| failover | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| restart/reconnect | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| key revoke/rotate | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
-| free-only routing | UNVERIFIED | Binary present at /usr/local/bin/opencode (v1.18.23); not yet driven against BAYZ — 9H Task 4 owns this row. |
+| configure | VERIFIED | transcript:docs/transcripts/opencode/configure-authenticate.md |
+| authenticate | VERIFIED | transcript:docs/transcripts/opencode/configure-authenticate.md |
+| models.list | UNVERIFIED | The client never calls `GET /v1/models`: it offers the models listed in its own config `models` map, so BAYZ's discovery endpoint is not exercised by this client at all. A full `opencode models bayz` run recorded zero such requests. Not a BAYZ defect and not a client defect — the surface simply is not used, and promoting the cell because the command printed the right thing would be a fake claim. |
+| chat | VERIFIED | transcript:docs/transcripts/opencode/chat-stream.md |
+| stream | VERIFIED | transcript:docs/transcripts/opencode/chat-stream.md |
+| tool call | VERIFIED | transcript:docs/transcripts/opencode/tool-roundtrip.md |
+| tool result roundtrip | VERIFIED | transcript:docs/transcripts/opencode/tool-roundtrip.md |
+| large request | VERIFIED | transcript:docs/transcripts/opencode/large-request.md |
+| cancel | VERIFIED | transcript:docs/transcripts/opencode/cancel.md |
+| error surface | VERIFIED | transcript:docs/transcripts/opencode/error-surface-and-keys.md |
+| custom provider | VERIFIED | transcript:docs/transcripts/opencode/routing.md |
+| proxy-bound route | VERIFIED | transcript:docs/transcripts/opencode/routing.md |
+| combo | VERIFIED | transcript:docs/transcripts/opencode/routing.md |
+| failover | VERIFIED | transcript:docs/transcripts/opencode/routing.md |
+| restart/reconnect | VERIFIED | transcript:docs/transcripts/opencode/restart-reconnect.md |
+| key revoke/rotate | VERIFIED | transcript:docs/transcripts/opencode/error-surface-and-keys.md |
+| free-only routing | VERIFIED | transcript:docs/transcripts/opencode/free-only.md |
 
 ### antigravity
 
@@ -332,17 +367,31 @@ over real HTTP with real `fetch` — no `app.inject`, no in-process shortcut. Tw
 
 | status | cells |
 | --- | --- |
-| `VERIFIED` | 13 |
+| `VERIFIED` | 29 |
 | `PARTIAL` | 2 |
 | `BLOCKED` | 0 |
-| `UNVERIFIED` | 87 |
+| `UNVERIFIED` | 71 |
 | `N/A` | 0 |
 
-102 = 6 clients × 17 capabilities. Every non-`UNVERIFIED` cell is in the
-**`generic-openai`** row and cites a numbered check in
-`scripts/client-conformance.mjs`, which `tests/matrix-integrity.test.mjs` resolves on disk.
+102 = 6 clients × 17 capabilities. The non-`UNVERIFIED` cells sit in two rows:
+**`generic-openai`** (13 `VERIFIED`, 2 `PARTIAL`), each citing a numbered check in
+`scripts/client-conformance.mjs`, and **`opencode`** (16 `VERIFIED`), each citing a
+transcript under `docs/transcripts/opencode/`. `tests/matrix-integrity.test.mjs` resolves
+both forms on disk.
 
-**No real client has been driven against BAYZ yet.** The `generic-openai` row proves the
-protocol contract holds over real HTTP; it says nothing about how OpenCode, Antigravity, or
-Hermes behave, and every Core 3 cell is still `UNVERIFIED`. The gate 9H Task 6 builds is
-expected to block a release from this state.
+**One real client has now been driven against BAYZ.** The `opencode` row was filled by
+`scripts/verify-opencode.mjs`, which runs the actual `opencode` binary (v1.18.23) as a
+child process against a real listener — and it found **three real defects that the 55
+generic protocol checks could not see**: `stream_options` refused outright, streamed
+`tool_calls` silently dropped, and a 1 KiB tool-description cap that no real agent client
+could satisfy. All three are fixed with regression tests. That is the argument for
+real-client verification over protocol conformance alone, stated as a measured result
+rather than a principle.
+
+`opencode/models.list` stays `UNVERIFIED` **by measurement, not omission**: the client
+reads its own config `models` map and never calls `GET /v1/models`, so BAYZ's discovery
+endpoint is genuinely not exercised by it. Promoting it because `opencode models bayz`
+printed the right thing would be exactly the fake claim this matrix exists to prevent.
+
+Antigravity and Hermes remain entirely `UNVERIFIED`, so the Core 3 gate 9H Task 6 builds
+is still expected to block a release from this state.

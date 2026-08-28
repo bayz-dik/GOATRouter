@@ -5,7 +5,7 @@ Four guides, one per client row in the compatibility matrix:
 | guide | client on this host | matrix row |
 | --- | --- | --- |
 | [`generic-openai.md`](generic-openai.md) | any OpenAI-compatible client | 13 VERIFIED, 2 PARTIAL, 2 UNVERIFIED |
-| [`opencode.md`](opencode.md) | present, `1.18.23` | all 17 cells UNVERIFIED |
+| [`opencode.md`](opencode.md) | present, `1.18.23` | **16 VERIFIED, 1 UNVERIFIED** |
 | [`hermes.md`](hermes.md) | present, `Hermes Agent v0.20.5` | all 17 cells UNVERIFIED |
 | [`antigravity.md`](antigravity.md) | **absent** | all 17 cells UNVERIFIED |
 
@@ -21,9 +21,12 @@ checks. That is what BAYZ *does*. Whether a **specific client** works against it
 separate question, answered only by running that client, and recorded cell by cell in
 [`../superpowers/2026-08-27-bayz-client-compatibility-matrix.md`](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md).
 
-Right now **no real client has been driven against BAYZ.** Every cell for `opencode`,
-`hermes`, and `antigravity` is `UNVERIFIED`. Each guide says so at the top rather than
-implying otherwise.
+**OpenCode has now been driven against BAYZ for real** — `scripts/verify-opencode.mjs`
+runs the actual binary and 16 of its 17 cells cite a transcript under
+`docs/transcripts/opencode/`. Doing so found three defects the 55 generic protocol checks
+could not see, which is the case for real-client verification stated as a result rather than
+a principle. `hermes` and `antigravity` are still entirely `UNVERIFIED`; their guides say so
+at the top rather than implying otherwise.
 
 Where a guide shows a client-side config file, that file was **read from this machine**.
 Where a client is not installed, the guide says its configuration form is undocumented here
