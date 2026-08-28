@@ -20,9 +20,9 @@
     Migration numbering **settled**: 9D took v7, so 9E takes v8. Spec ledger and both
     plan texts record it.
   - 9E Multi-Proxy Easy UX: **COMPLETE**, Tasks 1–8 plus the free-first amendment.
-  - 9F Fortress Security: **IN PROGRESS.** Tasks 1-8 **COMPLETE** (`851dc68`,
-    `d9340c7`, `83d169b`, `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, + Task 8).
-    Task 9 is next and **NOT STARTED**.
+  - 9F Fortress Security: **COMPLETE**, Tasks 1–9 (`851dc68`, `d9340c7`, `83d169b`,
+    `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, `40b517b`, + Task 9), `runtime:verify`
+    green.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
   - 9G–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
@@ -42,8 +42,7 @@
   - `docs/superpowers/plans/2026-08-27-phase9c-client-identity-scoped-keys.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9d-custom-provider-completeness.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9e-multi-proxy-easy-ux.md` — DONE
-  - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — **IN PROGRESS,
-    Tasks 1–8 done, Task 9 next**
+  - `docs/superpowers/plans/2026-08-27-phase9f-fortress-security.md` — DONE
   - `docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`
   - `docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`
   - `docs/superpowers/plans/2026-08-27-phase9i-fuzz-chaos-load-soak.md`
@@ -64,19 +63,21 @@
 
 ## Verified totals
 
-Current as of 9F Task 8. Every figure below was measured on this device, not carried
+Current as of 9F Task 9. Every figure below was measured on this device, not carried
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
-- `@bayz/storage`: 233 tests pass (schema is **v11**).
+- `@bayz/storage`: 246 tests pass (schema is **v11**).
 - `@bayz/providers`: 286 tests pass.
 - `@bayz/proxy`: 121 tests pass.
 - `@bayz/router`: 288 tests pass.
 - `@bayz/server`: 319 tests pass (includes the `/api/health` Phase 1 contract guard).
 - `@bayz/identity`: 69, `@bayz/gateway`: 74.
-- `@bayz/dashboard`: 253 tests pass across 17 files.
+- `@bayz/dashboard`: 340 tests pass across 23 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
 - `node scripts/api-smoke.mjs`: 70/70 against a **real listener** driven by real `fetch`.
+- `node scripts/security-smoke.mjs`: **82/82** against a real verified-TLS listener,
+  three spawned entry-point boots, a real upstream origin, and a 200-request burst.
 
 ### Known pre-existing flakes
 
@@ -1297,7 +1298,7 @@ identity → providers → proxy → gateway → router → dashboard → server
 - **The dashboard shows a key as selectable text.** Correct given no clipboard API
   over HTTP, but it is in the DOM until acknowledged, so a screen recording captures it.
 
-## Phase 9F Fortress Security — as built so far
+## Phase 9F Fortress Security — as built
 
 ### Task 1 — OS-backed key providers (`851dc68`)
 
@@ -1619,16 +1620,92 @@ Verified: `@bayz/router` **288/288**, `@bayz/proxy` **121/121**, three `tsc --no
 clean, `router-smoke` 46/46, `proxy-smoke` 39/39, `api-smoke` 70/70, `usage-smoke`
 119/119.
 
+### Task 9 — Fortress adversarial suite and security smoke
+
+`packages/storage/test/fortress-adversarial.test.ts` (13 tests) and
+`scripts/security-smoke.mjs` (82 checks).
+
+**Recovered from a SIGKILL, not rewritten.** The test file survived untracked and ran
+11/13. Both failures were **fixture faults**, corrected rather than assertions
+weakened, and a third fault was invisible to the runner entirely:
+
+1. The forged-row insert named `schema_migrations.name`. That column does not exist —
+   the table is `(version, applied_at)` — so the insert failed on the schema instead of
+   on the integrity check, which would have passed the test for the wrong reason.
+2. The independent chain recompute hashed `migration.name`, a field `Migration` does
+   not have. It now hashes version plus statements, and additionally asserts the same
+   property against the **shipped** `migrationChain`, so the test cannot pass while the
+   real function hashed version numbers alone.
+3. `blob.toString("latin1")` type-errors: `exportSecrets` returns `Uint8Array`, whose
+   `toString` takes no arguments. It is a Buffer at runtime, so the suite went green
+   while `runtime:build` failed. **`tsx` strips types — a recovered RED file has to be
+   type-checked, not just run.**
+
+**What the suite covers that the Phase 2 file does not.** Root-key custody (a swapped
+`master.key` caught at open with nothing decrypted, a wrong-length file distinguished
+as `master_key_invalid` because the operator's remedy differs, the fingerprint proven
+one-way), all six envelope columns under bit-flip and truncation, the export blob
+(wrong passphrase, five tampered offsets across header/salt/IV/tag/ciphertext, and no
+secret **name** leaked — a backup announcing `provider:openai:api_key` would tell an
+attacker what is worth targeting), the migration chain in both directions, and
+`keystoreSupport()` asserted `UNVERIFIED` on this device rather than expected to
+succeed. The last test re-asserts Phase 2's two load-bearing properties against 9F
+storage, so a 9F change that weakened either is caught even if that file were edited.
+
+**The smoke proves deployment claims, which nothing in-process can.**
+
+- The `lan`-without-TLS and `remote`-without-client-auth refusals **spawn the real
+  entry point** and assert a non-zero exit with no `Bayz Core ready` line. Calling
+  `resolvePosture` would prove the function throws. The bind address is `10.0.0.1`,
+  which this device does not hold — and does not need to, because the gate runs before
+  `listen`; depending on a real interface would make the check environment-sensitive
+  for nothing.
+- A `lan` bind **with** TLS starts, reporting `posture=lan tls=true concurrency=32` on
+  a real `https://` listener, with the token absent from the log.
+- **TLS verification stays on.** An EC PKI with an IP SAN, client trusting the test CA.
+  `rejectUnauthorized: false` would prove the listener speaks TLS and nothing about
+  which certificate it serves. `servername` is deliberately unset — RFC 6066 forbids an
+  IP in SNI.
+- Signing: accepted, then the identical request replayed → `signature_replayed`; a
+  ten-minute-old timestamp → `signature_stale`; a body signed for one payload and sent
+  with another → `signature_invalid`; a signature under the wrong key refused. The
+  signature is produced by the **shipped** `signRequest`, not reimplemented — a test
+  that builds its own proves two implementations agree, not that ours is right.
+- Root-key rotation is proven by a **chat that authenticates afterwards**, with the
+  upstream receiving the same credential. `credentialPresent === true` would be
+  satisfied by a row that no longer decrypts. `rotated` is pinned at exactly **2**:
+  only the provider credential and the proxy password are under custody, because
+  `resolveApiToken` deliberately does not copy a `BAYZ_API_TOKEN` into the database.
+  The first draft asserted three and was wrong about the system.
+- Revocation is honest erasure: the next chat goes out with **no** Authorization header
+  rather than with a stale credential.
+- A **200-request burst** through the router — not the HTTP API, whose window limiter
+  would refuse most of them long before the outbound cap mattered — against an origin
+  that **holds** every request, so the peak reflects simultaneous upstream work.
+  Measured peak **8** against a cap of 8, zero permits leaked, zero waiters queued.
+- Disk and log scans distinguish two scopes on purpose. A completion is *supposed* to
+  appear in a response body, so one combined scan would either fail on correct
+  behaviour or get weakened until it proved nothing: prompt and completion are asserted
+  absent from the **logs**, while credentials, the token, and the TLS private key are
+  absent from logs **and** every body. A positive check confirms the completion did
+  reach a body, so the body scan is known to read real content. The root key is scanned
+  as **32 raw bytes read from `master.key`** — under secure-file custody there is no hex
+  string to grep for, and looking for one that never existed is a check that cannot
+  fail.
+
+**The smoke was inverted to prove it can fail.** With `requireSigning: false` and the
+cap raised to 512, 10 checks went red — every signing refusal plus a measured upstream
+peak of **47**. Both were then restored.
+
+Verified: `@bayz/storage` **246/246**, `runtime:verify` exits 0 (all eleven builds),
+`security-smoke` **82/82**, `storage-smoke` 42/42, `api-smoke` 70/70,
+`git diff --check` clean.
+
 ### 9F resume point
 
-Task 9 — fortress adversarial suite and security smoke. **NOT STARTED.** Next concrete
-step: write RED `packages/storage/test/fortress-adversarial.test.ts` — the Phase 2
-adversarial suite still passing unchanged; a swapped `master.key` detected before any
-ciphertext is touched; a bit-flip in each of six columns failing closed; an export blob
-refused into a database with a different root key without the passphrase; the migration
-hash chain detecting a forged `schema_migrations` row; and `keystoreSupport()` asserted to
-report `UNVERIFIED` on this device rather than expected to succeed. Then
-`scripts/security-smoke.mjs` against real listeners.
+Phase 9F is **COMPLETE**. Next: **9G Agent / Tool Injection Security**, plan
+`docs/superpowers/plans/2026-08-27-phase9g-agent-tool-injection-security.md`, Task 1,
+**NOT STARTED**.
 
 ## Phase 9 GOAT — planning state
 

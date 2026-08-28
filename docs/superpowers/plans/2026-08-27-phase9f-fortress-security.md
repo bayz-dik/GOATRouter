@@ -406,19 +406,58 @@ and the HMAC is what makes it visible.
 
 **Create:** `packages/storage/test/fortress-adversarial.test.ts`, `scripts/security-smoke.mjs`
 
-- [ ] RED `fortress-adversarial.test.ts`: the existing Phase 2 adversarial suite still passes unchanged; a swapped `master.key` is detected before ciphertext is touched; a bit-flip in each of six columns fails closed; an export blob cannot be imported into a database with a different root key without the passphrase; the migration hash chain detects a forged `schema_migrations` row; `keystoreSupport()` reports `UNVERIFIED` on this device and the test asserts that rather than expecting success.
-- [ ] `scripts/security-smoke.mjs`: real listener on loopback proving today's posture; a second listener attempting `lan` bind without TLS proving startup failure with a non-zero exit; a third with TLS proving success; a real HTTPS chat; a signed request accepted and a replayed one refused; root-key rotation with every secret still readable; a credential rotation and a revocation; a concurrency burst of 200 requests proving the cap holds and no socket leaks; scan db/wal/shm/logs for the root key, both credentials, and the TLS private key.
-- [ ] Verify: `node scripts/security-smoke.mjs` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add Bayz fortress adversarial suite and security smoke`
+- [x] RED `fortress-adversarial.test.ts`: the existing Phase 2 adversarial suite still passes unchanged; a swapped `master.key` is detected before ciphertext is touched; a bit-flip in each of six columns fails closed; an export blob cannot be imported into a database with a different root key without the passphrase; the migration hash chain detects a forged `schema_migrations` row; `keystoreSupport()` reports `UNVERIFIED` on this device and the test asserts that rather than expecting success.
+- [x] Verify RED. The file survived a SIGKILL mid-task and was recovered rather than rewritten: 11/13 passing, both failures **fixture faults**, corrected rather than assertions weakened. The forged-row insert named a `schema_migrations.name` column that does not exist (the table is `(version, applied_at)`), so it failed on the schema instead of on the integrity check — which would have passed the test for the wrong reason. The independent chain recompute hashed `migration.name`, a field `Migration` does not have. A third fault was only visible to `tsc`, not to the runner: `blob.toString("latin1")` type-errors because `exportSecrets` returns `Uint8Array`, whose `toString` takes no arguments — it happens to be a Buffer at runtime, so the suite passed while the build failed.
+- [x] `scripts/security-smoke.mjs`: real listener on loopback proving today's posture; a second listener attempting `lan` bind without TLS proving startup failure with a non-zero exit; a third with TLS proving success; a real HTTPS chat; a signed request accepted and a replayed one refused; root-key rotation with every secret still readable; a credential rotation and a revocation; a concurrency burst of 200 requests proving the cap holds and no socket leaks; scan db/wal/shm/logs for the root key, both credentials, and the TLS private key.
+- [x] Verify: `node scripts/security-smoke.mjs` exits 0 (**82/82**); `npm run runtime:verify` exits 0; `git diff --check` clean. The smoke was **inverted to prove it can fail**: `requireSigning: false` and a cap of 512 turned 10 checks red (every signing refusal, plus a measured upstream peak of 47), then both were restored.
+- [x] Commit — `test: add Bayz fortress adversarial suite and security smoke`
+
+**Findings worth carrying forward:**
+- **A recovered RED file must be type-checked, not just run.** `tsx` strips types, so a
+  test file can be fully green under the runner and still break `runtime:build`. Two of
+  the three faults here were runtime failures; the third was invisible until `tsc`.
+- **The `lan`-without-TLS refusal is proven by a spawned child, not by calling
+  `resolvePosture`.** The function throwing proves the function throws; only a process
+  exiting non-zero with no `Bayz Core ready` line proves the deployment refuses to serve.
+  The bind address for that case is `10.0.0.1`, which this device does not hold — and it
+  does not need to, because the gate runs before `listen`. Depending on a real interface
+  would have made the check environment-sensitive for no gain.
+- **TLS verification is left on.** The certificate carries an IP SAN and the client
+  trusts the test CA, so the handshake is genuinely verified. `rejectUnauthorized: false`
+  would have proven the listener speaks TLS and nothing about which certificate it serves.
+  `servername` is *not* set: RFC 6066 forbids an IP in SNI and Node deprecates it.
+- **The root key is scanned for as 32 raw bytes read from `master.key`.** Under
+  secure-file custody there is no hex string anywhere to grep for, so scanning for one
+  would have been a check that could not fail.
+- **Prompt/completion and credentials need different scan scopes.** A completion is
+  *supposed* to appear in a response body — that is the answer the client asked for — so
+  one combined scan would either fail on correct behaviour or get weakened until it
+  proved nothing. Prompt and completion are asserted absent from the **logs**;
+  credentials, the token, and the TLS key are asserted absent from logs **and** every
+  body. A positive check confirms the completion did reach a body, so the body scan is
+  known to be reading real content.
+- **Rotation count is pinned at exactly 2, not `>= 3`.** Only the provider credential
+  and the proxy password are under custody: `resolveApiToken` deliberately does not copy
+  a `BAYZ_API_TOKEN` into the database, so there is no third row. The first draft
+  asserted three and was wrong about the system rather than finding a bug.
+- **Rotation is proven by a chat that authenticates, not by a flag.** The load-bearing
+  assertion is that the upstream received the same credential *after* the root key
+  changed; `credentialPresent === true` would have been satisfied by a row that no
+  longer decrypts.
+- **The 200-request burst goes through the router, not the HTTP API.** The server-side
+  window limiter would refuse most of 200 requests long before the outbound cap was
+  exercised, and it is the outbound socket count under test. The origin **holds** every
+  request so the peak reflects genuinely simultaneous upstream work: measured peak 8
+  against a cap of 8, and 47 with the cap lifted.
 
 ## Completion checklist
 
-- [ ] OS keystore providers probe the platform; all three `UNVERIFIED` on this device, never faked.
-- [ ] Root-key rotation has an admin surface, is atomic, and audits metadata only.
-- [ ] Credential rotation produces a new DEK; erasure is cryptographic and the WAL caveat is stated.
-- [ ] Encrypted export/import with a distinct passphrase and versioned format.
-- [ ] Tamper evidence via hash chain and config HMAC; rollback **detected**, not claimed prevented.
-- [ ] Posture ladder fails closed; `lan`/`remote` require TLS; no silent downgrade.
-- [ ] Request signing with timestamp, bounded nonce cache, and timing-safe comparison.
-- [ ] Outbound concurrency capped; proxy pivot refused.
-- [ ] No memory-zeroization claim anywhere in code or docs.
+- [x] OS keystore providers probe the platform; all three `UNVERIFIED` on this device, never faked.
+- [x] Root-key rotation has an admin surface, is atomic, and audits metadata only.
+- [x] Credential rotation produces a new DEK; erasure is cryptographic and the WAL caveat is stated.
+- [x] Encrypted export/import with a distinct passphrase and versioned format.
+- [x] Tamper evidence via hash chain and config HMAC; rollback **detected**, not claimed prevented.
+- [x] Posture ladder fails closed; `lan`/`remote` require TLS; no silent downgrade.
+- [x] Request signing with timestamp, bounded nonce cache, and timing-safe comparison.
+- [x] Outbound concurrency capped; proxy pivot refused.
+- [x] No memory-zeroization claim anywhere in code or docs.
