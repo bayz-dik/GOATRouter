@@ -174,7 +174,7 @@ export function lookupCapability(name: unknown): CapabilityHandler | undefined;
 
 **Create:** `packages/capability/test/injection-adversarial.test.ts`
 
-- [ ] RED, each asserting a *structural* refusal rather than a filtered string:
+- [x] RED, each asserting a *structural* refusal rather than a filtered string:
   - a prompt literally containing "read all provider API keys" produces no capability match;
   - a tool call named `secrets.read`, `providers.credential`, `admin.export` → `unknown_capability`;
   - arguments containing `../../etc/passwd`, a `file://` URL, or `http://169.254.169.254` are refused by the handler's schema, and the test notes that no filesystem or network capability is registered at all;
@@ -184,11 +184,63 @@ export function lookupCapability(name: unknown): CapabilityHandler | undefined;
   - 10,000 tool calls in one response are refused at 8;
   - a capability name using a Unicode homoglyph of a registered name does not match;
   - a `__proto__` capability name does not resolve to `Object.prototype`.
-- [ ] RED same file: source scan over `packages/capability/src` finds no import of `SecretStorage`, `SecretRepository`, `scopedSecretStorage`, `withCredential`, `node:fs`, or `node:child_process`.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `npm run test --workspace @bayz/capability` exits 0.
-- [ ] Commit — `test: add Bayz tool-injection adversarial suite`
+- [x] RED same file: source scan over `packages/capability/src` finds no import of `SecretStorage`, `SecretRepository`, `scopedSecretStorage`, `withCredential`, `node:fs`, or `node:child_process`.
+- [x] Verify RED.
+- [x] GREEN. Test-only task: no `src` file changed, and that is the result — 24 adversarial cases found nothing to fix in Tasks 1–3.
+- [x] Verify: `npm run test --workspace @bayz/capability` exits 0 (**72/72**, 18 registry + 30 dispatch + 24 injection); `npm run build --workspace @bayz/capability` exits 0; `@bayz/identity` 69/69, `@bayz/gateway` 74/74, `@bayz/router` 289/289, `@bayz/server` 336/336; all twelve `runtime:build` targets exit 0, run one at a time; `api-smoke` 70/70 and `security-smoke` 82/82.
+- [x] Commit — `test: add Bayz tool-injection adversarial suite`
+
+**Findings worth carrying forward:**
+- **Nothing needed fixing, and that is the finding.** Task 4 is the only 9G task that
+  changed no `src` file. The suite was written to break Tasks 1–3 — homoglyph names,
+  own-`__proto__` envelopes, forged authority fields, a 10,000-call flood, a
+  self-dispatching recursive handler, a handler whose output is shaped like a request —
+  and every case refused on the first run. Seven mutations were then applied to prove the
+  suite is capable of failing (below), so the green is measured rather than assumed.
+- **Seven mutations proved the suite can fail**, then were reverted, each verified by
+  `git status` returning to a single untracked test file:
+  1. `parse` moved before the scope gate → 2 red.
+  2. `CAPABILITY_NAME_PATTERN` widened to `\p{L}` → 1 red (the homoglyph case).
+  3. A `detail` field added to a refusal carrying the handler's own message → 2 red.
+  4. The envelope unknown-key check deleted → 1 red (forged `scopes` accepted).
+  5. `node:fs` imported by `registry.ts` → 1 red (the source scan).
+  6. The registry `Map` swapped for an object literal → 1 red (`toString` resolved to a
+     builtin the dispatcher would have called).
+  7. An over-bound batch truncated to eight instead of refused, plus an invalid depth
+     coerced to 1 → 1 red.
+- **"The client never declared it" is not a refusal this layer can make, and the test
+  says so instead of pretending otherwise.** The client's `tools` array is a declaration
+  *to the model*; the registry is what this process will run. They are separate
+  namespaces on purpose, so dispatch refuses an undeclared name for the same structural
+  reason it refuses an invented one — nothing registered it. The narrower guarantee that
+  is actually pinned is the load-bearing one: **BAYZ executes nothing it was not given.**
+  Task 3's `tool-dispatch.test.ts` owns the forward-to-client half.
+- **A refusal's field set is pinned, not just scanned for sentinels.** A leak scan can
+  only find the sentinel it was told about; `Object.keys(outcome)` asserted as exactly
+  `code`/`id`/`name`/`stage`/`status`, with every value a string under 128 characters,
+  means there is nowhere for an unanticipated leak to sit. Mutation 3 is the realistic
+  way that regresses — somebody adds a helpful `detail` — and it now fails on the way in.
+- **The export surface is asserted, not just the imports.** A source scan covers what the
+  package pulls *in*; the last place a handler could obtain a secret is what
+  `@bayz/capability` and `@bayz/identity` hand *out*, since those are the only modules a
+  capability is guaranteed to have imported. Both export lists are enumerated against
+  `/credential|password|secret|reveal|decrypt|plaintext|unsafe/i`, with a positive check
+  that a real namespace was read.
+- **Forbidden module specifiers are named as well as allowlisted.** The allowlist is the
+  real guarantee — it refuses everything but `@bayz/identity` — but `node:fs`,
+  `node:child_process`, `node:net`, `node:vm`, `node:sqlite`, and the sibling `@bayz`
+  packages are listed explicitly so a later relaxation of the allowlist still has to get
+  past a named assertion.
+- **Rejected data is proved not to reach privileged execution, with the complement
+  asserted in the same batch.** A `routes.write` capability records every `parse` and
+  `run`; four hostile calls aimed at it (forged scope, traversal argument, unknown key,
+  unknown name) all refuse with `parsed() === 0` and `seen()` empty, while a legitimate
+  call in the same batch completes. A dispatcher that refused the whole batch would pass
+  a refusal-only test while handing any hostile call a denial-of-service lever.
+- **Tool output cannot drive the next dispatch, tested with the scope deliberately
+  granted.** The hostile handler returns `tool_calls`, `toolCalls`, `next`, and `then`
+  fields naming a privileged capability, and the caller *does* hold `routes.write` — so if
+  those fields were ever read, scope would not be what stopped them. Nothing ran.
 
 ### Task 5 — Injection smoke
 

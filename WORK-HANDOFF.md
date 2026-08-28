@@ -24,13 +24,17 @@
     `a850dd2`, `36c40bc`, `6f4782b`, `9541f6f`, `40b517b`, + Task 9), `runtime:verify`
     green.
     Migration numbering: 9F Task 2 took **v11** (`security_audit`).
-  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–3 **COMPLETE**
-    (`0539536`, `d243a3f`, + Task 3). Task 4 is next and **NOT STARTED**.
+  - 9G Agent / Tool Injection Security: **IN PROGRESS.** Tasks 1–4 **COMPLETE**
+    (`0539536`, `d243a3f`, `ab0fbc5`, + Task 4). Task 5 (injection smoke) is next and
+    **NOT STARTED**.
     New package `@bayz/capability`; `runtime:build` is now **twelve** targets, with
     `@bayz/capability` after `@bayz/identity` per the spec §4 order.
     Task 3 also fixed a **live 9B wire bug**: `wireBody` emitted the internal camelCase
     `toolCalls`/`toolCallId` instead of `tool_calls`/`tool_call_id`, so every tool
     roundtrip reached the upstream with the call and result unrecognisable.
+    Task 4 is the only 9G task that changed **no `src` file**: 24 adversarial cases were
+    written to break Tasks 1–3 and all refused on the first run, so seven mutations were
+    applied and reverted to prove the suite can fail rather than asserting it.
   - 9H–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -70,7 +74,7 @@
 
 ## Verified totals
 
-Current as of 9G Task 3. Every figure below was measured on this device, not carried
+Current as of 9G Task 4. Every figure below was measured on this device, not carried
 forward from a plan.
 
 - `@bayz/telemetry`: 55 tests pass.
@@ -79,12 +83,29 @@ forward from a plan.
 - `@bayz/proxy`: 121 tests pass.
 - `@bayz/router`: 289 tests pass.
 - `@bayz/server`: 336 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: 48.
+- `@bayz/identity`: 69, `@bayz/gateway`: 74, `@bayz/capability`: **72** (18 registry +
+  30 dispatch + 24 injection adversarial).
 - `@bayz/dashboard`: 340 tests pass across 23 files.
 - `@bayz/contracts`: 3, `@bayz/security`: 6.
+- All **twelve** `runtime:build` targets exit 0, verified one workspace at a time rather
+  than through `runtime:verify` — see the verification note below.
 - `node scripts/api-smoke.mjs`: 70/70 against a **real listener** driven by real `fetch`.
 - `node scripts/security-smoke.mjs`: **82/82** against a real verified-TLS listener,
   three spawned entry-point boots, a real upstream origin, and a 200-request burst.
+
+### Verification is run sequentially on this device
+
+`npm run runtime:verify` fans out `npm run test --workspaces` and then twelve builds,
+which on this ARM64 Termux host spawns enough concurrent Node processes to exhaust the
+futex table: a run died with `The futex facility returned an unexpected error code`
+followed by SIGKILL, with several GB of RAM still free. It is a process/thread-count
+limit, not memory pressure.
+
+So verification is done as bounded sequential steps — one `npm run test --workspace …`
+per package, then one `npm run build --workspace …` per target — which produces the same
+coverage with a flat process count. Totals above were measured that way. `runtime:verify`
+as a single command remains unusable on this device and should not be treated as the
+gate; the per-workspace sequence is.
 
 ### Known pre-existing flakes
 
@@ -856,7 +877,9 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9C Per-Client Security | COMPLETE | `@bayz/identity` 69 tests, `identity-smoke` 74/74 |
 | 9D Custom Provider Completeness | COMPLETE | `@bayz/providers` 256 tests, `custom-provider-smoke` 73/73 |
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
-| 9F–9L | NOT STARTED | — |
+| 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
+| 9G Agent / Tool Injection Security | **IN PROGRESS** | Tasks 1–4 done; `@bayz/capability` 72 tests; Task 5 (injection smoke) next |
+| 9H–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
 
@@ -1915,17 +1938,127 @@ Verified: `@bayz/server` **336/336** (up from 319), `@bayz/router` **289/289** (
 `router-smoke` 46/46. `apps/server/src/tool-loop.ts` touches no secret surface — no
 `SecretStorage`, no `withCredential`, no `node:fs`, no `node:child_process`.
 
+### Task 4 — Injection adversarial suite
+
+`packages/capability/test/injection-adversarial.test.ts`, 24 tests. **No `src` file
+changed** — the only 9G task where that is true, and it is the result rather than an
+omission: the suite was written to break Tasks 1–3 and every case refused on the first
+run.
+
+Each case asserts a **structural** refusal. Something fails because the capability does
+not exist, or because the caller's scope does not include it, or because a bound was
+exceeded — never because a string matched a denylist. `secrets.read` and a deliberately
+misspelled `s3cr3ts_r34d` fail identically, for the same reason: neither is in the `Map`.
+A control capability is registered in nearly every test and *does* run, so no refusal can
+be passing because dispatch is broken.
+
+What the suite proves, grouped as an auditor would read it:
+
+- **Injection cannot escalate.** The hostile prompt is *text*; there is no eval, no name
+  resolution from prose, no intent mapping. Every phrasing of "read all provider API
+  keys" — and every individual word of it — resolves to `undefined`, and the registry
+  still contains exactly what was registered.
+- **Unknown and unauthorized calls fail closed.** `unknown_capability` at
+  `dispatch-lookup` even for an `admin` principal, because the refusal is about
+  existence and the widest available authority must not change it.
+  `capability_forbidden` at `dispatch-scope` for a real capability the caller lacks,
+  with the handler's `parse` counter still at zero.
+- **Forged arguments and forged authority are rejected.** 19 hostile `city` values
+  (traversal, `file://`, `169.254.169.254`, `metadata.google.internal`, gopher/Redis,
+  command substitution, a NUL, a header-injection newline) all refuse at
+  `dispatch-parse`; a call carrying `scopes`, `requiredScope`, `principal`, `authorized`,
+  or an own `__proto__` key refuses as `invalid_tool_call`. Wildcards — `*`, `all`,
+  `routes.*`, `ROUTES.WRITE`, whitespace- and zero-width-padded variants — authorize
+  nothing, because the vocabulary has ten words and none is a wildcard.
+- **Unknown argument keys are rejected, not trimmed.** Silently trimming would leave a
+  caller believing a field took effect and would hide the fact that the model sent
+  something unexpected.
+- **Output stays untrusted.** A handler returning `scopes`, `grantedScopes`,
+  `principal`, `authorized`, plus embedded `tool_calls`/`toolCalls`/`next`/`then` naming
+  a privileged capability drives nothing. That test grants the caller `routes.write`
+  **on purpose**: if those fields were ever read, scope would not be what stopped them.
+- **Nothing leaks through a refusal.** Sentinel scans plus a pinned field set —
+  `Object.keys(outcome)` is exactly `code`/`id`/`name`/`stage`/`status`, every value a
+  string under 128 characters — so there is nowhere for an unanticipated leak to sit. The
+  `CapabilityError` class is checked directly too, including its stack.
+- **Rejected data reaches no privileged execution.** A `routes.write` capability records
+  every `parse` and `run`; four hostile calls aimed at it in one batch refuse with
+  `parsed() === 0` and `seen()` empty, while a legitimate call in the same batch
+  completes. The complement matters: a dispatcher that refused the whole batch would pass
+  a refusal-only test while handing any hostile call a denial-of-service lever.
+- **The boundary is structural.** The source scan allowlists module specifiers to
+  relative paths plus `@bayz/identity`, additionally names `node:fs`,
+  `node:child_process`, `node:net`, `node:tls`, `node:http(s)`, `node:vm`,
+  `node:worker_threads`, `node:sqlite` and the sibling `@bayz` packages, bans the
+  secret-store identifiers and `eval` / `new Function` / `require(` / `import(`, and
+  asserts positively that it read the real registry source. The manifest is pinned so a
+  new dependency cannot arrive via a file the glob misses, and both `@bayz/capability`
+  and `@bayz/identity` **export** lists are checked against
+  `/credential|password|secret|reveal|decrypt|plaintext|unsafe/i` — the imports say what
+  the package can reach, the exports say what a handler can be handed.
+
+Decisions worth carrying forward:
+
+- **"The client never declared it" is not a refusal this layer can make, and the test
+  says so instead of pretending otherwise.** A client's `tools` array is a declaration to
+  the *model*; the registry is what this process will run. Separate namespaces on
+  purpose, so an undeclared name refuses for the same structural reason an invented one
+  does — nothing registered it. The guarantee actually pinned here is the narrower,
+  load-bearing one: **BAYZ executes nothing it was not given**, including when a tool
+  *definition* is passed to `registerCapability`. Task 3's `tool-dispatch.test.ts` owns
+  the forward-to-client half.
+- **The source scan runs on comment-stripped source, and that is not a loosening.** A raw
+  text scan fails on `dispatch.ts`, which explains in prose why its bounds match
+  `@bayz/router`'s — a legitimate cross-reference with no import behind it. Banning the
+  *words* would push authors toward vaguer comments, so what is banned is the code, with
+  module specifiers additionally checked on their own so an import cannot hide inside
+  something the stripper mangles.
+- **The homoglyph case asserts both halves.** The lookalike does not resolve to the real
+  capability *and* cannot be registered, because the name pattern is ASCII-only — nine
+  variants including Cyrillic е/р, fullwidth `ｗ` and `＿`, and zero-width and
+  non-breaking padding.
+- **The recursion case is genuinely recursive.** The handler dispatches to *itself* and
+  asks for ten levels; the recorded depth sequence is exactly `[1, 2, 3, 4]`, and the
+  fifth level's refusal appears as `dispatch_depth_exceeded` at `dispatch-depth-bound`
+  inside the returned outcome.
+- **The flood case asserts the bound is a bound.** 10,000 calls throw
+  `too_many_tool_calls` with `parsed() === 0`, and then the first eight of the same array
+  run successfully — otherwise a blanket refusal would pass.
+
+**Seven mutations proved the suite can fail**, then were reverted, each time verified by
+`git status` returning to a single untracked test file:
+
+1. `parse` moved before the scope gate → 2 red.
+2. `CAPABILITY_NAME_PATTERN` widened to `\p{L}` → 1 red (homoglyph).
+3. A `detail` field added to a refusal carrying the handler's own message → 2 red.
+4. The envelope unknown-key check deleted → 1 red (forged `scopes` accepted).
+5. `node:fs` imported by `registry.ts` → 1 red (source scan).
+6. The registry `Map` swapped for an object literal → 1 red (`toString` resolved to a
+   builtin the dispatcher would have called).
+7. An over-bound batch truncated to eight instead of refused, plus an invalid depth
+   coerced to 1 → 1 red.
+
+Verified: `@bayz/capability` **72/72** (18 registry + 30 dispatch + 24 injection),
+`@bayz/identity` 69/69, `@bayz/gateway` 74/74, `@bayz/router` 289/289, `@bayz/server`
+336/336, all twelve `runtime:build` targets exit 0 run one at a time, `api-smoke` 70/70,
+`security-smoke` 82/82.
+
 ### 9G resume point
 
-Task 4 — injection adversarial suite. **NOT STARTED.** Next concrete step: RED
-`packages/capability/test/injection-adversarial.test.ts`, each case asserting a
-*structural* refusal rather than a filtered string — a hostile prompt producing no
-capability match, `secrets.read` / `providers.credential` / `admin.export` all
-`unknown_capability`, traversal and `file://` and `169.254.169.254` arguments refused by
-schema with a note that no filesystem or network capability is registered at all, a
-Unicode homoglyph not matching, `__proto__` not resolving — plus a source scan over
-`packages/capability/src` for `SecretStorage`, `scopedSecretStorage`, `withCredential`,
-`node:fs`, and `node:child_process`.
+Task 5 — injection smoke. **NOT STARTED.** Next concrete step: create
+`scripts/injection-smoke.mjs`, non-mocked, against a real listener and a real origin
+scripted to emit hostile tool calls. It must prove: a call for
+`read_provider_credentials` is refused with `unknown_capability`; a call with a traversal
+argument is refused; a chat-scope identity cannot dispatch anything requiring
+`providers.write`; a provider credential sentinel is unreachable through every hostile
+path attempted; and a scan of `bayz.db` / `-wal` / `-shm`, the logs, and every response
+body finds zero occurrences of the credential and prompt sentinels. Then
+`node scripts/injection-smoke.mjs` exits 0, `git diff --check` clean, and commit
+`test: add Bayz injection smoke`.
+
+Note for that task: run verification as the bounded per-workspace sequence described
+under "Verification is run sequentially on this device" — `npm run runtime:verify` as a
+single command SIGKILLs this host.
 
 ## Phase 9 GOAT — planning state
 
