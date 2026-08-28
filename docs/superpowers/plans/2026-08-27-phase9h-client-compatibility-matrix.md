@@ -8,7 +8,7 @@
 
 **Goal:** A release-blocking compatibility matrix for OpenCode, Antigravity, Hermes Agent, and generic OpenAI-compatible clients — with `UNVERIFIED` never collapsed into `PASS`.
 
-**Measured device reality:** `opencode` is present on this machine at `/usr/local/bin/opencode`. `antigravity`, `hermes`, `cline`, and `aider` are **absent** and cannot be executed here. A `command -v continue` hit resolves to the **shell builtin**, not the Continue client — Continue is not installed, and there is no `~/.continue`. Any cell that cannot be executed is `UNVERIFIED` with the reason recorded.
+**Measured device reality:** `opencode` is present on this machine at `/usr/local/bin/opencode` (`--version` → `1.18.23`). **CORRECTED at Task 1:** `hermes` is also **present**, at `/root/.local/bin/hermes` (`--version` → `Hermes Agent v0.20.5`); this plan and spec §12 both recorded it as absent, which was wrong. `antigravity`, `cline`, and `aider` are **absent** and cannot be executed here. A `command -v continue` hit resolves to the **shell builtin**, not the Continue client — Continue is not installed, and there is no `~/.continue`. Any cell that cannot be executed is `UNVERIFIED` with the reason recorded. **Presence is not verification:** every present client's row is still `UNVERIFIED` until a real run produces a transcript.
 
 ---
 
@@ -18,14 +18,75 @@
 **Test:** `tests/matrix-integrity.test.mjs`
 
 **Rows:** `opencode`, `antigravity`, `hermes`, `generic-openai`, `continue` (opportunistic, not installed here), `cline` (opportunistic, not installed here)
-**Columns:** configure, authenticate, models.list, chat, stream, tool call, tool result roundtrip, large request, cancel, error surface, custom provider, proxy-bound route, combo, failover, restart/reconnect, key revoke/rotate
+**Columns:** configure, authenticate, models.list, chat, stream, tool call, tool result roundtrip, large request, cancel, error surface, custom provider, proxy-bound route, combo, failover, restart/reconnect, key revoke/rotate, **free-only routing** (the §25 amendment column, applied at Task 1 rather than retro-fitted)
 
-- [ ] RED `tests/matrix-integrity.test.mjs`: the matrix file exists; every cell is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; no cell is empty, `TODO`, `TBD`, `?`, or `-`; every `PASS` cell carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; the Core 3 rows are present; a `PASS` without evidence fails the test.
-- [ ] Note: 9I, 9J, and 9K each specify this same regex for their own matrices. 9L Task 1 builds `scripts/evidence.mjs` as the single source and refactors all four to import it. Write the regex inline here so this subprogram stands alone, and expect it to be replaced rather than copied further.
-- [ ] Verify RED: `node --test tests/matrix-integrity.test.mjs` fails because the file does not exist.
-- [ ] GREEN: write the matrix with every cell initialised to `UNVERIFIED` and a legend defining the four statuses and the evidence format.
-- [ ] Verify: `node --test tests/matrix-integrity.test.mjs` exits 0.
-- [ ] Commit — `docs: add the Bayz client compatibility matrix`
+- [x] RED `tests/matrix-integrity.test.mjs`: the matrix file exists; every cell is exactly one status from a closed vocabulary (implemented as `VERIFIED` / `PARTIAL` / `BLOCKED` / `UNVERIFIED` / `N/A` — see the deviation note below, which supersedes the `PASS`/`FAIL` wording); no cell is empty, `TODO`, `TBD`, `?`, or `-`; every `PASS` cell carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; the Core 3 rows are present; a `PASS` without evidence fails the test.
+- [x] Note: 9I, 9J, and 9K each specify this same regex for their own matrices. 9L Task 1 builds `scripts/evidence.mjs` as the single source and refactors all four to import it. Write the regex inline here so this subprogram stands alone, and expect it to be replaced rather than copied further. — **done, and stated in both the test and the matrix legend.**
+- [x] Verify RED: `node --test tests/matrix-integrity.test.mjs` fails because the file does not exist. Measured: **9/9 fail**, all `ENOENT` on the matrix path — the file-level failure a missing document produces.
+- [x] GREEN: write the matrix with every cell initialised to `UNVERIFIED` and a legend defining the statuses and the evidence format. **102 cells** (6 clients × 17 capabilities), every one `UNVERIFIED` with a measured reason.
+- [x] Verify: `node --test tests/matrix-integrity.test.mjs` exits 0 (**9/9**). `tests/runtime-structure.test.mjs` unaffected (**1/1**); 10/10 together.
+- [x] Commit — `docs: add the Bayz client compatibility matrix`
+
+**Amendment applied at Task 1 rather than deferred.** The §25 `free-only routing` column is
+in the required-capability list from the start, so the seventeenth column cannot be omitted
+and then retro-fitted. The plan's separate amendment step for Task 1 is therefore already
+satisfied; Tasks 2 and 4 still owe their own amendment work.
+
+**Status vocabulary — a deliberate deviation from the plan text.** The plan specified
+`PASS` / `FAIL` / `UNVERIFIED` / `N/A`. The implemented vocabulary is
+**`VERIFIED` / `PARTIAL` / `BLOCKED` / `UNVERIFIED` / `N/A`**, and `PASS`/`FAIL` are
+refused as placeholders so the old words cannot creep back:
+
+- `PASS` overstates what a matrix cell can mean. A cell says "this was observed to work
+  against the real client", which is `VERIFIED`; `PASS` reads like a test result and
+  invites collapsing a green test suite into a compatibility claim.
+- **`PARTIAL` had no representation at all.** A client that streams but truncates on
+  reconnect is neither a pass nor a failure, and forcing that into `PASS` is how a real
+  limitation disappears. It now requires evidence *and* a named limit.
+- **`BLOCKED` vs `UNVERIFIED` is the load-bearing split**, and `FAIL` conflated it.
+  `BLOCKED` = tried, did not work, something was learned. `UNVERIFIED` = not tried,
+  nothing is known. An untried cell that reads like a tried one is exactly the failure 9H
+  exists to prevent.
+- `N/A` is retained unchanged, for a capability the client genuinely has no surface for.
+
+Downstream consequence recorded for 9H Task 6: `client-gate.mjs --enforce` must block on
+`BLOCKED` **and** `UNVERIFIED` for a Core 3 mandatory column, not on a single `FAIL` word.
+
+**Findings worth carrying forward:**
+- **The integrity test resolves evidence on disk, which the plan did not ask for and is
+  the check that actually matters.** A regex-only gate accepts
+  `transcript:docs/transcripts/opencode/chat.log` from a document where no such file
+  exists — so the easiest route to a green matrix would be inventing a plausible path.
+  Every citation is now `existsSync`-checked (`smoke:<name>#<n>` resolves the *script*;
+  the check number is Task 2/4's to validate by running it).
+- **A prose scan backs up the structured parse.** A `VERIFIED` written in a summary line
+  or heading is invisible to a table parser, and the document would read as a verified
+  integration while every cell said otherwise. Any `VERIFIED` outside a table row fails,
+  with a carve-out only for the legend defining the word.
+- **Unknown capability rows are refused, not ignored.** A typo'd capability name would
+  otherwise sit in the document looking covered while the real column silently went
+  missing.
+- **`BLOCKED`/`UNVERIFIED`/`N/A` need ≥12 characters of reason.** Not a style rule: it is
+  the shortest bound that excludes `n/a`, `todo`, and `see above`, which are the three
+  ways this column goes empty while looking filled. Such a cell is also refused if it
+  cites evidence, since a cell with evidence should not be claiming ignorance.
+- **A one-shot generator wrote the 102 cells and was then deleted.** Hand-typing 102 rows
+  is 102 chances to typo a capability name. The generator was verified to reproduce the
+  committed matrix byte-for-byte, then removed rather than committed — a build step for a
+  document that is now edited by hand, cell by cell, with evidence, would be a second
+  source of truth for statuses and the wrong thing to keep.
+- **Hermes is present on this host, correcting the plan and spec text.** Both recorded
+  `hermes` as absent; `/root/.local/bin/hermes` exists and reports
+  `Hermes Agent v0.20.5`. `opencode` is present at `1.18.23` as recorded. `antigravity`,
+  `cline`, and `aider` are genuinely absent, and the `continue` hit is still the **shell
+  builtin** (`type continue` → `continue is a shell builtin`, no `~/.continue`). The
+  hermes row stays `UNVERIFIED` — presence is not verification — but Task 5 can now
+  attempt it for real instead of only shipping a harness.
+- **Six mutations proved the test can fail**, then were reverted: a `VERIFIED` with a
+  hand-waved reason (2 red), a `VERIFIED` citing a well-formed but non-existent transcript
+  (1 red), a `TODO`/`-` placeholder cell (1 red), a Core 3 row renamed away (2 red), the
+  `free-only routing` column dropped from a client (1 red), and a prose "all Core 3 are
+  VERIFIED" line outside any table (1 red).
 
 ### Task 2 — Protocol conformance harness
 
@@ -94,7 +155,7 @@
 The matrix gains a seventeenth column, `free-only routing`, and Task 1's integrity
 test gains it as a required column so it cannot be omitted.
 
-- [ ] Amend Task 1's column list to include `free-only routing` and re-run `node --test tests/matrix-integrity.test.mjs`.
+- [x] Amend Task 1's column list to include `free-only routing` and re-run `node --test tests/matrix-integrity.test.mjs`. — **done at Task 1**: the column is in the integrity test's required list from the start, so all six clients carry it and it cannot be omitted. 9/9 green.
 - [ ] Amend Task 2's conformance harness with a check that a free-only route to a paid-classified provider fails `no_free_route` over real HTTP, so the `generic-openai` row's cell has a citable check number.
 - [ ] Amend Task 4's OpenCode verification to configure a free-only route and record the cell from the transcript.
 - [ ] Statuses for this column follow the same rule as every other: `UNVERIFIED` where the client cannot run here.

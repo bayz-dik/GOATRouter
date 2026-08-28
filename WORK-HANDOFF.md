@@ -39,7 +39,18 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H–9L: **NOT STARTED.**
+  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Task 1 **COMPLETE**.
+    Tasks 2–6 **NOT STARTED**.
+    `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
+    `tests/matrix-integrity.test.mjs` (9/9). **102 cells, every one `UNVERIFIED`** — no
+    client has been driven against BAYZ yet, and the document says so plainly.
+    Status vocabulary **deviates from the plan text deliberately**:
+    `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, with `PASS`/`FAIL` refused as
+    placeholders. `BLOCKED` (tried, did not work) vs `UNVERIFIED` (not tried) is the split
+    that matters. Consequence for Task 6: the gate must block on **both**.
+    Device reality corrected: **`hermes` is present** on this host
+    (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent.
+  - 9I–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -907,7 +918,8 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H–9L | NOT STARTED | — |
+| 9H Client Compatibility Matrix | **IN PROGRESS** | Task 1 done; `matrix-integrity` 9/9; 102 cells all `UNVERIFIED`; Task 2 (conformance harness) next |
+| 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
 
@@ -2174,15 +2186,138 @@ telemetry, logs, or the database, on both the rejected and the accepted path.
 ### 9G resume point
 
 **Phase 9G is COMPLETE.** Tasks 1–5, five commits: `0539536`, `d243a3f`, `ab0fbc5`,
-`400aa8d`, and Task 5.
+`400aa8d`, `de02328`.
 
-Next: **Phase 9H — Client Compatibility Matrix**, Task 1. Plan at
-`docs/superpowers/plans/2026-08-27-phase9h-client-compatibility-matrix.md`. Read the plan
-before starting; nothing in 9H has been begun.
+## Phase 9H Client Compatibility Matrix — as built so far
 
-Note for that phase: run verification as the bounded per-workspace sequence described
-under "Verification is run sequentially on this device" — `npm run runtime:verify` as a
-single command SIGKILLs this host.
+### Task 1 — Matrix document and status vocabulary
+
+`docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` and
+`tests/matrix-integrity.test.mjs` (9 tests). **102 cells — 6 clients × 17 capabilities —
+and every single one is `UNVERIFIED`.** No client has been driven against BAYZ yet, and the
+document leads with that rather than burying it.
+
+**The document's first job is to separate two things that look alike.** BAYZ *implements*
+an OpenAI-compatible gateway with streaming, tool calling, scoped identities, custom
+providers, proxy-bound routes, combos, failover, and free-only routing, all covered by 1897
+tests and 998 smoke checks. **None of that is a compatibility claim.** A capability can be
+correct at the protocol level and still fail a specific client that sends an unexpected
+header, parses a field strictly, or reconnects unusually. Implemented capability lives in
+the plans and suites; verified client behaviour lives in the matrix, and nothing enters it
+without evidence that resolves on disk.
+
+#### The status vocabulary, and why it is not the plan's
+
+The plan said `PASS` / `FAIL` / `UNVERIFIED` / `N/A`. Implemented:
+**`VERIFIED` / `PARTIAL` / `BLOCKED` / `UNVERIFIED` / `N/A`**, with `PASS` and `FAIL`
+refused as *placeholders* so the old words cannot creep back in.
+
+- **`PASS` overstates what a cell can mean.** A cell asserts "observed to work against the
+  real client" — that is `VERIFIED`. `PASS` reads like a test result, and inviting that
+  reading is inviting a green suite to be mistaken for a verified integration.
+- **`PARTIAL` had no representation at all.** A client that streams but truncates on
+  reconnect is neither a pass nor a failure; forcing it into `PASS` is how a real
+  limitation vanishes. It requires evidence *and* a named limit in the same cell.
+- **`BLOCKED` vs `UNVERIFIED` is the load-bearing distinction, and `FAIL` conflated it.**
+  `BLOCKED` = attempted, did not work, something was learned. `UNVERIFIED` = not attempted,
+  nothing is known. An untried cell that reads like a tried one is precisely the failure
+  9H exists to prevent.
+- **`N/A`** is retained for a capability the client genuinely has no surface for — demanding
+  evidence for something that cannot exist would make the gate unsatisfiable.
+
+**Consequence for 9H Task 6:** `client-gate.mjs --enforce` must block on `BLOCKED` **and**
+`UNVERIFIED` for any Core 3 mandatory column. A gate written against a single `FAIL` word
+would pass a matrix full of untried cells.
+
+#### What the integrity test enforces
+
+Nine tests, and the third property is the one that matters:
+
+1. **Shape** — all six client sections, all seventeen capabilities each, one status per
+   cell from the closed vocabulary. Placeholders (`` `` / `-` / `?` / `TODO` / `TBD`, plus
+   `PASS`/`FAIL`) are refused, and an *unrecognised* capability row is refused too, because
+   a typo'd name would otherwise sit there looking covered while the real column went
+   missing.
+2. **Evidence required** — `VERIFIED`/`PARTIAL` must cite
+   `smoke:<script>#<n>` / `test:<path>` / `transcript:<path>`, comma-separated citations all
+   of which must parse. `BLOCKED`/`UNVERIFIED`/`N/A` must instead give a reason of ≥12
+   characters — the shortest bound that excludes `n/a`, `todo`, and `see above` — and are
+   refused if they cite evidence, since a cell with evidence should not claim ignorance.
+3. **Evidence must resolve on disk.** The plan asked only for a regex. A regex accepts
+   `transcript:docs/transcripts/opencode/chat.log` in a repository where no such file
+   exists, which makes the easiest path to a green matrix inventing a plausible filename.
+   Every citation is `existsSync`-checked; `smoke:<name>#<n>` resolves the script (the check
+   *number* is Task 2/4's to validate by running it).
+
+Plus a raw-text scan: any `VERIFIED` on a line that is not a table row fails, with a
+carve-out only for the legend defining the word. A `VERIFIED` in prose or a heading is
+invisible to a table parser, and would let the document read as a verified integration
+while every cell said otherwise.
+
+#### Device reality, measured — and a correction
+
+| client | measured | plan/spec said |
+| --- | --- | --- |
+| `opencode` | **present**, `/usr/local/bin/opencode`, `1.18.23` | present ✓ |
+| `hermes` | **present**, `/root/.local/bin/hermes`, `Hermes Agent v0.20.5` | **absent ✗ — corrected** |
+| `antigravity` | absent | absent ✓ |
+| `cline`, `aider` | absent | absent ✓ |
+| `continue` | absent — the `command -v` hit is the **shell builtin**; `type continue` → `continue is a shell builtin`, no `~/.continue` | absent ✓ |
+
+Both the 9H plan and spec §12 recorded Hermes as absent. It is present. The row stays
+`UNVERIFIED` — **presence is not verification** — but Task 5 can now attempt it for real
+rather than only shipping a harness for a host that has it.
+
+#### Decisions worth carrying forward
+
+- **Row ids are the real preset identifiers** the runtime already validates
+  (`packages/identity/src/repository.ts`: `opencode`, `hermes`, `antigravity`,
+  `generic-openai`), not display names invented for a document — so a row cannot drift into
+  a marketing label. **No client-name branching exists in any runtime path and none was
+  added**; BAYZ still derives behaviour from the protocol, Accept header, body shape, and
+  scopes.
+- **The `free-only routing` column was applied at Task 1, not retro-fitted.** The §25
+  amendment adds a seventeenth column; putting it in the required list from the start means
+  it cannot be omitted and then patched in. A client that silently spends money would be a
+  compatibility failure even with every other cell green.
+- **A one-shot generator wrote the 102 cells and was then deleted.** Hand-typing 102 rows
+  is 102 chances to typo a capability name. It was verified to reproduce the committed file
+  byte-for-byte, then removed rather than committed: the matrix is now edited by hand, cell
+  by cell, with evidence, and a generator that could rewrite statuses would be a second
+  source of truth.
+- **Five conditions move a cell to `VERIFIED`**, documented in the matrix itself: a real
+  client process (not `fetch`, not `app.inject`), a real BAYZ listener with a real database
+  and a scoped identity, an observed result, captured evidence on disk, and a harness that
+  exits non-zero if it claims a cell it has no transcript for. A cell may not become
+  `VERIFIED` from a script's own opinion.
+
+**Six mutations proved the test can fail**, then were reverted: a `VERIFIED` with a
+hand-waved reason (2 red), a `VERIFIED` citing a well-formed but non-existent transcript
+(1 red), a `TODO`/`-` placeholder (1 red), a Core 3 row renamed away (2 red), the
+`free-only routing` column dropped from one client (1 red), and a prose "all Core 3 clients
+are VERIFIED and release-ready" line outside any table (1 red).
+
+Verified: `node --test tests/matrix-integrity.test.mjs` **9/9**;
+`tests/runtime-structure.test.mjs` **1/1** unaffected; 10/10 together. `git diff --check`
+clean. **No tracked source file was touched** — Task 1 adds two new files and edits two
+documents, so the gateway, routing, security, provider, and proxy behaviour are byte-identical
+to `de02328`.
+
+### 9H resume point
+
+Task 1 **COMPLETE**. Next: **Task 2 — Protocol conformance harness.** Create
+`scripts/client-conformance.mjs`: drive BAYZ exactly as a generic OpenAI client would over
+real HTTP with no in-process shortcuts — `GET /v1/models`, non-streaming
+`POST /v1/chat/completions`, the same streaming, a tool-call turn, a tool-result turn, a
+200 KiB request, an aborted request, and an error case — each check printing `ok`/`FAIL`
+with a number so the matrix can cite `smoke:client-conformance#N`. Assert response shapes
+match the OpenAI contract field-for-field. Then the §25 amendment: add a check that a
+free-only route to a paid-classified provider fails `no_free_route` over real HTTP. Update
+the `generic-openai` row from the real check numbers, and commit
+`test: add the Bayz generic client conformance harness`.
+
+Note: verification stays the bounded per-workspace sequence described under "Verification
+is run sequentially on this device".
 
 ## Phase 9 GOAT — planning state
 
