@@ -39,17 +39,22 @@
     `freeOnly: false`, so it had been failing 67/74 with `no_free_route`. Free-first was
     not weakened — the new smoke asserts a route created *without* the field still comes
     back `freeOnly: true`.
-  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Task 1 **COMPLETE**.
-    Tasks 2–6 **NOT STARTED**.
+  - 9H Mandatory Client Compatibility Matrix: **IN PROGRESS.** Tasks 1–2 **COMPLETE**.
+    Tasks 3–6 **NOT STARTED**.
     `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md` plus
-    `tests/matrix-integrity.test.mjs` (9/9). **102 cells, every one `UNVERIFIED`** — no
-    client has been driven against BAYZ yet, and the document says so plainly.
+    `tests/matrix-integrity.test.mjs` (9/9) and `scripts/client-conformance.mjs`
+    (**55/55**). Matrix tally **13 VERIFIED / 2 PARTIAL / 0 BLOCKED / 87 UNVERIFIED**,
+    every non-`UNVERIFIED` cell in the `generic-openai` row. **No real client has been
+    driven against BAYZ yet** — every Core 3 cell is still `UNVERIFIED`.
     Status vocabulary **deviates from the plan text deliberately**:
     `VERIFIED`/`PARTIAL`/`BLOCKED`/`UNVERIFIED`/`N/A`, with `PASS`/`FAIL` refused as
     placeholders. `BLOCKED` (tried, did not work) vs `UNVERIFIED` (not tried) is the split
     that matters. Consequence for Task 6: the gate must block on **both**.
-    Device reality corrected: **`hermes` is present** on this host
+    Device reality corrected at Task 1: **`hermes` is present** on this host
     (`/root/.local/bin/hermes`, v0.20.5) — the plan and spec §12 both said absent.
+    Task 2 fixed a **live 400-vs-500 bug**: no `GatewayError` code was mapped in
+    `apps/server/src/http-errors.ts`, so a malformed body returned `500 internal_error`
+    and told a client to retry forever. Four codes now map to 400.
   - 9I–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -918,7 +923,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9E Multi-Proxy Easy UX + free-first | **COMPLETE** | `@bayz/router` 276, `@bayz/server` 252, `@bayz/dashboard` 340, `@bayz/storage` 185, `@bayz/providers` 276, `@bayz/identity` 69; migrations v8–v10; `proxy-ux-smoke` 127/127 |
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
-| 9H Client Compatibility Matrix | **IN PROGRESS** | Task 1 done; `matrix-integrity` 9/9; 102 cells all `UNVERIFIED`; Task 2 (conformance harness) next |
+| 9H Client Compatibility Matrix | **IN PROGRESS** | Tasks 1–2 done; `matrix-integrity` 9/9, `client-conformance` 55/55; 13 VERIFIED / 2 PARTIAL / 87 UNVERIFIED; Task 3 (per-client docs) next |
 | 9I–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2303,18 +2308,139 @@ clean. **No tracked source file was touched** — Task 1 adds two new files and 
 documents, so the gateway, routing, security, provider, and proxy behaviour are byte-identical
 to `de02328`.
 
+### Task 2 — Protocol conformance harness
+
+`scripts/client-conformance.mjs`, **55 checks across 13 sections**, driving BAYZ exactly as
+a third-party OpenAI-compatible client would: real `fetch` over a real TCP port against a
+real listener, a real SQLite database with real envelope crypto, and real scripted loopback
+origins. No `app.inject`, no imported handler, no in-process shortcut — because the failures
+this exists to catch only appear on the wire. A client that parses strictly breaks on a
+missing `object` field or an `index` that is absent rather than `0`, and an in-process
+assertion on a JavaScript object would never see it.
+
+Sections A–N: configure, authenticate, `GET /v1/models`, non-streaming chat, streaming SSE,
+tool call, tool result roundtrip, large request, cancel, error surface, custom provider,
+combo + failover, key revoke/rotate, and the §25 free-only amendment.
+
+Shape assertions run through a `shapeProblems()` walker that **names the offending field**
+in the failure message, so a regression says `object has the wrong shape: "chatCompletion"`
+rather than just failing. `chat.completion`, `chat.completion.chunk`, the model-list
+envelope, `tool_calls`, and `usage` are each pinned key by key. Extra keys are tolerated —
+the OpenAI contract is additive and a strict client ignores unknowns — but every declared
+key must be present with the right type.
+
+#### A live 400-vs-500 bug this task found and fixed
+
+`apps/server/src/http-errors.ts` mapped **no `GatewayError` code at all**, and an unmapped
+code falls through to a generic **500 `internal_error`**. So a generic OpenAI client posting
+a JSON scalar instead of an object was told "the server is broken, retry" when the truth was
+"your request is malformed, fix it" — and a client obeying that would retry forever.
+`invalid_capability`, `invalid_quirk`, `invalid_profile`, and `capability_unsupported` now
+map to **400**, since all four are produced from a caller-supplied body or headers.
+
+This is the **only runtime source change** in Task 2. `capability_unsupported` has two other
+theoretical stages — a missing scope and the unimplemented Anthropic `/v1/messages`
+protocol — but neither is reachable over HTTP today: `requireScope` answers 403 before the
+chat route normalizes anything, and `/v1/messages` is not registered. If that route is ever
+added, its refusal needs 501 and the map has to become stage-aware rather than code-only;
+that is recorded in the source comment.
+
+#### The matrix's `smoke:` citations were decoration until this task
+
+Task 1's integrity test resolved the cited *script* but never the *number*. So
+`smoke:client-conformance#99` sitting in a cell for a capability the harness never exercises
+passed cleanly — found by mutating the matrix to claim `proxy-bound route` exactly that way.
+That is a fake compatibility claim with a green test behind it, which is the failure mode
+9H exists to prevent.
+
+Fixed structurally rather than by inspection: the harness writes
+`docs/evidence/client-conformance.json` on a **fully passing run only** (a manifest from a
+failing run would let a matrix cite a check that did not pass), mapping each capability to
+the check number covering it. `tests/matrix-integrity.test.mjs` resolves every `smoke:`
+citation against that manifest, so a cell can no longer cite a number the script never
+assigned, a capability it never covers, or another capability's number. A script without a
+manifest still gets the existence check only — Task 4/5's harnesses cite `transcript:`
+paths instead.
+
+`PARTIAL` also needed enforcement it did not have: Task 1's legend said such a cell carries
+evidence *and* a named limit, but the test only checked the evidence half, so a bare
+`PARTIAL` would have passed. Task 2 produced the first real `PARTIAL` cells and exposed it.
+The limit after ` — ` is now required at ≥12 characters, and a `VERIFIED` cell is refused if
+it carries trailing prose — a caveat inside a full pass is precisely what `PARTIAL` is for.
+
+#### Two PARTIAL cells, recorded honestly rather than rounded up
+
+- **`large request`** — a 120 KiB message is served in full with nothing truncated; the
+  plan's 200 KiB payload exceeds `MAX_CONTENT_CHARS` (128,000 in
+  `packages/router/src/request.ts`) and is cleanly refused 400, never truncated and never
+  5xx. Two payloads are sent deliberately: the oversized one alone could not distinguish a
+  working bound from a broken large-body path.
+- **`error surface`** — every malformed request returns the stable
+  `{error:{code,message,requestId}}` envelope with the right status, but a JSON scalar body
+  reports `capability_unsupported` ("the client is not granted that capability") when the
+  real cause is body shape. `deriveProfile` never derives the `chat` intent from a
+  non-object, so the refusal comes from the capability gate rather than a shape check. The
+  status and envelope are conformant so no client breaks; the message misdirects. Fixing it
+  means changing `intentOf`/`deriveProfile` in `@bayz/gateway` — outside Task 2's remit and
+  pinned by several of the 74 gateway tests — so the wording is *asserted* to keep it a
+  known pinned fact rather than a surprise.
+
+#### Decisions worth carrying forward
+
+- **Two columns are deliberately not claimed.** `proxy-bound route` needs a real CONNECT
+  proxy fixture and `restart/reconnect` needs a client surviving a listener restart; both
+  stay `UNVERIFIED` with the reason in the cell, and the harness prints what it does not
+  verify. 9H Tasks 4–5 own them.
+- **The §25 free-only checks bind a non-loopback address on purpose.** `allowLoopback`
+  short-circuits classification to `LOCAL`, which is free, so a loopback origin cannot
+  exercise the PAID path at all. #50 proves the 409 `no_free_route`, **#51 proves the paid
+  origin was never called** — a 409 alone would not prove nothing was spent — #48 proves a
+  route created without `freeOnly` still defaults to free-only (§25 rule 6), and #53 proves
+  an explicit opt-out still routes, so the guard is a bound rather than a wall. On a host
+  with no private IPv4 the check reports `SKIP` instead of asserting against loopback.
+- **The cancel check waits 400 ms before aborting**, so the request is genuinely in flight
+  upstream, and asserts the **origin** observed the socket close rather than merely that
+  `fetch` rejected. A held-open origin gives the abort a window to land. It then re-checks
+  that the listener still serves normally, because an abort must not poison the server.
+- **Streaming is measured incrementally.** The origin emits two content frames, so "content
+  arrives across multiple deltas" is observed rather than assumed, and the reassembled
+  deltas are compared to the upstream completion exactly. `[DONE]`,
+  `x-accel-buffering: no`, `no-cache`, a stable chunk `id`, and a terminal `finish_reason`
+  are pinned separately.
+- **The 9G wire fix is re-checked from the client's side.** The tool-result roundtrip
+  asserts the forwarded body carries `tool_call_id`/`tool_calls` and **never** the internal
+  `toolCallId`/`toolCalls` — the exact bug 9G Task 3 found. Mutating it back turns this red.
+- **Check numbers are contractual.** The matrix cites them by number, so a check must be
+  *appended*, never inserted mid-sequence; if a number has to move, the matrix citation and
+  the manifest move with it in the same commit. Stated at the top of the script.
+
+**Four mutations proved the harness can fail**, then were reverted: `object` renamed to
+`chatCompletion` in `denormalizeResponse` (1 red, and the message named the field);
+`isFreeCandidate` forced true so PAID reads as free (4 red); the `freeOnly` default flipped
+to `false` (5 red, including the rule-6 default check); and `tool_call_id` regressed to
+camelCase on the wire (1 red). Two further mutations proved the matrix-integrity additions
+can fail: a `PARTIAL` with no stated limitation, and a caveat hidden inside a `VERIFIED`
+cell. Plus the two that motivated the manifest: a fictional check number, and a real number
+belonging to a different capability.
+
+Verified: `client-conformance` **55/55** (twice), `matrix-integrity` **9/9**,
+`runtime-structure` **1/1**, `@bayz/server` **336/336**, `@bayz/gateway` **74/74**,
+`@bayz/router` **289/289**, `@bayz/server` build exit 0, and `api-smoke` 70/70 +
+`stream-smoke` 63/63 + `security-smoke` 82/82 + `injection-smoke` 179/179 +
+`usage-smoke` 119/119 + `proxy-ux-smoke` 127/127 confirming the one-line error-map change
+moved nothing. `git diff --check` clean.
+
 ### 9H resume point
 
-Task 1 **COMPLETE**. Next: **Task 2 — Protocol conformance harness.** Create
-`scripts/client-conformance.mjs`: drive BAYZ exactly as a generic OpenAI client would over
-real HTTP with no in-process shortcuts — `GET /v1/models`, non-streaming
-`POST /v1/chat/completions`, the same streaming, a tool-call turn, a tool-result turn, a
-200 KiB request, an aborted request, and an error case — each check printing `ok`/`FAIL`
-with a number so the matrix can cite `smoke:client-conformance#N`. Assert response shapes
-match the OpenAI contract field-for-field. Then the §25 amendment: add a check that a
-free-only route to a paid-classified provider fails `no_free_route` over real HTTP. Update
-the `generic-openai` row from the real check numbers, and commit
-`test: add the Bayz generic client conformance harness`.
+Tasks 1–2 **COMPLETE**. Next: **Task 3 — Per-client configuration presets and docs.**
+Create `docs/clients/opencode.md`, `docs/clients/antigravity.md`, `docs/clients/hermes.md`,
+and `docs/clients/generic-openai.md`. Each gives the exact configuration a user needs — base
+URL `http://127.0.0.1:20128/v1`, the API-key field to paste a scoped client key into, the
+model-name form — and states explicitly which capabilities are `UNVERIFIED` for that client
+on this device and why. **No product-name branching may be introduced into any runtime
+path**; these are user documents, and the 9C preset selector already exists. Verify
+`node --test tests/matrix-integrity.test.mjs` still exits 0 — docs do not move a cell
+without evidence — and commit `docs: add Bayz client configuration guides`.
 
 Note: verification stays the bounded per-workspace sequence described under "Verification
 is run sequentially on this device".

@@ -76,9 +76,24 @@ Grammar, as enforced:
 ```
 
 `tests/matrix-integrity.test.mjs` does not merely pattern-match these — it **resolves
-them on disk**. A cited test file, script, or transcript that does not exist fails the
-test. That is what stops the easiest route to a green matrix, which is inventing a
-plausible path.
+them**:
+
+- `test:` and `transcript:` paths must exist on disk. A cited file that is not there fails
+  the test, which is what stops the easiest route to a green matrix: inventing a plausible
+  path.
+- `smoke:<script>#<n>` must exist **and the number must be right**. A harness writes
+  `docs/evidence/<script>.json` on a fully passing run, mapping each capability to the
+  check number that covers it, and the test resolves the citation against that manifest.
+  So a cell cannot cite a check number the script never assigned, cite a capability the
+  script never exercises, or cite the wrong capability's number. Without the manifest the
+  number was decoration — `smoke:client-conformance#99` for an unexercised capability
+  passed, which is precisely a fake compatibility claim.
+
+A `PARTIAL` cell carries its citations **and** a limitation after an em dash
+(` — `), and the test requires both. Evidence alone would say "it works, sort of" and
+leave a reader guessing; a limitation alone would be an unevidenced claim. A `VERIFIED`
+cell must carry citations and *no* trailing prose — a caveat inside a full pass is exactly
+what `PARTIAL` exists for.
 
 > The grammar is written literally here and in the integrity test. 9I, 9J, and 9K each
 > specify the same shape for their own matrices; 9L Task 1 builds `scripts/evidence.mjs`
@@ -243,25 +258,29 @@ client's availability on this host and which task owns filling the row in.
 
 ### generic-openai
 
+Filled by 9H Task 2 from `scripts/client-conformance.mjs` (**55/55**), which drives BAYZ
+over real HTTP with real `fetch` — no `app.inject`, no in-process shortcut. Two cells stay
+`UNVERIFIED` because that harness deliberately does not exercise them.
+
 | capability | status | evidence / reason |
 | --- | --- | --- |
-| configure | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| authenticate | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| models.list | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| chat | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| stream | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| tool call | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| tool result roundtrip | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| large request | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| cancel | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| error surface | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| custom provider | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| proxy-bound route | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| combo | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| failover | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| restart/reconnect | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| key revoke/rotate | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
-| free-only routing | UNVERIFIED | No conformance harness exists yet; 9H Task 2 builds scripts/client-conformance.mjs and fills this row from its check numbers. |
+| configure | VERIFIED | smoke:client-conformance#1 |
+| authenticate | VERIFIED | smoke:client-conformance#3 |
+| models.list | VERIFIED | smoke:client-conformance#5 |
+| chat | VERIFIED | smoke:client-conformance#9 |
+| stream | VERIFIED | smoke:client-conformance#14 |
+| tool call | VERIFIED | smoke:client-conformance#22 |
+| tool result roundtrip | VERIFIED | smoke:client-conformance#27 |
+| large request | PARTIAL | smoke:client-conformance#31 — a 120 KiB message is served in full; the plan's 200 KiB payload exceeds MAX_CONTENT_CHARS (128,000) and is cleanly refused 400, never truncated or 5xx |
+| cancel | VERIFIED | smoke:client-conformance#35 |
+| error surface | PARTIAL | smoke:client-conformance#37 — every malformed request returns the stable envelope with the right status, but a JSON scalar body reports `capability_unsupported` when the real cause is body shape |
+| custom provider | VERIFIED | smoke:client-conformance#42 |
+| proxy-bound route | UNVERIFIED | Not exercised by the conformance harness; needs a real CONNECT proxy fixture, which 9H Task 4 owns. |
+| combo | VERIFIED | smoke:client-conformance#46 |
+| failover | VERIFIED | smoke:client-conformance#44 |
+| restart/reconnect | UNVERIFIED | Not exercised by the conformance harness; needs a client surviving a real listener restart — 9H Task 4/5. |
+| key revoke/rotate | VERIFIED | smoke:client-conformance#49 |
+| free-only routing | VERIFIED | smoke:client-conformance#52 |
 
 ### continue
 
@@ -313,11 +332,17 @@ client's availability on this host and which task owns filling the row in.
 
 | status | cells |
 | --- | --- |
-| `VERIFIED` | 0 |
-| `PARTIAL` | 0 |
+| `VERIFIED` | 13 |
+| `PARTIAL` | 2 |
 | `BLOCKED` | 0 |
-| `UNVERIFIED` | 102 |
+| `UNVERIFIED` | 87 |
 | `N/A` | 0 |
 
-102 = 6 clients × 17 capabilities. **No client is compatible until this table says so with
-evidence.** The gate 9H Task 6 builds is expected to block a release from this state.
+102 = 6 clients × 17 capabilities. Every non-`UNVERIFIED` cell is in the
+**`generic-openai`** row and cites a numbered check in
+`scripts/client-conformance.mjs`, which `tests/matrix-integrity.test.mjs` resolves on disk.
+
+**No real client has been driven against BAYZ yet.** The `generic-openai` row proves the
+protocol contract holds over real HTTP; it says nothing about how OpenCode, Antigravity, or
+Hermes behave, and every Core 3 cell is still `UNVERIFIED`. The gate 9H Task 6 builds is
+expected to block a release from this state.

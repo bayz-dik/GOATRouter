@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -212,6 +212,25 @@ test("every cell holds exactly one status from the closed vocabulary", async () 
   }
 });
 
+/**
+ * Split a cell's note into its citations and its optional trailing limitation text.
+ *
+ * A `PARTIAL` cell must carry both: the evidence proving what *was* observed, and the
+ * limit describing what was not. They are separated by an em dash, which is why the
+ * grammar cannot simply be applied to the whole note.
+ *
+ * Task 1's legend already declared this ("requires evidence *and* a named limit in the
+ * same cell") but the test only ever checked the evidence half, so a `PARTIAL` with no
+ * stated limit would have passed. Task 2 produced the first real `PARTIAL` cells and
+ * exposed the gap.
+ */
+function splitNote(note) {
+  const index = note.indexOf(" — ");
+  return index === -1
+    ? { citations: note, limit: "" }
+    : { citations: note.slice(0, index), limit: note.slice(index + 3).trim() };
+}
+
 test("a verified or partial cell must cite machine-parseable evidence", async () => {
   const { clients } = await parseMatrix();
   for (const [client, rows] of clients) {
@@ -220,13 +239,32 @@ test("a verified or partial cell must cite machine-parseable evidence", async ()
         continue;
       }
       assert.ok(note.length > 0, `${client}/${capability} claims ${status} with no evidence`);
+      const { citations: citationText, limit } = splitNote(note);
       // Several citations are allowed, comma-separated, and *every* one must parse. One
       // good citation next to one hand-waved sentence would otherwise pass.
-      const citations = note.split(",").map((entry) => entry.trim());
+      const citations = citationText.split(",").map((entry) => entry.trim());
       for (const citation of citations) {
         assert.ok(
           EVIDENCE_RE.test(citation),
           `${client}/${capability} cites ${JSON.stringify(citation)}, which does not match the evidence grammar`,
+        );
+      }
+
+      if (status === "PARTIAL") {
+        // The limit is the whole point of PARTIAL: without it the cell says "it works,
+        // sort of" and a reader has no idea what to expect. Twelve characters for the
+        // same reason the reason column uses that bound.
+        assert.ok(
+          limit.length >= 12,
+          `${client}/${capability} is PARTIAL without naming its limitation after an em dash: ${JSON.stringify(note)}`,
+        );
+      } else {
+        // A VERIFIED cell carries evidence and nothing else. Prose here would be a
+        // caveat hiding inside a full pass — which is what PARTIAL exists for.
+        assert.equal(
+          limit,
+          "",
+          `${client}/${capability} is VERIFIED but carries a caveat; a caveat means PARTIAL`,
         );
       }
     }
@@ -264,7 +302,7 @@ test("every cited evidence reference resolves to something that exists", async (
       if (!EVIDENCE_REQUIRED.has(status)) {
         continue;
       }
-      for (const citation of note.split(",").map((entry) => entry.trim())) {
+      for (const citation of splitNote(note).citations.split(",").map((entry) => entry.trim())) {
         citationsChecked += 1;
         const [kind, value] = citation.split(":");
 
@@ -276,10 +314,18 @@ test("every cited evidence reference resolves to something that exists", async (
           continue;
         }
 
-        // `smoke:<name>#<n>` — the script must exist. The check *number* cannot be
-        // validated from here without running the script, which is 9H Task 2 and Task 4's
-        // job; what is validated is that the script being cited is real.
-        const [scriptName] = value.split("#");
+        // `smoke:<name>#<n>` — the script must exist, and when the script publishes an
+        // evidence manifest the cited check number must be the one that actually covers
+        // this capability.
+        //
+        // The script-exists check alone was a real hole: it accepted
+        // `smoke:client-conformance#99` in a cell for a capability that harness never
+        // exercises, because the number was never validated against anything. A harness
+        // writes `docs/evidence/<script>.json` on a fully passing run, mapping capability
+        // to check number, and that manifest is the authority here. A script without a
+        // manifest still only gets the existence check — Task 4/5's transcript-based
+        // harnesses cite `transcript:` paths instead.
+        const [scriptName, citedNumber] = value.split("#");
         const candidates = [
           `scripts/${scriptName}.mjs`,
           `scripts/${scriptName}-smoke.mjs`,
@@ -288,6 +334,29 @@ test("every cited evidence reference resolves to something that exists", async (
           candidates.some((path) => existsSync(new URL(path, `file://${REPO_ROOT}`))),
           `${client}/${capability} cites ${citation} but no script matches ${candidates.join(" or ")}`,
         );
+
+        const manifestUrl = new URL(
+          `docs/evidence/${scriptName}.json`,
+          `file://${REPO_ROOT}`,
+        );
+        if (existsSync(manifestUrl)) {
+          const manifest = JSON.parse(readFileSync(manifestUrl, "utf8"));
+          const expected = manifest.capabilities?.[capability];
+          assert.notEqual(
+            expected,
+            undefined,
+            `${client}/${capability} cites ${citation} but ${scriptName} publishes no check for that capability`,
+          );
+          assert.equal(
+            Number(citedNumber),
+            expected,
+            `${client}/${capability} cites check #${citedNumber} but ${scriptName} reports #${expected} for it`,
+          );
+          assert.ok(
+            Number(citedNumber) <= manifest.totalChecks,
+            `${client}/${capability} cites check #${citedNumber} but ${scriptName} only ran ${manifest.totalChecks} checks`,
+          );
+        }
       }
     }
   }

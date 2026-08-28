@@ -1,0 +1,23 @@
+{
+  "script": "client-conformance",
+  "generatedBy": "scripts/client-conformance.mjs",
+  "note": "Regenerated on every fully passing run. Do not hand-edit: tests/matrix-integrity.test.mjs resolves matrix citations against it.",
+  "totalChecks": 55,
+  "capabilities": {
+    "configure": 1,
+    "authenticate": 3,
+    "models.list": 5,
+    "chat": 9,
+    "stream": 14,
+    "tool call": 22,
+    "tool result roundtrip": 27,
+    "large request": 31,
+    "cancel": 35,
+    "error surface": 37,
+    "custom provider": 42,
+    "failover": 44,
+    "combo": 46,
+    "key revoke/rotate": 49,
+    "free-only routing": 52
+  }
+}

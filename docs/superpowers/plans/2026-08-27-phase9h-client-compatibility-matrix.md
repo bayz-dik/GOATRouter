@@ -93,11 +93,87 @@ Downstream consequence recorded for 9H Task 6: `client-gate.mjs --enforce` must 
 **Create:** `scripts/client-conformance.mjs`
 **Test:** covered by the script's own exit code
 
-- [ ] Build a harness that drives BAYZ exactly as a generic OpenAI client would, over real HTTP with no in-process shortcuts: `GET /v1/models`, `POST /v1/chat/completions` non-streaming, the same streaming, a tool-call turn, a tool-result turn, a 200 KiB request, an aborted request, and an error case. Each check prints `ok`/`FAIL` with a number so the matrix can cite `smoke:client-conformance#N`.
-- [ ] Assert the response shapes match the OpenAI contract field-for-field, since a client that parses strictly will otherwise break in the field rather than in the test.
-- [ ] Verify: `node scripts/client-conformance.mjs` exits 0.
-- [ ] Update the matrix `generic-openai` row from the check numbers.
-- [ ] Commit — `test: add the Bayz generic client conformance harness`
+- [x] Build a harness that drives BAYZ exactly as a generic OpenAI client would, over real HTTP with no in-process shortcuts: `GET /v1/models`, `POST /v1/chat/completions` non-streaming, the same streaming, a tool-call turn, a tool-result turn, a 200 KiB request, an aborted request, and an error case. Each check prints `ok`/`FAIL` with a number so the matrix can cite `smoke:client-conformance#N`. — **55 checks across 13 sections**, real `fetch` on a real port, real SQLite with real envelope crypto, real scripted origins. No `app.inject`, no imported handler.
+- [x] Assert the response shapes match the OpenAI contract field-for-field, since a client that parses strictly will otherwise break in the field rather than in the test. — a `shapeProblems()` walker names the offending field in the failure message; `chat.completion`, `chat.completion.chunk`, the model list envelope, `tool_calls`, and `usage` are all pinned key by key.
+- [x] Verify: `node scripts/client-conformance.mjs` exits 0. **55/55**, twice in a row.
+- [x] Update the matrix `generic-openai` row from the check numbers. — 13 `VERIFIED`, 2 `PARTIAL`, 2 `UNVERIFIED`; matrix tally now 13/2/0/87/0.
+- [x] Commit — `test: add the Bayz generic client conformance harness`
+
+**Beyond the plan's list**, because a generic client exercises them and the matrix has
+columns for them: custom provider, combo, failover, key revoke/rotate, and the §25
+free-only amendment. Two columns are deliberately **not** claimed — `proxy-bound route`
+needs a real CONNECT fixture and `restart/reconnect` needs a client surviving a listener
+restart. Both stay `UNVERIFIED` with the reason recorded; claiming them from this harness
+would be the fake compatibility claim 9H exists to prevent.
+
+**§25 amendment satisfied here.** Check #50 proves a free-only route to a genuinely
+PAID-classified provider is refused `409 no_free_route`, #51 proves the paid origin was
+never called (a 409 alone would not prove nothing was spent), #48 proves a route created
+*without* `freeOnly` still defaults to free-only, and #53 proves an explicit
+`freeOnly: false` opt-out then routes — so the guard is a bound, not a wall. The paid
+origin binds a **non-loopback** address on purpose: `allowLoopback` short-circuits
+classification to `LOCAL`, which is free, so a loopback origin cannot exercise the PAID
+path at all. On a host with no private IPv4 the check reports `SKIP` rather than asserting
+against loopback.
+
+**A live 400-vs-500 bug this task found and fixed.** `apps/server/src/http-errors.ts`
+mapped no `GatewayError` code, and an unmapped code becomes a generic **500
+`internal_error`**. So a generic OpenAI client posting a JSON scalar instead of an object
+was told "the server is broken, retry" when the truth was "your request is malformed, fix
+it" — a client would retry forever. `invalid_capability`, `invalid_quirk`,
+`invalid_profile`, and `capability_unsupported` are now mapped to **400**. This is the
+only runtime source change in Task 2; the 336 server tests, 74 gateway tests, and 289
+router tests are unchanged and green, and `api-smoke` 70/70 confirms the gateway contract
+did not move.
+
+**Findings worth carrying forward:**
+- **The matrix's `smoke:` citations were decoration until this task.** Task 1's integrity
+  test resolved the *script* but never the *number*, so `smoke:client-conformance#99` in a
+  cell for a capability the harness never exercises passed — found by mutating the matrix
+  to claim `proxy-bound route` that way. Fixed structurally: the harness writes
+  `docs/evidence/client-conformance.json` on a fully passing run (never on a failing one),
+  mapping capability → check number, and the integrity test resolves each citation against
+  it. A cell can no longer cite a number the script never assigned, a capability it never
+  covers, or another capability's number.
+- **`PARTIAL` needed enforcement it did not have.** Task 1's legend said a `PARTIAL` cell
+  carries evidence *and* a named limit, but the test only checked the evidence half — so a
+  bare `PARTIAL` would have passed. Task 2 produced the first real `PARTIAL` cells and
+  exposed it. Now the limit after ` — ` is required at ≥12 characters, and a `VERIFIED`
+  cell is refused if it carries trailing prose, because a caveat inside a full pass is what
+  `PARTIAL` is for.
+- **Two `PARTIAL` cells, honestly recorded rather than rounded up.** `large request`: a
+  120 KiB message is served in full, and the plan's 200 KiB payload exceeds
+  `MAX_CONTENT_CHARS` (128,000) and is cleanly refused 400 — bounded, never truncated or
+  5xx. Two payloads are sent deliberately, because the oversized one alone could not
+  distinguish a working bound from a broken large-body path. `error surface`: every
+  malformed request returns the stable envelope with the right status, but a JSON scalar
+  body reports `capability_unsupported` ("the client is not granted that capability") when
+  the real cause is body shape — `deriveProfile` never derives the `chat` intent from a
+  non-object, so the refusal comes from the capability gate. The status and envelope are
+  conformant so no client breaks, but the message misdirects. Fixing it means changing
+  `intentOf`/`deriveProfile` in `@bayz/gateway`, which is outside Task 2's remit and pinned
+  by several of the 74 gateway tests; the wording is asserted so it is a known pinned fact
+  rather than a surprise.
+- **The cancel check waits 400 ms before aborting**, so the request is genuinely in flight
+  upstream, and asserts the *origin* observed the socket close — not merely that `fetch`
+  rejected. A held-open origin (`holdMs`) is what gives the abort a window to land. It then
+  re-checks that the listener still serves normally, because an abort must not poison the
+  server.
+- **Streaming is asserted incrementally.** The origin emits two content frames, so
+  "content arrives across multiple deltas" is measured rather than assumed, and the
+  reassembled deltas are compared to the upstream completion exactly. `[DONE]`,
+  `x-accel-buffering: no`, `no-cache`, a stable chunk `id`, and a terminal `finish_reason`
+  are each pinned separately.
+- **Four mutations proved the harness can fail**, then were reverted: `object` renamed to
+  `chatCompletion` in `denormalizeResponse` (1 red, and the failure message named the
+  field); `isFreeCandidate` forced true so PAID reads as free (4 red); the `freeOnly`
+  default flipped to `false` (5 red, including the §25 rule-6 default check); and
+  `tool_call_id` regressed to camelCase on the wire — the exact 9G Task 3 bug — (1 red).
+  Two further mutations proved the matrix integrity additions can fail: a `PARTIAL` with no
+  limitation, and a caveat hidden inside a `VERIFIED` cell.
+- **Check numbers are contractual.** The matrix cites them, so a check must be *appended*
+  rather than inserted; if a number ever has to move, the matrix citation and the manifest
+  move with it in the same commit. Stated at the top of the script.
 
 ### Task 3 — Per-client configuration presets and docs
 
@@ -156,6 +232,6 @@ The matrix gains a seventeenth column, `free-only routing`, and Task 1's integri
 test gains it as a required column so it cannot be omitted.
 
 - [x] Amend Task 1's column list to include `free-only routing` and re-run `node --test tests/matrix-integrity.test.mjs`. — **done at Task 1**: the column is in the integrity test's required list from the start, so all six clients carry it and it cannot be omitted. 9/9 green.
-- [ ] Amend Task 2's conformance harness with a check that a free-only route to a paid-classified provider fails `no_free_route` over real HTTP, so the `generic-openai` row's cell has a citable check number.
+- [x] Amend Task 2's conformance harness with a check that a free-only route to a paid-classified provider fails `no_free_route` over real HTTP, so the `generic-openai` row's cell has a citable check number. — **`smoke:client-conformance#50`**, plus #48 (default is free-only), #51 (the paid origin was never called), #52 (stable envelope), and #53 (explicit opt-out still routes).
 - [ ] Amend Task 4's OpenCode verification to configure a free-only route and record the cell from the transcript.
 - [ ] Statuses for this column follow the same rule as every other: `UNVERIFIED` where the client cannot run here.

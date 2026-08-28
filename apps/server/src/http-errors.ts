@@ -70,6 +70,28 @@ const STATUS_BY_CODE: Record<string, number> = {
   // to configure a capable provider, not to fix the request.
   tools_unsupported: 501,
 
+  /*
+   * 9A gateway codes. Added in 9H Task 2, which found them missing.
+   *
+   * Every `GatewayError` is produced from a caller-supplied body or headers, so each is
+   * a client mistake — but none of these codes was mapped, and an unmapped code becomes
+   * a generic 500. A generic OpenAI client that posts a JSON scalar instead of an object
+   * therefore got `500 internal_error`, which tells it "the server is broken, retry"
+   * when the truth is "your request is malformed, fix it". Retrying a malformed request
+   * forever is the concrete harm.
+   *
+   * All four are 400 because all four mean the request could not be understood.
+   * `capability_unsupported` has two other theoretical stages — a missing scope, and the
+   * unimplemented Anthropic `/v1/messages` protocol — but neither is reachable over
+   * HTTP: `requireScope` answers 403 before the chat route normalizes anything, and
+   * `/v1/messages` is not registered. If that route is ever added, its refusal needs
+   * 501 and this map will have to become stage-aware rather than code-only.
+   */
+  invalid_capability: 400,
+  invalid_quirk: 400,
+  invalid_profile: 400,
+  capability_unsupported: 400,
+
   // Upstream / transport
   unreachable: 502,
   refused: 502,
