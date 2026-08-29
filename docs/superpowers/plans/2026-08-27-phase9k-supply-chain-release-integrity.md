@@ -52,16 +52,20 @@ Regression check after the dependency change, run sequentially: `@bayz/server` 3
 ### Task 2 — Lockfile integrity
 
 **Create:** `scripts/lockfile-check.mjs`
-**Test:** `tests/lockfile-integrity.test.mjs`
+**Test:** `tests/lockfile-integrity.test.mjs` (17/17)
 
-**Measured baseline:** `package-lock.json` is `lockfileVersion: 3` with 270 entries. A probe confirms **every** resolved entry already carries a `sha512-` integrity hash, every `resolved` URL points at `registry.npmjs.org`, and there are zero `sha1`, zero non-registry, and zero missing-integrity entries. This task therefore pins a property the repository already satisfies — which is the point, since the check exists to catch the day it stops being true.
+**Measured baseline, corrected from the plan text:** `package-lock.json` is `lockfileVersion: 3` with **264** entries (the plan said 270; it has since changed twice — 276 after `esbuild` was pinned in 9J, then 264 after the 9K Task 1 security upgrade). A probe confirms **every** resolved entry carries a `sha512-` integrity hash, every `resolved` URL points at `registry.npmjs.org`, and there are zero `sha1`, zero non-registry, and zero missing-integrity entries. This task therefore pins a property the repository already satisfies — which is the point, since the check exists to catch the day it stops being true.
 
-- [ ] RED `tests/lockfile-integrity.test.mjs`: every resolved entry in `package-lock.json` carries an `integrity` hash, and every hash is `sha512-` (an entry that is only `sha1` is refused); every `resolved` URL points at `https://registry.npmjs.org/` and nothing else — no `git+ssh`, no `file:` outside the workspace, no tarball URL on an unexpected host, no `http:`; `lockfileVersion` is pinned at 3; the nine workspace `link: true` entries resolve to real in-repo directories and are exempt from the `resolved`/`integrity` requirement, since a workspace link legitimately has neither; the total entry count is pinned so an unexplained dependency addition shows up in the diff.
-- [ ] RED same file: `npm ci` determinism is asserted structurally — every non-link dependency has an exact resolved version, so no range is resolved at install time.
-- [ ] Verify RED: confirm the test fails when pointed at a deliberately mutated copy of the lockfile (one entry's integrity downgraded to `sha1-`), since a test that passes against the real file tells you nothing about whether it would catch a violation.
-- [ ] GREEN.
-- [ ] Verify: `node scripts/lockfile-check.mjs` exits 0.
-- [ ] Commit — `test: verify Bayz lockfile integrity and provenance`
+- [x] RED `tests/lockfile-integrity.test.mjs`: every resolved entry in `package-lock.json` carries an `integrity` hash, and every hash is `sha512-` (an entry that is only `sha1` is refused); every `resolved` URL points at `https://registry.npmjs.org/` and nothing else — no `git+ssh`, no `file:` outside the workspace, no tarball URL on an unexpected host, no `http:`; `lockfileVersion` is pinned at 3; the nine workspace `link: true` entries resolve to real in-repo directories and are exempt from the `resolved`/`integrity` requirement, since a workspace link legitimately has neither; the total entry count is pinned so an unexplained dependency addition shows up in the diff. — *Correction: there are **12** workspace links, not nine. The plan counted the `packages/*` workspaces and missed `apps/server`, `apps/dashboard`, and `packages/telemetry`; `node_modules/@bayz/*` has twelve entries.*
+- [x] RED same file: `npm ci` determinism is asserted structurally — every non-link dependency has an exact resolved version, so no range is resolved at install time.
+- [x] Verify RED: confirm the test fails when pointed at a deliberately mutated copy of the lockfile (one entry's integrity downgraded to `sha1-`), since a test that passes against the real file tells you nothing about whether it would catch a violation. — *Every assertion here is paired with a mutated copy of the real lockfile, not just the `sha1` one: `git+ssh`, `file:`, `http:`, a look-alike host, a version range, a `lockfileVersion` of 2, a link pointing outside the repository, and a deleted `resolved`.*
+- [x] GREEN.
+- [x] Verify: `node scripts/lockfile-check.mjs` exits 0.
+- [x] Commit — `test: verify Bayz lockfile integrity and provenance`
+
+**One false positive found and fixed before the commit.** The first version reported twelve violations — every workspace, e.g. `apps/server: has a version but no resolved origin`. npm records each workspace **twice**: once keyed by its repository path, describing the directory, and once as `node_modules/@bayz/*` with `link: true` pointing at it. The path-keyed entry legitimately has no origin and no hash because it is not a download. The exemption added for it is deliberately narrow — the key must be outside `node_modules/` *and* the directory must exist — and a separate test proves a `node_modules/` entry with a version and no `resolved` is still refused, so the fix cannot swallow a real violation.
+
+**Three mutations, all caught:** `sha1-` added to the accepted integrity prefixes (2 red, including the script-level exit-code test), the origin check relaxed from `startsWith` to a substring match so `registry.npmjs.org.evil.example` passes (1 red), and the workspace exemption widened to every origin-less entry (1 red).
 
 ### Task 3 — Licence inventory
 
