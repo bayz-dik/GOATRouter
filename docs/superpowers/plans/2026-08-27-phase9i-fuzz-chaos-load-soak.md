@@ -114,13 +114,13 @@ Each scenario runs against **real** components — a real listener, real origins
 
 **Create:** `scripts/load-smoke.mjs`, `docs/transcripts/load/` (populated at run time)
 
-- [ ] Drive a real listener with real `fetch` at concurrency 1, 8, 32, 128, and 256 against fast loopback origins. Record p50, p95, p99, and max latency, throughput, error count by code, and the observed effect of the 9F concurrency cap (default 32) — specifically that the 33rd concurrent request **waits** rather than opening a socket, and that beyond the queue depth it is refused with `rate_limited` rather than queued forever.
-- [ ] Record the same series for streaming requests, reporting time-to-first-byte separately from total duration, since TTFB is the number a client actually feels.
-- [ ] Every reported figure is written to a transcript naming the device (Termux/Android ARM64, 8 CPUs, Node v24.19.0), the timestamp, the commit hash, and the exact command. **The script must refuse to print a summary table without writing its transcript.**
-- [ ] Assert correctness under load, not just speed: every response is a valid envelope, no response carries another request's data (cross-talk guard using a per-request sentinel), and telemetry row count equals the completed request count.
-- [ ] The script asserts *stability properties* (no crash, no unhandled rejection, error codes only from the known set, no cross-talk) and **does not** assert a latency threshold — a performance regression gate on a shared Android device would be noise.
-- [ ] Verify: `node scripts/load-smoke.mjs` exits 0 and writes a transcript.
-- [ ] Commit — `test: add Bayz load measurement with transcripts`
+- [x] Drive a real listener with real `fetch` at concurrency 1, 8, 32, 128, and 256 against fast loopback origins. Record p50, p95, p99, and max latency, throughput, error count by code, and the observed effect of the 9F concurrency cap (default 32) — specifically that the 33rd concurrent request **waits** rather than opening a socket, and that beyond the queue depth it is refused with `rate_limited` rather than queued forever. — `smoke:load#1-31`, `transcript:docs/transcripts/load/load.md`. All five levels, 3,288 requests per run, **zero failures at every level**. Cap proof at `smoke:load#47-58`: the outbound semaphore is observed **at the origin**, which never saw more than the limit while 32 clients hammered it.
+- [x] Record the same series for streaming requests, reporting time-to-first-byte separately from total duration, since TTFB is the number a client actually feels. — `smoke:load#16-31`, TTFB reported per level in the transcript.
+- [x] Every reported figure is written to a transcript naming the device (Termux/Android ARM64, 8 CPUs, Node v24.19.0), the timestamp, the commit hash, and the exact command. **The script must refuse to print a summary table without writing its transcript.** — `writeTranscript` throws if the file is absent and is called **before** the table is printed; pinned by `test:tests/load-harness.test.mjs`.
+- [x] Assert correctness under load, not just speed: every response is a valid envelope, no response carries another request's data (cross-talk guard using a per-request sentinel), and telemetry row count equals the completed request count. — cross-talk guard compares the sentinel the **origin read out of the request** against the one the client sent; telemetry counted in SQL (1,644 `usage_requests` rows = 1,644 completed, per series) because `/api/usage/requests` caps `limit` at 200.
+- [x] The script asserts *stability properties* (no crash, no unhandled rejection, error codes only from the known set, no cross-talk) and **does not** assert a latency threshold — a performance regression gate on a shared Android device would be noise. — absence of any latency threshold is itself pinned by a test that greps for one.
+- [x] Verify: `node scripts/load-smoke.mjs` exits 0 and writes a transcript. — **64/64 checks, `load: PASS`**, three consecutive full runs, transcript written each time.
+- [x] Commit — `test: add Bayz load measurement with transcripts`
 
 ### Task 6 — Soak measurement
 

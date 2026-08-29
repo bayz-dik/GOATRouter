@@ -69,7 +69,7 @@
     silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
     could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
     rejected *after* the work was done). All four fixed with regression tests.
-  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–4 **COMPLETE**, Tasks 5–7
+  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–5 **COMPLETE**, Tasks 6–7
     **NOT STARTED**. Seven tasks total.
     `scripts/fuzz/harness.mjs` + `tests/fuzz-harness.test.mjs` (**18/18**): xoshiro128\*\*
     over a SHA-256 seed expansion, zero dependencies, `node:crypto` for seeding only.
@@ -984,7 +984,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
-| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–4 of 7 done; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios, real sockets/SQLite/restarts), `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9; Task 5 (load measurement) next |
+| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–5 of 7 done; `fuzz-run` **39/39**, `chaos-smoke` **83/83**, `load-smoke` **64/64** (5 concurrency levels, 3,288 requests, 0 failures), `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11; Task 6 (soak) next |
 | 9J–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -3126,29 +3126,103 @@ error and any reached-the-server status passing straight through.
 Verified: `chaos-smoke` 83/83 ×2, `chaos-suite` 9/9, `fuzz-run` 39/39, `fuzz-harness` 18/18,
 `fuzz-generators` 21/21, `git diff --check` clean.
 
+### Task 5 — Load measurement
+
+`scripts/load-smoke.mjs` (runner) + `load-lib.mjs` (fixtures, origin, driver, transcript) +
+`load-cap.mjs` (cap proofs), with `tests/load-harness.test.mjs` (**11/11**) guarding the harness.
+**64/64 checks, `load: PASS`**, three consecutive full runs. Evidence:
+`docs/transcripts/load/load.md`.
+
+Real listener, real `fetch`, real loopback origins, real SQLite. 3,288 requests per run across both
+series. **Zero failures at every level, both streaming and not.**
+
+Non-streaming (run 3, the committed transcript is run 3's):
+
+| c | requested | ok | p50 | p95 | p99 | max | req/s |
+|---|---|---|---|---|---|---|---|
+| 1 | 100 | 100 | 26.5 | 38.7 | 43.9 | 45.5 | 36.8 |
+| 8 | 200 | 200 | 188.5 | 231.6 | 339.0 | 372.7 | 42.1 |
+| 32 | 320 | 320 | 702.9 | 1319.1 | 2773.0 | 3330.0 | 43.0 |
+| 128 | 512 | 512 | ~1234 | ~11474 | ~11945 | ~12058 | 41.2 |
+| 256 | 512 | 512 | ~3025 | ~10497 | ~11014 | ~11128 | 43.0 |
+
+Streaming reports TTFB separately, and at these levels TTFB ≈ total because the origin's first
+frame is its whole answer: c=1 25.0 ms, c=8 192.2 ms, c=32 765.5 ms, c=128 3,082.5 ms,
+c=256 4,455.4 ms (p50). Throughput stays ~40 req/s across every level — the device saturates, and
+latency grows linearly with concurrency rather than anything collapsing.
+
+Resource observation after 3,288 requests: RSS 353.2 MiB, heap 29.5/206.2 MiB, external 6.4 MiB,
+40 open fds, host free 2,650 MiB, load average 0.12. **No latency threshold is asserted** — the plan
+forbids it, and `scripts/fuzz/host-baseline.mjs` measured 184 s stalls on an idle loop containing no
+BAYZ code, which is why no figure here is a gate. The absence of a threshold is itself pinned by a
+test that greps for one.
+
+**Two concurrency mechanisms, proved separately because they behave differently.** Conflating them
+would misdescribe the system:
+
+- **Outbound** (`packages/router/src/concurrency.ts`, default 32, queue 256) **queues** past the
+  limit, then refuses `rate_limited/concurrency-queue-full`. Proved at the semaphore for exactness
+  (limit 4, queue 2 → the 7th caller is refused) *and* against real work observed **at the origin**:
+  32 clients issuing 64 requests, and the origin — a real HTTP server counting its own concurrent
+  connections — never saw more than 4. That is what "waits rather than opening a socket" means,
+  measured where the socket would be opened.
+- **Inbound** (`apps/server/src/auth.ts:190`) has **no queue at all**: it refuses `429 rate_limited`
+  with `retry-after` the instant `inFlight >= concurrency`. 16 simultaneous requests against a gate
+  of 4 → 5 served, 11 refused, every refusal carrying `retry-after`, and the gate releases its slots
+  afterwards.
+
+**Three mutations, each reverted byte-identical.** Removing the queue-full rejection → `FAIL 35`
+(the 7th acquire never settles) plus `FAIL 37`. Making `release` non-idempotent → `FAIL 36`/`FAIL 37`
+with `inFlight` drifting to −1, the "looks fine while the cap stops capping" failure the
+implementation comment warns about. Skipping the semaphore on the non-streaming transport path →
+`FAIL 38`, origin saw 6 concurrent against a limit of 4.
+
+**Three faults of mine, fixed:**
+
+1. `startBayz({ concurrency: 32 })` — **that option does not exist**
+   (`verify-client-lib.mjs:314` takes `{ dataDir, port, adminToken, kekHex }`). Silently ignored, so
+   the series measured an ungated listener while the code claimed a cap. Now ungated deliberately and
+   for a stated reason: the inbound gate *refuses* rather than queues, so a c=128 series behind it
+   would measure rejection, not latency.
+2. Telemetry counted through `/api/usage/requests`, which caps `limit` at 200
+   (`routes/usage.ts:24`). At 512 requests it returned `undefined` and the check asserted
+   `rowCount >= 0` — true of every number. Now counted in SQL: 1,644 `usage_requests` rows =
+   1,644 completed requests, per series, with `usage_attempts >= usage_requests`.
+3. A harness test whose slice anchor (`"] : ["`) never matched, so it validated an empty string and
+   would have passed for any concurrency levels at all.
+
+The queue-full check is raced against a 200 ms timer rather than awaited, because the unbounded-queue
+mutation made a bare `await` hang the process — Node exited 13 with "unsettled top-level await",
+which is red but reports that the *harness* broke rather than naming the missing bound.
+
+Verified: `load-smoke` 64/64 ×3, `load-harness` 11/11, `chaos-smoke` 83/83, `fuzz-run` 39/39,
+`git diff --check` clean.
+
 ### 9I resume point
 
-**Next: Task 5 — Load measurement.** Create `scripts/load-smoke.mjs` and
-`docs/transcripts/load/`. Drive a real listener with real `fetch` at concurrency **1, 8, 32, 128,
-256** against fast loopback origins. Record p50/p95/p99/max latency, throughput, and error count by
-code. Prove the 9F concurrency cap (default 32): the 33rd concurrent request **waits** rather than
-opening a socket, and beyond the queue depth it is refused `rate_limited` rather than queued
-forever. Repeat the series for streaming, reporting **TTFB separately** from total duration.
+**Next: Task 6 — Soak measurement.** Create `scripts/soak-smoke.mjs` and `docs/transcripts/soak/`.
+Sustain mixed traffic — non-streaming chat, streaming chat, tool roundtrips, model listing, usage
+reads, and periodic management writes — for a documented duration, `--duration` configurable, default
+short enough for CI (**10 minutes**) plus a documented long mode (**2 hours**).
 
-Every figure goes to a transcript naming the device (Termux/Android ARM64, 8 CPUs, Node v24.19.0),
-the timestamp, the commit hash, and the exact command — **the script must refuse to print a summary
-table without writing its transcript.** Assert correctness under load, not speed: valid envelope
-every time, a per-request sentinel proving no cross-talk, and telemetry row count equal to
-completed requests. Assert stability properties only; **no latency threshold** — a performance gate
-on a shared Android device is noise.
+Sample every **15 s** and record: heap used, heap total, external, RSS, active handle count, active
+request count, timer count, open fds (`/proc/self/fd`), socket count, `bayz.db` size, WAL size, and
+telemetry row count.
 
-Carry forward from Tasks 3–4: read timings through `scripts/fuzz/host-baseline.mjs` — a
-multi-second outlier in a socket-bound path is the host stalling (measured up to 184 s with load
-average 0.12), not BAYZ hanging, so assert on BAYZ's own codes and observable state rather than the
-clock. Product load is allowed and required here; **build/test fan-out is not** — one workspace test
-command at a time, since `npm run runtime:verify` exhausts the futex table on this host. A full
-`fuzz-run` takes ~3 minutes and `chaos-smoke` ~2; use a background process with a log rather than a
-foreground call against the 600 s cap.
+Assert, with the numbers in the transcript: heap and RSS have **no positive linear trend beyond a
+documented tolerance across the second half** of the run; handle, timer and fd counts return to
+baseline **±2** after a quiet period; the WAL is checkpointed and does not grow without bound;
+telemetry rows are pruned to the retention bound rather than growing forever; `PRAGMA
+integrity_check` is `ok` at the end. **A leak is a FAIL with the sample series attached, not a
+warning.** A run that cannot complete on this device records `UNVERIFIED` with the reason and the
+partial series.
+
+Carry forward: the 10-minute default exceeds the 600 s foreground cap, so run it as a background
+process with a log and collect the result before claiming anything. Read timings through
+`scripts/fuzz/host-baseline.mjs` — host stalls up to 184 s at load average 0.12 are documented, so
+distinguish a stall from a leak by the *series*, not by one sample. One workspace test command at a
+time. Task 5's RSS observation (353 MiB after 3,288 requests, heap 29.5 MiB) is the baseline a soak
+trend should be read against.
 
 ## Phase 9 GOAT — planning state
 
