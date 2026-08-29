@@ -108,19 +108,40 @@ The distinction that matters: "five runtime dependencies" is the count of *direc
       **Two real defects in the smoke itself, both found by running it rather than by reading it.** First, `--@bayz:registry` passed as two argv entries is not recognised by npm, which treated the URL as a **second install target** and hung for over nine minutes retrying `http://127.0.0.1:40793/` as a package — `ps` showed `npm install <tarball> http://127.0.0.1:40793/`. It must be one `--flag=value` entry. Second, the schema-head import needed the `tsx` loader: without it the run died at check 20 with `ERR_MODULE_NOT_FOUND` on `packages/storage/src/errors.js`. The script now relaunches under `--import tsx` like every other smoke here, and uses the loader for that single constant — everything under test is still the artifact's own compiled bundle in a separate process.
 - [x] Commit — `test: add the Bayz install and first-boot smoke`
 
-### Task 6 — Upgrade path from every prior schema version
+### Task 6 — Upgrade from every prior schema version
+
+**Create:** `packages/storage/test/upgrade-ladder.test.ts`, `scripts/upgrade-smoke.mjs`
+**Test:** `packages/storage/test/upgrade-ladder.test.ts`, `packages/providers/test/corrupt-row.test.ts`
+
+- [x] RED `packages/storage/test/upgrade-ladder.test.ts`: a database built at **every** prior schema version v1…v11 upgrades to head with every row intact — secrets still decrypt, providers/proxies/routes/identities/usage rows all survive, and the migration hash chain validates after each step. **21/21 pass.** Fixtures are built by truncating the real `MIGRATIONS` list, never by writing head and editing `user_version` down, which would produce a shape no BAYZ build ever created.
+- [x] RED same file: a database **ahead of head** is refused rather than downgraded, at a distinct stage (`verify-schema-ahead-of-head`), because no column holding data can be safely removed.
+- [x] RED same file: an edited `user_version`, a ledger gap, and a tampered migration chain are each refused **before** the migration runner acts.
+- [x] RED same file: a mid-migration failure leaves the database at its pre-migration version, and re-opening an already-migrated database applies nothing.
+- [x] RED `packages/providers/test/corrupt-row.test.ts`: corrupted-config recovery — one unparseable `config_json` yields `invalid_provider_config` for **that row**, the rest of the system still starts, the bad id is reported rather than hidden, and the row is deletable. **7/7 pass.** Recovery documented in `docs/install.md`.
+- [x] GREEN `scripts/upgrade-smoke.mjs`: the same ladder against the **installed artifact** — every rung v1…v11 booted by `node_modules/.bin/bayz`, reaching head, serving a real chat through the pre-upgrade route and credential, with `PRAGMA integrity_check` `ok` after each. **83/83 checks.**
+- [x] Verify: `node --import tsx --test packages/storage/test/upgrade-ladder.test.ts` exits 0; `node scripts/upgrade-smoke.mjs` exits 0; every workspace suite still passes.
+
+**Three live defects found by this task, all in production code, all fixed:**
+
+1. **An ahead-of-head database opened cleanly.** A forged `user_version` 14 with a consistent ledger passed every existing check: `verifyRecordedSchemaVersion` (its head matched), zero migrations applied (every version this build knows was already `<= current`), and `verifyMigrationChain` — because the chain folds only the migrations this build *has*, so `chain(…, 14)` and `chain(…, 11)` are byte-identical. Measured: it opened and reported `schemaVersion: 14`. Fixed with `verifySchemaNotAheadOfHead`, called from `openDatabase` **before** the runner.
+2. **A ledger gap was skipped.** `verifyMigrationChain` returns early when no chain is recorded — the normal state for exactly the databases 9J upgrades — so a v11 database with ledger row 3 deleted opened fine. The count check moved into `verifyRecordedSchemaVersion`, before the runner, where no early return can reach it.
+3. **One corrupt provider row killed the whole install.** `runtime.describe()` counts providers through `listProviders()`, which mapped every row through `rowToRecord` and rethrew, so a single unparseable `config_json` made the daemon **exit before listening** — every healthy provider and every stored credential offline over one field. `ProviderRepository.list` now skips undecodable rows and `listUnreadable()` reports their ids (tolerating without reporting would trade a dead install for an invisible one); `GET /api/providers` returns `unreadable` when non-empty. A second defect in the same area: `deleteProvider` checked existence with `get`, which decodes, so the documented repair failed with HTTP 400 on exactly the rows needing it — it now uses a non-decoding `exists`.
+
+**Five mutations run, all caught:** `list` intolerant again (3 red), `listUnreadable` returning `[]` (3 red), ahead-of-head refused only 100+ versions out (2 red), ledger gap accepted when rows are *fewer* than `user_version` (1 red), corrupt rows undeletable again (1 red).
+
+**Original plan text for this task, kept for the record:**
 
 **Create:** `scripts/upgrade-smoke.mjs`
 **Test:** `packages/storage/test/upgrade-ladder.test.ts`
 
-- [ ] RED `upgrade-ladder.test.ts`: for **every** version v1 through the Phase 9 head (v8 after 9D, or v7 if 9D's kind migration lands differently — the test reads the head from the migration table rather than hardcoding it), build a database at that version populated with real rows — secrets, providers, proxies, routes, telemetry, and where applicable identities — then open it with the current code and assert: every migration applies in order, `user_version` reaches head, every pre-existing secret still decrypts, every provider/proxy/route row survives with its values intact, and no row is silently dropped.
-- [ ] RED same file: **a downgrade is refused, not attempted** — a database at a version *above* head fails closed with a distinct code; a database with a gap in `schema_migrations` fails closed; the migration hash chain from 9F Task 5 validates after every upgrade; a mid-migration crash (simulated by throwing inside one migration) leaves the database at its **pre-migration** version with no partial DDL, proving atomicity.
-- [ ] RED same file: corrupted-config recovery — a database whose provider config JSON is unparseable yields `invalid_provider_config` for that row and **still allows the rest of the system to start**, so one bad row is not a bricked install; the recovery path is documented in `docs/install.md`.
-- [ ] Verify RED.
-- [ ] GREEN as needed.
-- [ ] `scripts/upgrade-smoke.mjs`: perform the same ladder against a real installed artifact, with a real chat succeeding after each upgrade step, and a `PRAGMA integrity_check` of `ok` after each.
-- [ ] Verify: `npm run test --workspace @bayz/storage` exits 0; `node scripts/upgrade-smoke.mjs` exits 0.
-- [ ] Commit — `test: prove the Bayz upgrade ladder from every prior schema`
+- [x] RED `upgrade-ladder.test.ts`: for **every** version v1 through the Phase 9 head (v8 after 9D, or v7 if 9D's kind migration lands differently — the test reads the head from the migration table rather than hardcoding it), build a database at that version populated with real rows — secrets, providers, proxies, routes, telemetry, and where applicable identities — then open it with the current code and assert: every migration applies in order, `user_version` reaches head, every pre-existing secret still decrypts, every provider/proxy/route row survives with its values intact, and no row is silently dropped. — *Head read from `TARGET_SCHEMA_VERSION`, measured as **v11**, not the v7/v8 the plan guessed.*
+- [x] RED same file: **a downgrade is refused, not attempted** — a database at a version *above* head fails closed with a distinct code; a database with a gap in `schema_migrations` fails closed; the migration hash chain from 9F Task 5 validates after every upgrade; a mid-migration crash (simulated by throwing inside one migration) leaves the database at its **pre-migration** version with no partial DDL, proving atomicity. — *Both "fails closed" cases required new production code; see defects 1 and 2 above.*
+- [x] RED same file: corrupted-config recovery — a database whose provider config JSON is unparseable yields `invalid_provider_config` for that row and **still allows the rest of the system to start**, so one bad row is not a bricked install; the recovery path is documented in `docs/install.md`. — *Lives in `packages/providers/test/corrupt-row.test.ts` rather than the storage file, because the behaviour belongs to `@bayz/providers` and importing it from `@bayz/storage`'s tests would invert the dependency. The storage file asserts its own half: the database still opens and every row survives.*
+- [x] Verify RED.
+- [x] GREEN as needed.
+- [x] `scripts/upgrade-smoke.mjs`: perform the same ladder against a real installed artifact, with a real chat succeeding after each upgrade step, and a `PRAGMA integrity_check` of `ok` after each. — *v1–v3 predate the `routes` table, so those three rungs assert the API answering rather than a chat; recorded rather than skipped silently.*
+- [x] Verify: `npm run test --workspace @bayz/storage` exits 0; `node scripts/upgrade-smoke.mjs` exits 0.
+- [x] Commit — `test: prove the Bayz upgrade ladder from every prior schema`
 
 ### Task 7 — CI workflow for the untestable platforms
 

@@ -118,11 +118,22 @@ destructive:
 ### If one provider's configuration is unreadable
 
 A single provider row whose stored config JSON cannot be parsed yields `invalid_provider_config` for
-**that provider only**. BAYZ still starts, every other provider still works, and the API still
-answers. One bad row is not a bricked install.
+**that provider only**. BAYZ **still starts**, the database still migrates, every stored credential
+still decrypts, and every other provider still works. One bad row is not a bricked install.
 
-To repair it, delete the offending provider through the API (`DELETE /api/providers/<id>`) and
-recreate it. Its credential is deleted with it, so the credential must be set again.
+To repair it, delete the offending provider through the API and recreate it:
+
+```sh
+curl -X DELETE -H "Authorization: Bearer $BAYZ_API_TOKEN" \
+  http://127.0.0.1:20128/api/providers/<id>
+```
+
+`DELETE /api/providers/<id>` removes the provider's credential in the same call, so the credential
+must be set again after recreating it.
+
+Note that listing providers reads every row, so `GET /api/providers` surfaces the failure rather than
+silently omitting the bad entry. That is deliberate: hiding a corrupt provider from the operator who
+has to fix it would be worse than reporting it.
 
 ## Removing BAYZ
 

@@ -89,11 +89,55 @@ export function verifyRecordedSchemaVersion(db: SqlDatabase, userVersion: number
     // That is not a state any BAYZ build produces.
     throw new StorageError("storage_unavailable", "verify-user-version-orphan");
   }
-  const head = Number(
-    db.prepare("SELECT MAX(version) AS head FROM schema_migrations").get()?.head ?? 0,
-  );
+  const ledger = db
+    .prepare("SELECT MAX(version) AS head, COUNT(*) AS total FROM schema_migrations")
+    .get();
+  const head = Number(ledger?.head ?? 0);
   if (head !== userVersion) {
     throw new StorageError("storage_unavailable", "verify-user-version");
+  }
+  /*
+   * The ledger must also be *complete*, not merely correct at its head (9J Task 6).
+   *
+   * Migrations are 1..n with no gaps — `packages/storage/test/migrations.test.ts` pins
+   * that — so the row count equals the head on any database this project produced. A
+   * deleted or missing row means one of the two witnesses is lying about what ran, and
+   * running domain SQL against a schema assembled from an unknown subset of migrations
+   * is precisely what these checks exist to prevent.
+   *
+   * This lives here rather than in `verifyMigrationChain` deliberately. That function
+   * returns early when no chain has been recorded yet — which is the normal state for a
+   * database being upgraded from a build that predates the chain — so its own head and
+   * count checks are skipped on exactly the upgrade path 9J is about. Measured, not
+   * assumed: a v11 database with ledger row 3 deleted opened cleanly before this check
+   * existed.
+   */
+  const total = Number(ledger?.total ?? 0);
+  if (total !== userVersion) {
+    throw new StorageError("storage_unavailable", "verify-migration-ledger-gap");
+  }
+}
+
+/**
+ * Refuse a database written by a newer BAYZ than this build (9J Task 6).
+ *
+ * **A downgrade fails closed rather than being attempted.** There is no safe way to
+ * remove a column that already holds data, so a database whose `user_version` is ahead
+ * of this build's migration head cannot be "migrated backwards" — and it must not be
+ * opened either, because the newer schema may have constraints and columns this build's
+ * SQL knows nothing about. An operator who downgraded by accident gets a distinct error
+ * naming the mismatch instead of a cascade of failures from domain queries.
+ *
+ * Measured before implementing: nothing refused this. A forged-but-internally-consistent
+ * ahead-of-head database — `user_version` 14 with ledger rows 1..14 — passed
+ * `verifyRecordedSchemaVersion` (its head matched), applied no migrations (every version
+ * was already `<= current`), and passed `verifyMigrationChain` (the chain folds only
+ * migrations this build *has*, so `chain(…, 14)` and `chain(…, 11)` are the same digest).
+ * It opened and reported `schemaVersion: 14`.
+ */
+export function verifySchemaNotAheadOfHead(userVersion: number, head: number): void {
+  if (userVersion > head) {
+    throw new StorageError("storage_unavailable", "verify-schema-ahead-of-head");
   }
 }
 

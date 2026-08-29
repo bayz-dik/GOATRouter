@@ -1,7 +1,7 @@
 import { StorageError, asStorageError } from "./errors.js";
 import { selectDriver } from "./drivers/node-sqlite.js";
-import { verifyRecordedSchemaVersion } from "./integrity.js";
-import { runMigrations, readSchemaVersion } from "./migrations.js";
+import { verifyRecordedSchemaVersion, verifySchemaNotAheadOfHead } from "./integrity.js";
+import { TARGET_SCHEMA_VERSION, runMigrations, readSchemaVersion } from "./migrations.js";
 import { databasePath, ensureDataDir, restrictDatabaseFileModes } from "./paths.js";
 import type { SqlDatabase, SqlDriver } from "./sql.js";
 
@@ -73,7 +73,18 @@ export function openDatabase(options: OpenDatabaseOptions): BayzDatabase {
     // Checked against `schema_migrations` *before* the runner acts on it: a
     // `user_version` edited down would otherwise re-apply migrations over an existing
     // schema, and one edited up would silently skip migrations that never ran.
-    verifyRecordedSchemaVersion(db, readSchemaVersion(db));
+    const recordedVersion = readSchemaVersion(db);
+    verifyRecordedSchemaVersion(db, recordedVersion);
+    /*
+     * And a database from a *newer* build is refused outright (9J Task 6).
+     *
+     * Also before the runner, and for a different reason: `runMigrations` would find
+     * nothing to do — every version it knows is already `<= current` — so an
+     * ahead-of-head database would open silently and then run this build's SQL against a
+     * schema it has never seen. A downgrade cannot be performed safely, so it is not
+     * attempted.
+     */
+    verifySchemaNotAheadOfHead(recordedVersion, TARGET_SCHEMA_VERSION);
 
     const appliedMigrations = runMigrations(db);
 

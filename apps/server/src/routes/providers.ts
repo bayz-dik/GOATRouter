@@ -33,6 +33,19 @@ export function registerProviderRoutes(
     requireScope(request, reply, "providers.read") ??
     handleDomain(request, reply, () => ({
       providers: runtime.providers.listProviders(),
+      /*
+       * Ids of rows that could not be decoded, so a corrupt provider is visible to the operator who
+       * has to repair it. Present only when non-empty, so the normal response shape is unchanged.
+       *
+       * Found by the 9J upgrade ladder: one unparseable `config_json` used to throw out of
+       * `listProviders()`, which `runtime.describe()` calls at startup, so the daemon exited instead
+       * of listening. Tolerating the row without reporting it would trade a dead install for an
+       * invisible one.
+       */
+      ...(() => {
+        const unreadable = runtime.providers.listUnreadableProviders();
+        return unreadable.length === 0 ? {} : { unreadable };
+      })(),
     })),
   );
 

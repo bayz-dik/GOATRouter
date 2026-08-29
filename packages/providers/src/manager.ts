@@ -87,6 +87,8 @@ export interface ProviderManager {
   getProvider(id: string): ProviderView | undefined;
   requireProvider(id: string): ProviderView;
   listProviders(): ProviderView[];
+  /** Ids of provider rows that could not be decoded; see `ProviderRepository.list`. */
+  listUnreadableProviders(): string[];
   updateProvider(id: string, patch: UpdateProviderInput): ProviderView;
   deleteProvider(id: string): boolean;
   setCredential(id: string, credential: string): void;
@@ -258,6 +260,12 @@ export function createProviderManager(
       return repository.list().map(toView);
     },
 
+    listUnreadableProviders(): string[] {
+      // Surfaced so the API and dashboard can tell an operator which row to repair; see
+      // `ProviderRepository.list`.
+      return repository.listUnreadable();
+    },
+
     updateProvider(id: string, patch: UpdateProviderInput): ProviderView {
       const record = repository.update(id, patch);
       log(redactSecrets({ event: "provider_updated", id: record.id }));
@@ -266,7 +274,14 @@ export function createProviderManager(
 
     deleteProvider(id: string): boolean {
       const validated = assertProviderId(id);
-      if (repository.get(validated) === undefined) {
+      /*
+       * Existence is checked with `exists`, not `get`.
+       *
+       * `get` decodes the row, so a corrupt `config_json` threw `invalid_provider_config` here and
+       * the documented repair — delete the bad provider and recreate it — failed with HTTP 400 on
+       * exactly the rows that need it. Found by the 9J upgrade ladder against the installed artifact.
+       */
+      if (!repository.exists(validated)) {
         return false;
       }
       // The credential goes first: a row removed while its secret survived would

@@ -79,8 +79,21 @@ export type UpdateProviderInput = {
 export interface ProviderRepository {
   create(input: CreateProviderInput): ProviderRecord;
   get(id: string): ProviderRecord | undefined;
+  /**
+   * Whether a row with this id exists, without decoding it.
+   *
+   * Separate from `get` so a caller that only needs existence — deletion, most importantly — is not
+   * defeated by a corrupt `config_json`.
+   */
+  exists(id: string): boolean;
   require(id: string): ProviderRecord;
   list(): ProviderRecord[];
+  /**
+   * Ids of rows `list` could not decode.
+   *
+   * Exists so tolerating a corrupt row is not the same as hiding it — see `list`.
+   */
+  listUnreadable(): string[];
   update(id: string, patch: UpdateProviderInput): ProviderRecord;
   delete(id: string): boolean;
   /** Provider ids currently defaulting to this proxy, sorted. Empty if unknown. */
@@ -297,6 +310,11 @@ export function createProviderRepository(
       return row === undefined ? undefined : rowToRecord(row);
     },
 
+    exists(id: string): boolean {
+      // Deliberately does not decode the row; see the interface note.
+      return selectOne(assertProviderId(id)) !== undefined;
+    },
+
     require(id: string): ProviderRecord {
       const record = repository.get(id);
       if (record === undefined) {
@@ -306,10 +324,42 @@ export function createProviderRepository(
     },
 
     list(): ProviderRecord[] {
-      return db
-        .prepare("SELECT * FROM providers ORDER BY id")
-        .all()
-        .map(rowToRecord);
+      /*
+       * **A single unreadable row must not take the whole install down.**
+       *
+       * Found by the 9J upgrade ladder against the installed artifact: `runtime.describe()` counts
+       * providers through this method at startup, so one row with unparseable `config_json` made the
+       * daemon exit before listening — taking every healthy provider and every stored credential
+       * offline over one corrupt field.
+       *
+       * Unreadable rows are skipped here and reported by `listUnreadable`, never silently dropped.
+       * Silence would be its own failure: an operator cannot repair a provider that nothing admits
+       * exists, while its credential sits encrypted in the database attached to it.
+       *
+       * `get`/`require` still throw for the specific row, so nothing routes through a config that
+       * failed validation.
+       */
+      const records: ProviderRecord[] = [];
+      for (const row of db.prepare("SELECT * FROM providers ORDER BY id").all()) {
+        try {
+          records.push(rowToRecord(row));
+        } catch {
+          // Reported by `listUnreadable`, which reads the same rows.
+        }
+      }
+      return records;
+    },
+
+    listUnreadable(): string[] {
+      const ids: string[] = [];
+      for (const row of db.prepare("SELECT * FROM providers ORDER BY id").all()) {
+        try {
+          rowToRecord(row);
+        } catch {
+          ids.push(String(row.id));
+        }
+      }
+      return ids;
     },
 
     update(id: string, patch: UpdateProviderInput): ProviderRecord {

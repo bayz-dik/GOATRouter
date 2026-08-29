@@ -132,6 +132,7 @@ export {
   verifyConfigHmac,
   verifyMigrationChain,
   verifyRecordedSchemaVersion,
+  verifySchemaNotAheadOfHead,
   type ConfigIntegrity,
   type RollbackVerdict,
 } from "./integrity.js";

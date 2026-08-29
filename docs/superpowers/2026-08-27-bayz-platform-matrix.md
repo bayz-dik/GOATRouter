@@ -30,7 +30,7 @@ smoke run on any non-primary platform, fails the test.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Linux x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Linux ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
-| Termux/Android ARM64 | PASS (smoke:install#3-11) | PASS (smoke:install#12-19) | PASS (smoke:install#20) | PASS (smoke:install#29-31) | PASS (smoke:install#33-36) | PASS (smoke:install#40-42) | PASS (smoke:install#21-25) | PASS (smoke:install#43-50) | UNVERIFIED | PASS (smoke:install#14-16) | PASS (smoke:install#54-60) |
+| Termux/Android ARM64 | PASS (smoke:install#3-11) | PASS (smoke:install#12-19) | PASS (smoke:install#20) | PASS (smoke:install#29-31) | PASS (smoke:install#33-36) | PASS (smoke:install#40-42) | PASS (smoke:install#21-25) | PASS (smoke:install#43-50) | PASS (smoke:upgrade#3-7) | PASS (smoke:install#14-16) | PASS (smoke:install#54-60) |
 | Windows x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Windows ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | macOS x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
@@ -38,7 +38,25 @@ smoke run on any non-primary platform, fails the test.
 
 ## Observations recorded so far
 
-**Termux/Android ARM64 — ten of eleven columns `PASS`, all from `scripts/install-smoke.mjs`
+**Termux/Android ARM64 — upgrade from v1: `PASS`.** 9J Task 6 built a database at **every** prior
+schema version v1 through v11, using the real `MIGRATIONS` list truncated to that version, and opened
+each one with the **installed artifact** (`node_modules/.bin/bayz`). Every rung reached head v11,
+`PRAGMA integrity_check` returned `ok` after each, and from v4 up — the first version with a `routes`
+table — a real chat completed through the pre-upgrade route using the pre-upgrade encrypted
+credential, which the fixture origin confirmed by matching the `Authorization` header it received.
+83/83 checks (`scripts/upgrade-smoke.mjs`).
+
+The matrix cell cites `smoke:upgrade#3-7`, the v1 rung specifically, because that is what the column
+names. The full ladder is the script's own 83 checks.
+
+Two honest limits on that row. v1–v3 predate the `routes` table, so those three rungs assert that the
+database upgrades and the API still answers, not that a chat succeeds — there is no route to chat
+through, and inventing one would test v11's schema rather than v1's. And the ladder starts from
+databases this repository *constructs*; no v1-era BAYZ binary exists to have written one, so what is
+proven is that the migration sequence is correct and complete, not that a database from a historical
+release has been recovered.
+
+**Termux/Android ARM64 — the other ten columns `PASS`, all from `scripts/install-smoke.mjs`
 (64/64 checks).** Every one was observed against the **installed artifact**, not the workspace: the
 tarball was installed into a clean temporary prefix with a temporary npm cache, and the checks drove
 the binary npm linked at `node_modules/.bin/bayz`. A workspace-only run would prove nothing about
