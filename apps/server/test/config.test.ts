@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { loadRuntimeConfig } from "../src/config.js";
 
@@ -6,7 +9,28 @@ test("uses private local defaults", () => {
   const config = loadRuntimeConfig({});
   assert.equal(config.host, "127.0.0.1");
   assert.equal(config.port, 20128);
-  assert.match(config.dataDir, /\.bayz$/);
+  /*
+   * 9J Task 3 moved data directory resolution into `src/data-dir.ts`, and this assertion changed
+   * with it. It used to be `/\.bayz$/`, which pinned the *old inlined* `${homedir()}/.bayz` — the
+   * only answer the previous code could give.
+   *
+   * The resolver is a fallback chain: an existing `~/.bayz` always wins (the backward-compatibility
+   * guard, so no existing install is orphaned), and only when none exists does it use the platform
+   * path — `~/.local/share/bayz` here. So on a machine that has run BAYZ before, the old assertion
+   * is still what happens; on a machine that has not, it is not. This asserts the *chain*, which is
+   * the behaviour, rather than one of its two outcomes.
+   *
+   * Every branch of the chain is covered exhaustively in `data-dir.test.ts` against injected
+   * platforms; this test only checks that `loadRuntimeConfig` is wired to it.
+   */
+  const legacy = join(homedir(), ".bayz");
+  assert.equal(
+    config.dataDir,
+    existsSync(legacy) ? legacy : join(homedir(), ".local", "share", "bayz"),
+    "loadRuntimeConfig no longer resolves the data directory through data-dir.ts",
+  );
+  // The chosen link in the chain is reported, so the daemon can log it. Metadata only: an enum.
+  assert.equal(config.dataDirReason, existsSync(legacy) ? "existing" : "platform-default");
 });
 
 test("rejects invalid ports and public binding without explicit opt-in", () => {

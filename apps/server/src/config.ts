@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRuntimeDataDir, type DataDirReason } from "./data-dir.js";
 import { derivePosture } from "./posture.js";
 
 export type RuntimeConfig = {
@@ -8,6 +8,16 @@ export type RuntimeConfig = {
   port: number;
   dataDir: string;
   dashboardRoot: string;
+  /**
+   * Why the data directory is where it is (9J Task 3).
+   *
+   * Optional because every existing test fixture builds a `RuntimeConfig` by hand, and making it
+   * required would force a value into dozens of fixtures that never read it. `index.ts` logs it so an
+   * operator can see which link in the fallback chain was taken — the difference between "your
+   * existing directory was found" and "a new platform-default one was created" is the difference
+   * between a working upgrade and an apparently empty install.
+   */
+  dataDirReason?: DataDirReason;
 };
 
 export function loadRuntimeConfig(
@@ -33,10 +43,26 @@ export function loadRuntimeConfig(
   if (derivePosture(host) !== "loopback" && env.BAYZ_ALLOW_REMOTE !== "true") {
     throw new Error("Non-loopback BAYZ_HOST requires BAYZ_ALLOW_REMOTE=true");
   }
+  /*
+   * The data directory comes from `data-dir.ts` and nowhere else (9J Task 3).
+   *
+   * `resolveRuntimeDataDir` is called rather than `resolveDataDir` because this file must not read
+   * the real platform or home directory itself — `tests/portability.test.mjs` asserts the resolver is
+   * the only file in the repository that does. The injected `env` is still passed through, so an
+   * explicit `BAYZ_DATA_DIR` in a test fixture reaches the resolver.
+   *
+   * `resolve()` is deliberately *not* applied to the result. The resolver already returns an absolute
+   * path, and running `resolve()` over a Windows answer while executing on POSIX would rewrite
+   * `C:\Users\x\AppData\Local\bayz` into a path relative to the current working directory. The
+   * dashboard root below still uses `resolve()`, because that value is always a path on the machine
+   * this process is running on.
+   */
+  const dataDir = resolveRuntimeDataDir(env);
   return {
     host,
     port,
-    dataDir: resolve(env.BAYZ_DATA_DIR ?? `${homedir()}/.bayz`),
+    dataDir: dataDir.path,
+    dataDirReason: dataDir.reason,
     dashboardRoot: resolve(
       env.BAYZ_DASHBOARD_ROOT ??
         fileURLToPath(new URL("../../dashboard/dist/", import.meta.url)),

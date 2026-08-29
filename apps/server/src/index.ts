@@ -93,6 +93,11 @@ app.log.info(
   {
     ...runtime.describe(),
     dataDir: config.dataDir,
+    // Which link in the 9J Task 3 fallback chain was taken. `existing` means an established
+    // `~/.bayz` was found and reused; `platform-default` means a new directory was created because
+    // none existed. An operator staring at an apparently empty install needs to be able to tell
+    // those apart, and the reason is an enum — no environment dump, so no key can ride along.
+    dataDirReason: config.dataDirReason,
     apiTokenSource: runtime.apiTokenSource,
     // Operational shape only: which posture was derived and which protections are in
     // effect. No certificate path, no token, no key.

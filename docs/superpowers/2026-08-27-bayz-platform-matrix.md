@@ -30,11 +30,26 @@ smoke run on any non-primary platform, fails the test.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Linux x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Linux ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
-| Termux/Android ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
+| Termux/Android ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | PASS (test:tests/portability.test.mjs) | UNVERIFIED |
 | Windows x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Windows ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | macOS x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | macOS ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
+
+## Observations recorded so far
+
+**Termux/Android ARM64 — data dir permissions: `PASS`.** 9J Task 3 probed the shipped
+`packages/storage/src/paths.ts` on this device's real filesystem, in a child process, rather than
+reading the source: `ensureDataDir` produced mode `0700` and `restrictDatabaseFileModes` produced
+`0600` on `bayz.db`, `bayz.db-wal`, and `bayz.db-shm`. The probe reports the octal it observed, so a
+mount that could not represent POSIX modes would have recorded
+`UNVERIFIED: filesystem does not honour POSIX modes` with the mode actually seen instead of failing.
+Evidence: `tests/portability.test.mjs`.
+
+Both **Windows** rows keep `UNVERIFIED` in that column deliberately, and a test in
+`tests/portability.test.mjs` asserts they do. `0700` has no `chmod`-settable NTFS equivalent, so the
+code takes the same tolerated best-effort path there — which is not the same claim as parity, and
+there is no Windows machine here to find out what it actually does.
 
 ## What must not be claimed
 
