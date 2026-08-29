@@ -69,7 +69,7 @@
     silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
     could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
     rejected *after* the work was done). All four fixed with regression tests.
-  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–3 **COMPLETE**, Tasks 4–7
+  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–4 **COMPLETE**, Tasks 5–7
     **NOT STARTED**. Seven tasks total.
     `scripts/fuzz/harness.mjs` + `tests/fuzz-harness.test.mjs` (**18/18**): xoshiro128\*\*
     over a SHA-256 seed expansion, zero dependencies, `node:crypto` for seeding only.
@@ -984,7 +984,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
-| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–3 of 7 done; `fuzz-harness` 18/18, `fuzz-generators` 21/21, `fuzz-run` **39/39** (13 targets × 5,000 iterations), corpus 93 files; Task 4 (chaos scenarios) next |
+| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–4 of 7 done; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios, real sockets/SQLite/restarts), `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9; Task 5 (load measurement) next |
 | 9J–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -3044,32 +3044,111 @@ Verified: `fuzz-run` **39/39** ×3, `fuzz-harness` 18/18, `fuzz-generators` 21/2
 `@bayz/proxy` 121/121, `@bayz/identity` 69/69, `@bayz/telemetry` 55/55, `@bayz/gateway` 80/80,
 `@bayz/server` 338/338, `git diff --check` clean.
 
+### Task 4 — Chaos scenarios
+
+`scripts/chaos-smoke.mjs` (77, runner) + `chaos-lib.mjs` (426, fixtures) + `chaos-part1.mjs`
+(scenarios 1–5) + `chaos-part2.mjs` (6–8) + `chaos-part3.mjs` (9–11), with
+`tests/chaos-suite.test.mjs` (**9/9**) guarding the harness itself. **83/83 checks,
+`chaos: PASS`**, two consecutive clean runs. `PRAGMA integrity_check` clean after all ten
+storage-owning scenarios.
+
+Real components throughout: a real Fastify listener on a real port, real loopback origins, a real
+HTTP CONNECT proxy that can fail at chosen points, real SQLite with real envelope crypto, a real
+process restart on the same port. No `app.inject`, no stubbed transport.
+
+Numbered ranges, citable as `smoke:chaos#N` (append-only):
+
+| # | scenario |
+|---|---|
+| 1–5 | provider dies mid-request |
+| 6–10 | provider dies mid-**stream** after the first byte |
+| 11–15 | provider malformed responses |
+| 16–22 | RST at pre-request, post-headers, mid-body, mid-SSE |
+| 23–30 | upstream total vs idle timeout |
+| 31–44 | proxy dies mid-handshake and mid-tunnel |
+| 45–53 | DNS failure and DNS rebinding |
+| 54–63 | credential and identity revocation mid-operation |
+| 64–73 | BAYZ restarted mid-stream |
+| 74–82 | SQLite reopen under a held WAL, read-only injection |
+| 83 | disk exhaustion |
+
+**Four mutations, each reverted byte-identical.** Allowing the post-first-chunk path in
+`router.ts` to `continue` the failover loop turned #7/#8/#10 red — that is the 9B
+no-failover-after-first-byte guarantee under test. Disabling the resolved-address egress re-check
+turned #49/#50 red. Two revocation mutations were needed for #61/#62: disabling `isUsable`'s
+`revoked` check alone left them **green**, because `manager.revoke` also erases the stored key, so
+`verifyKey` has nothing to compare — revocation is genuinely double-guarded (auditable flag +
+cryptographic erasure), and only disabling both turns the checks red.
+
+**Three of my own assertions were wrong, and the code was right.** Recorded because each would
+have shipped a false green:
+
+1. `requestTimeoutMs` passed at the top level of a route returns **201** and is silently the
+   60 s default — it belongs inside `config`. Both timeout paths were taking 60 s while the
+   checks passed, testing nothing. Now the total path returns at ~1,040 ms with a 1 s deadline.
+2. I asserted the idle timer should outlast the request deadline on a stalled stream. Measured:
+   both at ~1,040 ms. `transport.ts:483` arms the total timer once for the whole stream while
+   `bumpIdle()` at :466 re-arms a separate 60 s timer per chunk, so with a 1 s total the total
+   correctly wins. The two mechanisms are distinguished by **stage code**
+   (`stream-total-timeout` vs `stream-idle-timeout`), not by wall-clock ordering.
+3. One check demanded the provider credential never reach a socket across *all* proxy failures,
+   including mid-tunnel. A granted tunnel carrying the credential is the tunnel working. Split:
+   four handshake-failure modes assert zero credential bytes; the mid-tunnel case asserts the
+   opposite — the request *did* traverse the tunnel and did not go direct.
+
+**Two plan expectations corrected against measurement.** `credential_missing` after
+`DELETE …/credential` does not occur: `router.ts:234` branches on `provider.credentialPresent`, so
+with no stored credential the request goes out **unauthenticated** (200 against an origin that
+accepts anything) rather than raising. `credential_missing` fires at `manager.ts:322` when a
+credential is *expected* but unreadable — a corrupt envelope or rotated KEK. The asserted property
+is the one that matters: the deleted secret is never sent again, proven by the origin observing no
+`Authorization` header. Whether a credential-free upstream request should be refused outright is a
+product decision, recorded as a note rather than invented as a defect.
+
+**Two scenarios UNVERIFIED on this host, with reasons, per the plan's rule:**
+
+- Read-only-database injection: `chmod 0444` does not prevent writes for this process (root under
+  Termux/proot; `paths.ts:56` documents that Android and FAT-derived mounts may not honour POSIX
+  modes). The `storage_unavailable` path is covered by `@bayz/storage` unit tests.
+- Disk exhaustion: `mount -t tmpfs` exits **0** under proot while mounting nothing, leaving the
+  mount point inaccessible. An earlier version of this scenario **passed for the wrong reason** —
+  `startBayz` threw `storage_unavailable` from a directory that had ceased to exist, not from a
+  full disk. The mount is now probed (write, read back, confirm `ENOSPC` past the size limit)
+  before it is trusted, and `tests/chaos-suite.test.mjs` pins that probe so the regression cannot
+  return. Filling the real filesystem is refused deliberately: `/tmp` is shared Android device
+  storage with 211 GiB free.
+
+One harness accommodation, narrow and explained in-file: restarting on the **same port** makes
+undici hand out a pooled socket belonging to the dead process (`UND_ERR_SOCKET`). A single retry on
+socket-level errors only — which is what "reconnect" means for a real client — with any other
+error and any reached-the-server status passing straight through.
+
+Verified: `chaos-smoke` 83/83 ×2, `chaos-suite` 9/9, `fuzz-run` 39/39, `fuzz-harness` 18/18,
+`fuzz-generators` 21/21, `git diff --check` clean.
+
 ### 9I resume point
 
-**Next: Task 4 — Chaos scenarios.** Create `scripts/chaos-smoke.mjs`; the script's own exit code
-is the test. Every scenario runs against **real** components — a real listener, real origins, real
-proxies, a real database — and must assert a *specific recovery*, not merely "no crash".
+**Next: Task 5 — Load measurement.** Create `scripts/load-smoke.mjs` and
+`docs/transcripts/load/`. Drive a real listener with real `fetch` at concurrency **1, 8, 32, 128,
+256** against fast loopback origins. Record p50/p95/p99/max latency, throughput, and error count by
+code. Prove the 9F concurrency cap (default 32): the 33rd concurrent request **waits** rather than
+opening a socket, and beyond the queue depth it is refused `rate_limited` rather than queued
+forever. Repeat the series for streaming, reporting **TTFB separately** from total duration.
 
-Scenarios the plan names: provider dies mid-request; provider dies mid-**stream** after the first
-byte (**no failover may be attempted** — assert the second origin saw zero requests, per 9B's
-honest semantics — and no partial row is written); proxy dies mid-handshake and mid-tunnel with
-distinct fixed codes and the provider credential never sent in the clear; RST at pre-request,
-post-headers, mid-body and mid-SSE; DNS failure and DNS *change* between resolve and connect (the
-second resolution re-checked against the egress policy per 9D Task 1); upstream timeout, with idle
-timeout distinct from total; credential revoked mid-operation (in-flight completes or fails
-cleanly, *next* request fails `credential_missing`, never a stale success); client identity
-revoked mid-stream (stream terminates, reconnect is 401); BAYZ restarted mid-stream (terminal
-error, schema opens, identities and providers survive, no orphaned row or lock); SQLite reopen
-under a held WAL plus an injected read-only-file failure surfacing `storage_unavailable`; and a
-disk-full simulation — recorded `UNVERIFIED` with a reason if it cannot be simulated here rather
-than skipped silently. `PRAGMA integrity_check` must return `ok` after **every** scenario.
+Every figure goes to a transcript naming the device (Termux/Android ARM64, 8 CPUs, Node v24.19.0),
+the timestamp, the commit hash, and the exact command — **the script must refuse to print a summary
+table without writing its transcript.** Assert correctness under load, not speed: valid envelope
+every time, a per-request sentinel proving no cross-talk, and telemetry row count equal to
+completed requests. Assert stability properties only; **no latency threshold** — a performance gate
+on a shared Android device is noise.
 
-Carry forward from Task 3: on this host, read timings through
-`scripts/fuzz/host-baseline.mjs`. A multi-second outlier in a socket-bound scenario is the host
-stalling, not BAYZ hanging — assert on BAYZ's own error codes and observable state, not the clock.
-Keep to one workspace test command at a time; `npm run runtime:verify` exhausts the futex table
-here. A full `fuzz-run` takes ~3 minutes, dominated by `socks5`; use a background process with a
-log rather than a foreground call against the 600 s cap.
+Carry forward from Tasks 3–4: read timings through `scripts/fuzz/host-baseline.mjs` — a
+multi-second outlier in a socket-bound path is the host stalling (measured up to 184 s with load
+average 0.12), not BAYZ hanging, so assert on BAYZ's own codes and observable state rather than the
+clock. Product load is allowed and required here; **build/test fan-out is not** — one workspace test
+command at a time, since `npm run runtime:verify` exhausts the futex table on this host. A full
+`fuzz-run` takes ~3 minutes and `chaos-smoke` ~2; use a background process with a log rather than a
+foreground call against the 600 s cap.
 
 ## Phase 9 GOAT — planning state
 

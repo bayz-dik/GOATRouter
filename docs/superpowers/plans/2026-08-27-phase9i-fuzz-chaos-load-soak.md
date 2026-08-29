@@ -95,20 +95,20 @@ export function fuzz({ name, seed, iterations, generate, run });
 
 Each scenario runs against **real** components — a real listener, real origins, real proxies, a real database — and asserts a specific recovery, not merely "no crash".
 
-- [ ] Provider dies mid-request: the client receives the stable envelope with `unreachable`, telemetry records `request.failed`, and the next request to a healthy provider succeeds.
-- [ ] Provider dies mid-**stream**, after the first byte: the client sees a terminal error event, **no failover is attempted** (9B's honest semantics — assert the second origin observed zero requests), and no partial row is written.
-- [ ] Proxy dies mid-handshake and mid-tunnel: distinct fixed codes, and the provider's own credential is never sent in the clear (assert the origin observed no request).
-- [ ] Connection reset (RST) at each of: pre-request, post-headers, mid-body, mid-SSE.
-- [ ] DNS failure and DNS *change* between resolve and connect: the second resolution is re-checked against the egress policy per 9D Task 1.
-- [ ] Upstream timeout, and idle timeout distinct from total timeout.
-- [ ] Credential revoked mid-operation: the in-flight request completes or fails cleanly, and the *next* request fails with `credential_missing` — never a stale success.
-- [ ] Client identity revoked mid-stream: the stream terminates and a reconnect is `401`.
-- [ ] BAYZ restarted mid-stream: the client sees a terminal error; on restart the schema opens, the identities and providers survive, and no orphaned row or lock remains.
-- [ ] SQLite reopen under a held WAL, and an injected storage failure (a read-only database file) surfaces `storage_unavailable` and does not corrupt the file — assert `PRAGMA integrity_check` returns `ok` after every scenario.
-- [ ] Disk-full simulation via a bounded temp filesystem if the platform allows it; if it cannot be simulated here, record `UNVERIFIED` with the reason rather than skipping silently.
-- [ ] The script prints numbered checks and exits non-zero on any failure.
-- [ ] Verify: `node scripts/chaos-smoke.mjs` exits 0; `PRAGMA integrity_check` clean in every scenario.
-- [ ] Commit — `test: add the Bayz chaos scenario suite`
+- [x] Provider dies mid-request: the client receives the stable envelope with `unreachable`, telemetry records `request.failed`, and the next request to a healthy provider succeeds. — `smoke:chaos#1-5`
+- [x] Provider dies mid-**stream**, after the first byte: the client sees a terminal error event, **no failover is attempted** (9B's honest semantics — assert the second origin observed zero requests), and no partial row is written. — `smoke:chaos#6-10`, mutation-proved (allowing the post-first-chunk path to `continue` turned #7, #8 and #10 red)
+- [x] Proxy dies mid-handshake and mid-tunnel: distinct fixed codes, and the provider's own credential is never sent in the clear (assert the origin observed no request). — `smoke:chaos#31-44`; split into two claims, see below
+- [x] Connection reset (RST) at each of: pre-request, post-headers, mid-body, mid-SSE. — `smoke:chaos#16-22`
+- [x] DNS failure and DNS *change* between resolve and connect: the second resolution is re-checked against the egress policy per 9D Task 1. — `smoke:chaos#45-53`, mutation-proved (disabling the resolved-address re-check turned #49 and #50 red)
+- [x] Upstream timeout, and idle timeout distinct from total timeout. — `smoke:chaos#23-30`; the two mechanisms are distinguished by **stage code** (`stream-total-timeout` vs `stream-idle-timeout`), not by wall-clock ordering: with a 1 s route deadline the total timer correctly fires before the 60 s idle timer
+- [x] Credential revoked mid-operation: the in-flight request completes or fails cleanly, and the *next* request fails with `credential_missing` — never a stale success. — `smoke:chaos#54-58`. **Measured behaviour differs from this expectation and the plan text was wrong, not the code:** `router.ts:234` branches on `provider.credentialPresent`, so with no stored credential the request goes out *unauthenticated* (200 here) rather than raising `credential_missing`, which fires at `manager.ts:322` when a credential is expected but unreadable. The asserted property is the one that matters — the deleted secret is never sent again, confirmed by the origin observing no `Authorization` header.
+- [x] Client identity revoked mid-stream: the stream terminates and a reconnect is `401`. — `smoke:chaos#59-63`. Revocation is **double-guarded**: disabling `isUsable`'s `revoked` check alone left the checks green because `manager.revoke` also erases the stored key; only disabling both turned #61 and #62 red.
+- [x] BAYZ restarted mid-stream: the client sees a terminal error; on restart the schema opens, the identities and providers survive, and no orphaned row or lock remains. — `smoke:chaos#64-73`
+- [x] SQLite reopen under a held WAL, and an injected storage failure (a read-only database file) surfaces `storage_unavailable` and does not corrupt the file — assert `PRAGMA integrity_check` returns `ok` after every scenario. — `smoke:chaos#74-82`. Reopen-under-WAL verified. Read-only injection **UNVERIFIED on this host**: `chmod 0444` does not prevent writes for this process (root under Termux/proot; `paths.ts:56` documents that Android and FAT-derived mounts may not honour POSIX modes). Covered by `@bayz/storage` unit tests instead.
+- [x] Disk-full simulation via a bounded temp filesystem if the platform allows it; if it cannot be simulated here, record `UNVERIFIED` with the reason rather than skipping silently. — `smoke:chaos#83`, **UNVERIFIED with reason.** `mount -t tmpfs` exits **0** under proot while mounting nothing, and an earlier version of this scenario passed on a `storage_unavailable` raised by a vanished directory. The mount is now probed (write, read back, confirm `ENOSPC` past the size limit) before it is trusted.
+- [x] The script prints numbered checks and exits non-zero on any failure. — `test:tests/chaos-suite.test.mjs` pins both exit paths, including the tsx relaunch propagating the child's status
+- [x] Verify: `node scripts/chaos-smoke.mjs` exits 0; `PRAGMA integrity_check` clean in every scenario. — **83/83, `chaos: PASS`**, two consecutive clean runs; integrity check clean after all ten storage-owning scenarios
+- [x] Commit — `test: add the Bayz chaos scenario suite`
 
 ### Task 5 — Load measurement
 
