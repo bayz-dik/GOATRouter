@@ -376,13 +376,18 @@ export function findManifestViolations(manifest) {
 /**
  * The licence the artifact may claim.
  *
- * **9K Task 3 owns the licence and blocks on a user decision that has not been made.** There is no
- * `LICENSE` file in this repository and no `license` field in any of the nine workspace manifests.
+ * **Resolved in 9K Task 3: the repository owner chose Apache-2.0.** A canonical `LICENSE` file sits at
+ * the repository root and every workspace manifest declares the same identifier, so the artifact now
+ * declares `Apache-2.0` and ships the licence text — Apache-2.0 clause 4(a) requires the copy to
+ * travel with any redistribution.
  *
- * So the artifact declares `UNLICENSED` — the SPDX-recognised marker for "no licence granted" — which
- * is *true* today. Inventing `MIT` to satisfy the plan's "a `license` field is present" would be a
- * false statement about a legal fact, and a false licence is worse than an honest absence. When 9K
- * adds the file, this reads it and the artifact's claim follows automatically.
+ * Before that decision this returned `UNLICENSED`, the SPDX marker for "no licence granted", because
+ * there was no `LICENSE` file and no `license` field anywhere. That was *true* at the time; inventing
+ * `MIT` to satisfy a checklist would have been a false statement about a legal fact, and a false
+ * licence is worse than an honest absence.
+ *
+ * The fallback stays deliberately: if the `LICENSE` file is ever deleted, the artifact reverts to
+ * `UNLICENSED` rather than claiming a licence it cannot ship.
  */
 export function resolveLicense(root = REPO_ROOT) {
   const rootManifest = readJson(join(root, "package.json"));

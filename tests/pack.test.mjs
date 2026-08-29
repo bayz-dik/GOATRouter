@@ -109,8 +109,15 @@ test("the tarball contents are exactly the intended set", () => {
    * Pinned as an exact list. A tarball is the one artifact where "roughly the right files" is not
    * good enough — every extra file is shipped to every user forever, and the 57-file baseline is the
    * regression being pinned.
+   *
+   * `package/LICENSE` joined the set in 9K Task 3, when the owner chose Apache-2.0 and a real
+   * `LICENSE` file appeared at the repository root. `scripts/pack.mjs` already shipped it
+   * conditionally; before 9K there was no file to ship, so the artifact declared `UNLICENSED`.
+   * Redistribution under Apache-2.0 clause 4(a) requires the licence copy to travel with the
+   * artifact, so this entry is a requirement rather than a convenience.
    */
   assert.deepEqual(files, [
+    "package/LICENSE",
     "package/README.md",
     "package/dist/bayz.mjs",
     "package/dist/dashboard/assets/index-B6wiUNeX.js",
