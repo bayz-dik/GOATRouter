@@ -30,7 +30,7 @@ smoke run on any non-primary platform, fails the test.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Linux x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Linux ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
-| Termux/Android ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | PASS (test:tests/portability.test.mjs) | UNVERIFIED |
+| Termux/Android ARM64 | PASS (smoke:install#3-11) | PASS (smoke:install#12-19) | PASS (smoke:install#20) | PASS (smoke:install#29-31) | PASS (smoke:install#33-36) | PASS (smoke:install#40-42) | PASS (smoke:install#21-25) | PASS (smoke:install#43-50) | UNVERIFIED | PASS (smoke:install#14-16) | PASS (smoke:install#54-60) |
 | Windows x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | Windows ARM64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
 | macOS x64 | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED | UNVERIFIED |
@@ -38,18 +38,34 @@ smoke run on any non-primary platform, fails the test.
 
 ## Observations recorded so far
 
-**Termux/Android ARM64 — data dir permissions: `PASS`.** 9J Task 3 probed the shipped
-`packages/storage/src/paths.ts` on this device's real filesystem, in a child process, rather than
-reading the source: `ensureDataDir` produced mode `0700` and `restrictDatabaseFileModes` produced
-`0600` on `bayz.db`, `bayz.db-wal`, and `bayz.db-shm`. The probe reports the octal it observed, so a
-mount that could not represent POSIX modes would have recorded
-`UNVERIFIED: filesystem does not honour POSIX modes` with the mode actually seen instead of failing.
-Evidence: `tests/portability.test.mjs`.
+**Termux/Android ARM64 — ten of eleven columns `PASS`, all from `scripts/install-smoke.mjs`
+(64/64 checks).** Every one was observed against the **installed artifact**, not the workspace: the
+tarball was installed into a clean temporary prefix with a temporary npm cache, and the checks drove
+the binary npm linked at `node_modules/.bin/bayz`. A workspace-only run would prove nothing about
+what an operator installs, because the workspace has ten `@bayz/*` symlinks a user will never have.
 
-Both **Windows** rows keep `UNVERIFIED` in that column deliberately, and a test in
-`tests/portability.test.mjs` asserts they do. `0700` has no `chmod`-settable NTFS equivalent, so the
-code takes the same tolerated best-effort path there — which is not the same claim as parity, and
-there is no Windows machine here to find out what it actually does.
+| column | evidence | what was observed |
+|---|---|---|
+| install | `smoke:install#3-11` | `npm install <tarball>` exit 0, 83 packages, bin linked and executable. `@bayz` was pointed at a registry that 404s everything and **was never asked** — so the artifact genuinely carries no workspace dependency. No `src/` or `test/` in the installed tree. |
+| first boot | `smoke:install#12-19` | Data directory created from nothing; `/api/health` 200 unauthenticated; `/api/status` 401 without a token and 200 with it. |
+| schema create | `smoke:install#20` | Fresh database reached schema head **v11**, compared against the source's own `TARGET_SCHEMA_VERSION` rather than a copied constant. |
+| chat | `smoke:install#29-31` | A real completion through a real loopback origin, with the stored credential arriving upstream as `Authorization: Bearer …`. |
+| stream | `smoke:install#33-36` | Real SSE: `text/event-stream`, the upstream delta, and `[DONE]`. A separate column because the streaming path fails independently — all four 9H defects were on it. |
+| proxy | `smoke:install#40-42` | A proxy-bound route through a real HTTP `CONNECT` tunnel with Basic auth. The tunnel recorded the authorised connection to the origin port, and `x-bayz-proxy` named it. |
+| dashboard serve | `smoke:install#21-25` | The shell and its hashed asset served **from the packaged files**, with no remote origin in either. |
+| restart | `smoke:install#43-50` | Clean SIGTERM exit 0, no `-shm` residue, restart against the existing database, and provider + credential + route + identity all intact with a chat still succeeding. |
+| data dir permissions | `smoke:install#14-16` | Observed `0700` on the directory and `0600` on both `bayz.db` and `master.key`. Also probed independently by `tests/portability.test.mjs`. |
+| uninstall | `smoke:install#54-60` | `npm uninstall` exit 0, package and bin gone, and the data directory, database (byte length unchanged) and root key all still present. |
+
+**`upgrade from v1` is the one column still `UNVERIFIED` on the primary platform** at the time this
+section was written; Task 6 fills it from `scripts/upgrade-smoke.mjs`.
+
+Permissions are **observed, not intended**: the probe reports the octal it saw, so a mount that could
+not represent POSIX modes would record `UNVERIFIED: filesystem does not honour POSIX modes` with the
+actual mode rather than failing. Both **Windows** rows keep `UNVERIFIED` in that column deliberately,
+asserted by `tests/portability.test.mjs`. `0700` has no `chmod`-settable NTFS equivalent, so the code
+takes the same tolerated best-effort path there — which is not the same claim as parity, and there is
+no Windows machine here to find out what it actually does.
 
 ## What must not be claimed
 
