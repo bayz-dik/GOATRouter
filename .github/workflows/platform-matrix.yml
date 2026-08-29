@@ -1,0 +1,95 @@
+name: platform matrix
+
+# Manual trigger only, deliberately.
+#
+# This workflow is committed and INERT. Phase 9 prohibits adding or pushing to a GitHub remote, so
+# nothing here has ever run, and no cell in
+# docs/superpowers/2026-08-27-bayz-platform-matrix.md cites it as evidence
+# (tests/ci-workflow.test.mjs asserts that).
+#
+# There is no push, pull_request, or schedule trigger on purpose: if a remote is added later, this
+# file must not start acting on its own before someone re-reads it.
+on:
+  workflow_dispatch:
+
+# Least privilege. Nothing here writes to a repository, publishes, or needs a token.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # A slow runner is better than a truncated transcript; the upgrade ladder installs the artifact
+    # eleven times.
+    timeout-minutes: 60
+    strategy:
+      # One failing platform must not cancel the others: the whole point is to learn which platforms
+      # work, and fail-fast would hide every row after the first failure.
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - macos-latest
+          - macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines floor in every workspace manifest (>=24.0.0).
+          node-version: '24'
+
+      # `npm ci` rather than `npm install`: it installs the lockfile exactly, which is what
+      # scripts/dependency-closure.mjs describes. An `npm install` could resolve differently and the
+      # closure numbers would stop meaning anything.
+      - run: npm ci
+
+      # The gates, in the order a local run uses them. Each is its own step so a failure names
+      # itself in the CI log rather than hiding inside a chain.
+      - run: node scripts/dependency-closure.mjs
+      - run: node scripts/portability-scan.mjs
+
+      # Sequential workspace tests. `npm run test --workspaces` fans out far enough to exhaust the
+      # futex table on constrained hosts; the primary device cannot run it at all, so CI uses the
+      # same bounded sequence to keep both sides comparable.
+      - run: npm run test --workspace @bayz/contracts
+      - run: npm run test --workspace @bayz/security
+      - run: npm run test --workspace @bayz/storage
+      - run: npm run test --workspace @bayz/telemetry
+      - run: npm run test --workspace @bayz/identity
+      - run: npm run test --workspace @bayz/capability
+      - run: npm run test --workspace @bayz/providers
+      - run: npm run test --workspace @bayz/proxy
+      - run: npm run test --workspace @bayz/gateway
+      - run: npm run test --workspace @bayz/router
+      - run: npm run test --workspace @bayz/dashboard
+      - run: npm run test --workspace @bayz/server
+
+      - run: npm run runtime:build
+
+      - run: node --test tests/
+
+      # The dashboard bundle must exist before packing: scripts/pack.mjs ships apps/dashboard/dist.
+      - run: npm run build --workspace @bayz/dashboard
+      - run: node scripts/pack.mjs
+      - run: node scripts/pack.mjs --self-test
+
+      # The two artifact-level proofs. Both install the packed tarball into a temporary prefix and
+      # drive the installed binary, so they exercise what an operator gets rather than the workspace.
+      - run: node scripts/install-smoke.mjs
+      - run: node scripts/upgrade-smoke.mjs
+
+      # The gate reports; it does not enforce here. Enforcement belongs to a release decision, and a
+      # CI run on one platform cannot see the other rows.
+      - run: node scripts/platform-gate.mjs --report
+
+      - name: upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayz-artifact-${{ matrix.os }}
+          path: packaging/out/*.tgz
+          if-no-files-found: warn

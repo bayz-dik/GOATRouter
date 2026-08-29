@@ -146,13 +146,18 @@ The distinction that matters: "five runtime dependencies" is the count of *direc
 ### Task 7 — CI workflow for the untestable platforms
 
 **Create:** `.github/workflows/platform-matrix.yml` (committed, **not** pushed), `docs/superpowers/2026-08-27-bayz-ci-notes.md`
+**Test:** `tests/ci-workflow.test.mjs` (8/8)
 
-- [ ] The workflow defines a matrix over `ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `macos-latest`, and `macos-13`, each running `npm ci`, `npm run runtime:verify`, `node scripts/dependency-closure.mjs`, `node scripts/pack.mjs`, `node scripts/install-smoke.mjs`, and `node scripts/upgrade-smoke.mjs`, uploading each transcript as an artifact.
-- [ ] The workflow contains no secret, no registry token, no deployment step, and no push trigger to any remote — **this file is written and committed locally only.** Phase 9 prohibits adding or pushing to the GitHub remote, and a workflow file is inert until pushed.
-- [ ] `docs/superpowers/2026-08-27-bayz-ci-notes.md` states plainly that Windows ARM64 and Termux/Android have **no hosted runner**, so those rows can only be filled by a real device, and that Termux is filled here while Windows ARM64 stays `UNVERIFIED`.
-- [ ] A test asserts the workflow file exists, parses as YAML-ish text with the expected job names, and contains none of `secrets.`, `NPM_TOKEN`, `git push`, or `publish`.
-- [ ] Verify: `node --test tests/platform-matrix.test.mjs` still exits 0 (the workflow's existence does not upgrade any cell).
-- [ ] Commit — `ci: add the Bayz platform matrix workflow, unpushed`
+- [x] The workflow defines a matrix over `ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `macos-latest`, and `macos-13`, each running `npm ci`, `npm run runtime:verify`, `node scripts/dependency-closure.mjs`, `node scripts/pack.mjs`, `node scripts/install-smoke.mjs`, and `node scripts/upgrade-smoke.mjs`, uploading each transcript as an artifact. — *One deviation, recorded rather than made silently: `npm run runtime:verify` is replaced by the **bounded sequential** equivalent — one `npm run test --workspace …` per package, then `runtime:build`, then `node --test tests/`. The parallel fan-out of `runtime:verify` exhausts the futex table and cannot run on the primary device at all, so using it in CI would make a CI failure incomparable to a local one. `portability-scan.mjs`, `pack.mjs --self-test`, and `platform-gate.mjs --report` were added for the same reason: CI should run the same gates a release decision uses.*
+- [x] The workflow contains no secret, no registry token, no deployment step, and no push trigger to any remote — **this file is written and committed locally only.** Phase 9 prohibits adding or pushing to the GitHub remote, and a workflow file is inert until pushed. — *Also `permissions: contents: read` and `workflow_dispatch`-only, so adding a remote later cannot make it fire by itself.*
+- [x] `docs/superpowers/2026-08-27-bayz-ci-notes.md` states plainly that Windows ARM64 and Termux/Android have **no hosted runner**, so those rows can only be filled by a real device, and that Termux is filled here while Windows ARM64 stays `UNVERIFIED`. — *The notes also record the two ways a green CI run would still not equal the Termux row: Windows cannot represent `0o700`, and `node:sqlite` binds its SQLite from the Node build rather than the OS.*
+- [x] A test asserts the workflow file exists, parses as YAML-ish text with the expected job names, and contains none of `secrets.`, `NPM_TOKEN`, `git push`, or `publish`. — *Plus an anti-cheat: the five CI-only platform rows must contain no `PASS` and no cell may cite the workflow file, because a workflow that has never executed is not evidence.*
+- [x] Verify: `node --test tests/platform-matrix.test.mjs` still exits 0 (the workflow's existence does not upgrade any cell). — *10/10, and `tests/ci-workflow.test.mjs` 8/8.*
+- [x] Commit — `ci: add the Bayz platform matrix workflow, unpushed`
+
+**Three mutations run, all caught:** a `push: branches: [master]` trigger added (1 red), `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` smuggled into a step (1 red), and the `Linux x64` row upgraded to `PASS (transcript:ci-linux-x64)` on the strength of a workflow that has never run (1 red).
+
+The workflow references `scripts/platform-gate.mjs`, which Task 8 creates next. A forward reference is acceptable in a file that cannot execute; it would not be in one that could.
 
 ### Task 8 — Platform gate
 
