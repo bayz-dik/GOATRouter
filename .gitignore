@@ -1,3 +1,9 @@
 node_modules/
 dist/
 packaging/out/
+
+# Generated SBOMs. The generator (`scripts/sbom.mjs`) and its tests are tracked; the output is a
+# build artifact tied to the lockfile at build time, so committing it would create a second source of
+# truth that silently goes stale. `sbom/.gitkeep` keeps the directory.
+sbom/*.cdx.json
+sbom/*.spdx.json

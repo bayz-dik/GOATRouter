@@ -94,18 +94,26 @@ Regression check after the dependency change, run sequentially: `@bayz/server` 3
 ### Task 4 — SBOM generation, no new dependency
 
 **Create:** `scripts/sbom.mjs`, `sbom/.gitkeep`
-**Test:** `tests/sbom.test.mjs`
+**Test:** `tests/sbom.test.mjs` (14/14)
 
 **Format:** CycloneDX 1.5 JSON, generated from `package-lock.json` by this script.
 
-- [ ] RED `tests/sbom.test.mjs`: the generated document has `bomFormat: "CycloneDX"`, `specVersion: "1.5"`, a `serialNumber` shaped `urn:uuid:...`, a `metadata.timestamp`, a `metadata.component` describing BAYZ with its version, and a `components` array; every component carries `type`, `name`, `version`, a `purl` of the form `pkg:npm/<name>@<version>` with a scoped name encoded as `pkg:npm/%40fastify/static@x.y.z` — the `@` in the scope **must** be percent-encoded per the purl spec, and this is exactly where hand-rolled generators break, so the test pins the six scoped packages in this tree (`@fastify/static`, `@fastify/send`, `@fastify/error`, `@isaacs/cliui`, `@lukeed/ms`, `@pinojs/redact`) by their expected purl string; the licence identifier from Task 3 and the `sha512` integrity hash from the lockfile appear as `licenses` and `hashes` entries; runtime and dev components are distinguishable via `scope`; the runtime component count equals the 86 external packages the 9J closure walk reports, asserted numerically against that script's own output rather than a copied constant, so the two cannot drift apart.
-- [ ] RED same file: the nine `@bayz/*` workspace links are represented as the SBOM's own `metadata.component` and its subcomponents, **not** as registry components with a fictional purl — a purl pointing at a package that does not exist on npm would make the SBOM actively misleading to anyone who tried to resolve it.
-- [ ] RED same file: the SBOM contains no local absolute path, no username, no hostname, and no environment value — an SBOM is a published document and leaking the build machine's layout is an information disclosure.
-- [ ] RED same file: regenerating the SBOM twice with a pinned timestamp produces byte-identical output, so a diff means a real dependency change.
-- [ ] Verify RED.
-- [ ] GREEN `scripts/sbom.mjs` using only `node:crypto` and `node:fs`.
-- [ ] Verify: `node scripts/sbom.mjs --out sbom/bayz-<version>.cdx.json` exits 0; `node --test tests/sbom.test.mjs` exits 0.
-- [ ] Commit — `feat: generate a CycloneDX SBOM from the lockfile`
+- [x] RED `tests/sbom.test.mjs`: the generated document has `bomFormat: "CycloneDX"`, `specVersion: "1.5"`, a `serialNumber` shaped `urn:uuid:...`, a `metadata.timestamp`, a `metadata.component` describing BAYZ with its version, and a `components` array; every component carries `type`, `name`, `version`, a `purl` of the form `pkg:npm/<name>@<version>` with a scoped name encoded as `pkg:npm/%40fastify/static@x.y.z` — the `@` in the scope **must** be percent-encoded per the purl spec, and this is exactly where hand-rolled generators break, so the test pins the scoped packages in this tree by their expected purl string; the licence identifier from Task 3 and the `sha512` integrity hash from the lockfile appear as `licenses` and `hashes` entries; runtime and dev components are distinguishable via `scope`; the runtime component count equals the external packages the 9J closure walk reports, asserted numerically against that script's own output rather than a copied constant, so the two cannot drift apart. — *Measured: **239 components, 74 runtime, 165 dev-only**. The plan pinned **six** scoped packages; there are now **eleven**, and the list differs — `@isaacs/cliui` left the tree with the Task 1 security upgrade and eight more `@fastify/*` packages arrived with it. Recorded as measured. Lockfile integrity is base64; CycloneDX wants hex, so the conversion is asserted to produce exactly 128 hex characters.*
+- [x] RED same file: the workspace links are represented as the SBOM's own `metadata.component` and its subcomponents, **not** as registry components with a fictional purl — a purl pointing at a package that does not exist on npm would make the SBOM actively misleading to anyone who tried to resolve it. — *Twelve, not nine. They carry **no `purl` at all**, plus a `bayz:workspace` property, and `validateSbom` refuses any `@bayz/*` name appearing in the third-party component list.*
+- [x] RED same file: the SBOM contains no local absolute path, no username, no hostname, and no environment value — an SBOM is a published document and leaking the build machine's layout is an information disclosure. — *Asserted over the serialised document against the repo root, `/home/`, `/Users/`, `/root/`, `$HOME`, `localhost`, `127.0.0.1`, `BAYZ_`, and `file:///`.*
+- [x] RED same file: regenerating the SBOM twice with a pinned timestamp produces byte-identical output, so a diff means a real dependency change. — *This forced a design decision: the `serialNumber` is a **content hash** (SHA-256 carved into an RFC 4122 v5-shaped UUID), not `randomUUID()`. A random serial is spec-legal and would have made every regeneration differ, destroying the property this bullet asks for.*
+- [x] Verify RED.
+- [x] GREEN `scripts/sbom.mjs` using only `node:crypto` and `node:fs`.
+- [x] Verify: `node scripts/sbom.mjs --out sbom/bayz-<version>.cdx.json` exits 0; `node --test tests/sbom.test.mjs` exits 0.
+- [x] Commit — `feat: generate a CycloneDX SBOM from the lockfile`
+
+**Zero new dependencies**, per the phase lock: `node:crypto` and `node:fs` only. `syft` and `cyclonedx` are absent on this device, and adding a dependency in order to describe our dependencies would be a poor trade when the lockfile already holds every fact needed.
+
+**Validation, not just generation.** `validateSbom` checks the CycloneDX required fields *and* the truthfulness rules — encoded scopes, no first-party package with a registry purl, no build-machine identity — and `--simulate-invalid` proves the validator can actually fail (it drops `specVersion` and the script exits 1). A generator that cannot reject its own bad output is not validating anything.
+
+**Generated output is gitignored** (`sbom/*.cdx.json`), with `sbom/.gitkeep` holding the directory. The generator and its tests are tracked; committing the output would create a second source of truth that silently goes stale against the lockfile.
+
+**Three mutations, all caught:** the scoped `@` left unencoded (4 red), the twelve workspaces given fictional `pkg:npm/@bayz/…` purls (1 red), and `randomUUID()` in place of the content-derived serial (2 red).
 
 ### Task 5 — Artifact digests and detached signatures
 
