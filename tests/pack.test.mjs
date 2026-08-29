@@ -431,7 +431,9 @@ test("esbuild stays a dev dependency and out of the runtime closure", () => {
     encoding: "utf8",
   });
   assert.match(closure, /dependency closure: PASS/, "the runtime closure guard no longer passes");
-  assert.match(closure, /96 total = 10 workspace links \+ 86 external/, `the closure size changed:\n${closure}`);
+  // Updated in 9K Task 1 with the `@fastify/static@8 -> ^10.1.3` security upgrade, which removed
+  // twelve external packages (the `glob@11` chain) and added none. See tests/dependency-closure.test.mjs.
+  assert.match(closure, /84 total = 10 workspace links \+ 74 external/, `the closure size changed:\n${closure}`);
   assert.ok(!/^\s+- node_modules\/esbuild/m.test(closure), "esbuild reached the runtime closure");
 });
 

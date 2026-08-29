@@ -17,14 +17,37 @@
 ### Task 1 — Vulnerability audit with a written acceptance policy
 
 **Create:** `scripts/audit-check.mjs`, `docs/superpowers/2026-08-27-bayz-supply-chain-policy.md`
-**Test:** `tests/audit-policy.test.mjs`
+**Test:** `tests/audit-policy.test.mjs` (12/12)
 
-- [ ] RED `tests/audit-policy.test.mjs`: the policy document exists and states, for each severity, the action and the maximum tolerated age — `critical`/`high` in the **runtime** closure block a release, `moderate`/`low` are recorded with a rationale and a review date, and anything reachable only from `devDependencies` is triaged separately because it never ships; the policy names who decides an exception and requires the exception to be written into the document rather than lived with silently.
-- [ ] RED same file: `scripts/audit-check.mjs` parses `npm audit --json` and exits non-zero on any `critical` or `high` in the runtime closure (reusing 9J Task 2's closure computation so "runtime" means one thing repo-wide); it exits 0 with a printed summary otherwise; **it does not fail when the network is unavailable** — it reports `UNVERIFIED: audit requires registry access` and exits 0, since a gate that cannot distinguish "clean" from "unknown" is worse than no gate.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `node scripts/audit-check.mjs` exits 0 and prints either a clean summary or an explicit `UNVERIFIED`; `node --test tests/audit-policy.test.mjs` exits 0.
-- [ ] Commit — `test: add the Bayz vulnerability audit policy and check`
+- [x] RED `tests/audit-policy.test.mjs`: the policy document exists and states, for each severity, the action and the maximum tolerated age — `critical`/`high` in the **runtime** closure block a release, `moderate`/`low` are recorded with a rationale and a review date, and anything reachable only from `devDependencies` is triaged separately because it never ships; the policy names who decides an exception and requires the exception to be written into the document rather than lived with silently. — *Maximum tolerated age set at **90 days**, and an expired deferral is treated as `high` by the gate: an expired deferral is indistinguishable from having forgotten.*
+- [x] RED same file: `scripts/audit-check.mjs` parses `npm audit --json` and exits non-zero on any `critical` or `high` in the runtime closure (reusing 9J Task 2's closure computation so "runtime" means one thing repo-wide); it exits 0 with a printed summary otherwise; **it does not fail when the network is unavailable** — it reports `UNVERIFIED: audit requires registry access` and exits 0, since a gate that cannot distinguish "clean" from "unknown" is worse than no gate.
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `node scripts/audit-check.mjs` exits 0 and prints either a clean summary or an explicit `UNVERIFIED`; `node --test tests/audit-policy.test.mjs` exits 0.
+- [x] Commit — `test: add the Bayz vulnerability audit policy and check`
+
+**The check found a real, reachable, high-severity vulnerability on its first live run, and it was fixed rather than deferred.**
+
+`npm audit` reported four advisories against `@fastify/static@8.3.0`, all in the runtime closure:
+
+| advisory | severity | title |
+|---|---|---|
+| GHSA-83w8-p2f5-377r | **high** | route guard bypass via path traversal (`<=10.1.0`) |
+| GHSA-8pvw-jcv7-9cmj | moderate | authorization bypass via non-canonical URL paths (`<=10.1.1`) |
+| GHSA-pr96-94w5-mx2h | moderate | path traversal in directory listing (`>=8.0.0 <=9.1.0`) |
+| GHSA-x428-ghpx-8j92 | moderate | route guard bypass via encoded path separators (`>=8.0.0 <=9.1.0`) |
+
+BAYZ serves the operator dashboard through this plugin (`apps/server/src/static-dashboard.ts`) **in the same process that exposes the admin API**, so a route guard bypass here is exactly the class of defect the 9F Fortress work exists to prevent. Deferring it under the policy's own moderate/low clause would have made the policy decorative on the first day it was needed.
+
+Upgraded to `@fastify/static@^10.1.3`. The closure was then **re-measured, not assumed**: the upgrade **removed twelve external packages and added none**, because `@fastify/static@10` drops the `glob@11` chain (`@isaacs/cliui`, `cross-spawn`, `foreground-child`, `isexe`, `jackspeak`, `package-json-from-dist`, `path-key`, `safe-buffer`, `shebang-command`, `shebang-regex`, `signal-exit`, `which`).
+
+Three 9J pins moved as a consequence, each updated deliberately with the measurement recorded rather than silenced: external closure **86 → 74**, closure total **96 → 84**, lockfile entries **276 → 264**. `tests/dependency-closure.test.mjs` and `tests/pack.test.mjs` carry the new values and the reason. Note for Task 4: the plan's SBOM task pins six scoped packages by purl, and `@isaacs/cliui` is no longer among them — it left the tree with this upgrade.
+
+Post-upgrade audit: `{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0}`, `audit: PASS`, exit 0.
+
+**Three mutations, all caught:** `high` dropped from the blocking set (1 red), an unreachable registry parsed as clean instead of `UNVERIFIED` (2 red), and the dev-only exemption removed so build-tool advisories block a release (1 red).
+
+Regression check after the dependency change, run sequentially: `@bayz/server` 351/351, root suite 212/212, `api-smoke` 70/70, `dashboard-smoke` 48/48, `install-smoke` 64/64, `upgrade-smoke` 83/83, server and dashboard builds exit 0.
 
 ### Task 2 — Lockfile integrity
 

@@ -35,12 +35,23 @@ const LOCK = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));
 const DIRECT_EXTERNAL = ["@fastify/static", "fastify", "react", "react-dom", "zod"];
 
 /**
- * What actually ships: 86 external packages.
+ * What actually ships: 74 external packages.
  *
  * Both numbers are true and both are checked. A guard that only pinned the five would not notice
  * `fastify` pulling in a native transitive dependency, which is the failure this task exists for.
+ *
+ * **Was 86 until Phase 9K Task 1.** `npm audit` reported GHSA-83w8-p2f5-377r, a *high* route guard
+ * bypass via path traversal in `@fastify/static@8.3.0`, plus three moderates on the same package.
+ * BAYZ serves the operator dashboard through that plugin in the same process that exposes the admin
+ * API, so it was upgraded to `^10.1.3` rather than deferred.
+ *
+ * The upgrade **removed** twelve external packages and added none: `@fastify/static@10` dropped its
+ * `glob@11` dependency chain (`@isaacs/cliui`, `cross-spawn`, `foreground-child`, `isexe`,
+ * `jackspeak`, `package-json-from-dist`, `path-key`, `safe-buffer`, `shebang-command`,
+ * `shebang-regex`, `signal-exit`, `which`). The set difference was measured, not assumed, before this
+ * constant was changed.
  */
-const EXTERNAL_COUNT = 86;
+const EXTERNAL_COUNT = 74;
 
 /**
  * Workspace links reached from the workspace roots: 10, not 12.
