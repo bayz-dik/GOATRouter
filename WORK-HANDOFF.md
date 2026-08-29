@@ -69,7 +69,7 @@
     silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
     could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
     rejected *after* the work was done). All four fixed with regression tests.
-  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Task 1 **COMPLETE**, Tasks 2–7
+  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–2 **COMPLETE**, Tasks 3–7
     **NOT STARTED**. Seven tasks total.
     `scripts/fuzz/harness.mjs` + `tests/fuzz-harness.test.mjs` (**18/18**): xoshiro128\*\*
     over a SHA-256 seed expansion, zero dependencies, `node:crypto` for seeding only.
@@ -87,6 +87,13 @@
     Six mutations, each reverted byte-identical. One initially passed — disabling the
     per-iteration timer — because the test used a slow-but-finishing iteration; a
     never-settling-promise test was added, taking the suite 17 → 18.
+    Task 2: `scripts/fuzz/generators.mjs` + `tests/fuzz-generators.test.mjs` (**21/21**),
+    ten generators (JSON, UTF-8, invalid UTF-8, headers, URLs, identifiers, SSE, SOCKS5,
+    CONNECT, SQLite-hostile), all pure given an rng and enumerable through a frozen
+    `GENERATORS` registry. Corpus: **93 files, 111,914 bytes** (5.3% of the 2 MiB bound),
+    written by the committed `scripts/fuzz/write-corpus.mjs`; `corpus/regression/` awaits
+    Task 3's discoveries. Five generator mutations red and reverted, plus a planted
+    `Bearer …` corpus file to prove the credential scan reads committed bytes.
   - 9J–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -956,7 +963,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
-| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Task 1 of 7 done; `fuzz-harness` 18/18, seed-reproducible across processes, zero deps; Task 2 (generators + corpus) next |
+| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–2 of 7 done; `fuzz-harness` 18/18, `fuzz-generators` 21/21, corpus 93 files / 111,914 bytes; Task 3 (thirteen boundary targets) next |
 | 9J–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2858,30 +2865,98 @@ suite went 17 → 18.
 Verified: `fuzz-harness` **18/18**, the four pre-existing root suites still **27/27**,
 `git diff --check` clean.
 
+### Task 2 — Input-shape generators and the corpus
+
+`scripts/fuzz/generators.mjs` with `tests/fuzz-generators.test.mjs` (**21 tests**). Ten
+generators: `generateJsonValue`, `generateUtf8String`, `generateInvalidUtf8Bytes`,
+`generateHeaderPair`, `generateUrl`, `generateIdentifier`, `generateSseStream`,
+`generateSocks5Handshake`, `generateConnectHandshake`, `generateSqliteHostileString`. A CONNECT
+tunnel and a SOCKS5 greeting share no bytes, so they are two generators rather than one with a
+branch. All ten are also exposed through a frozen `GENERATORS` registry with a `family` label,
+so Task 3 can enumerate rather than hardcode a list that would drift.
+
+**Every generator is pure given an rng**, and the test proves it by drawing 200 values from two
+independently seeded rngs and comparing. That property is what makes a Task 3 crash replayable
+from its seed alone.
+
+Corpus: **93 files, 111,914 bytes** — 5.3% of the 2 MiB budget, largest file 64,008 bytes.
+Written by the committed `scripts/fuzz/write-corpus.mjs`, which refuses to emit a file over
+64 KiB or a total over 2 MiB, so the bounds are enforced at write time as well as at test time.
+Every case is a minimised hand-written input tied to a documented rule.
+`scripts/fuzz/corpus/regression/` exists with a README for Task 3's discoveries.
+
+The corpus credential scan calls Task 1's exported `findCredentialShape`. Not a copy — two
+scanners that can drift apart is how a secret gets committed.
+
+#### Three assertions the plan does not list, each closing a way to test nothing
+
+A generator returning a constant would pass a purity check while fuzzing nothing, so every
+generator must additionally **vary with the seed** and produce more than one shape across 200
+draws. The invalid-UTF-8 generator is decoded with `TextDecoder("utf-8", { fatal: true })` and
+at least 80% of its output must genuinely fail to decode. And no generator may exceed the 1 MiB
+harness cap, since one that did would abort a Task 3 run with `input_too_large` instead of
+fuzzing.
+
+#### Coverage is wider than the plan's three loopback encodings
+
+The plan names `2130706433`, `0177.0.0.1`, `0x7f.0.0.1`. Also carried: `127.1`, `0x7f000001`,
+`[::ffff:127.0.0.1]`, `127.0.0.1.nip.io`, `169.254.169.254`, `metadata.google.internal`,
+`[fe80::1]`, `[fd00::1]`, `10.`/`172.16.`/`192.168.` and `100.64.0.1`. 9F's egress protection
+covers link-local, cloud metadata and CGNAT as well as loopback, and a corpus probing only
+loopback would leave most of that boundary unexercised.
+
+#### Guaranteed rather than hoped-for coverage
+
+`generateUtf8String` appends a combining mark, a bidi override and an astral character on coin
+flips instead of trusting the random walk to reach all three; `generateSseStream` likewise
+trails a UTF-8 lead byte so the split-mid-sequence shape appears often. Without that, coverage
+of a required shape would depend on the draw count, and lowering iterations later would quietly
+stop testing it.
+
+#### Mutation proof
+
+Five mutations, each red, each reverted byte-identical: dropping `__proto__` from the pollution
+keys (**1 red**), shrinking the 10,000-element array to 100 (**1 red**), removing the octal and
+hex loopback encodings (**1 red**), making the invalid-UTF-8 generator return valid bytes
+(**1 red**), and giving a generator module-level state so it drifts every 7th call (**1 red**,
+the purity test). A sixth check ran the other way: planting `Bearer abcdefghijklmnop` in a
+corpus file turned the scan red, confirming it reads committed bytes rather than trusting the
+writer.
+
+Verified: `fuzz-generators` **21/21**, with Task 1 **39/39**, `git diff --check` clean.
+
 ### 9I resume point
 
-**Next: Task 2 — Input-shape generators and the corpus.** Create
-`scripts/fuzz/generators.mjs` and `scripts/fuzz/corpus/` with `tests/fuzz-generators.test.mjs`.
+**Next: Task 3 — Boundary fuzz targets.** Create thirteen targets under
+`scripts/fuzz/targets/` — `api-schema`, `authorization`, `sse`, `tool-args`,
+`provider-response`, `provider-config`, `proxy-config`, `socks5`, `telemetry`,
+`storage-envelope`, `migration`, `url`, `identifier` — plus `scripts/fuzz-run.mjs`.
 
-Generators required for: JSON values, UTF-8 and invalid-UTF-8 byte strings, header name/value
-pairs, URLs, identifiers, SSE byte streams, SOCKS5/CONNECT handshake bytes, and SQLite-hostile
-strings. Every generator must be **pure given an rng** — that is what makes a failing iteration
-replayable.
+Contract for every target: the boundary must **reject or accept** — never crash, never hang,
+never throw a non-BAYZ error, never mutate global state. Per target: 5,000 iterations at a
+pinned seed; every thrown error an instance of the owning package's error type with a code from
+the existing vocabulary; no `RangeError`, `TypeError`, `ERR_INTERNAL_ASSERTION` or
+`ERR_OUT_OF_RANGE` escaping; no iteration over 250 ms; RSS growth under 64 MiB across the 5,000.
 
-Specific shapes the plan names: `__proto__`/`constructor`/`prototype` keys, nesting to 64,
-arrays of 10,000, `-0`, `1e400`, `NaN`-shaped strings, lone surrogates, NUL bytes; the alternate
-loopback encodings 9D refuses (`2130706433`, `0177.0.0.1`, `0x7f.0.0.1`) plus `file:`,
-`gopher:`, and userinfo URL forms; SQL-injection shapes, path traversal, and Unicode homoglyphs
-for identifiers.
+Target-specific extras the plan names: `authorization` — a 1 MiB bearer, embedded CR/LF, 10,000
+spaces, and a valid-but-revoked identity all end `401` with no distinguishable timing class
+(bounded, documented as indicative). `sse` — interleaved partial frames, a split mid-UTF-8
+sequence, a 64 KiB line, a 3 MiB total stream, `[DONE]` inside a JSON string, pure `\r` bytes.
+`migration` — `user_version` 0–255 including past head either opens or fails closed, and the
+schema afterwards is the original or the head, **never in between**. `storage-envelope` — a
+bit-flip in every byte position fails closed with `master_key_invalid` or `storage_unavailable`,
+never returning plaintext.
 
-Corpus constraints: each file under 64 KiB, total under 2 MiB, and Task 1's credential scan
-must pass over **every** corpus file — reuse `findCredentialShape` from the harness rather than
-writing a second scanner that can drift from the first.
+`scripts/fuzz-run.mjs` prints `ok N`/`FAIL N` per target so a matrix row can cite
+`smoke:fuzz#N`, writes failing inputs to `scripts/fuzz/corpus/regression/` (credential-scanned
+first — the harness already refuses to record a failure carrying credential shapes), and exits
+non-zero on any failure.
 
-Note for later tasks: this host is Termux/proot ARM64 with 8 CPUs and ~11 GiB RAM (~3.9 GiB free
-at Task 1). Product load is allowed and required by Tasks 5–6; **build/test fan-out is not** —
-`npm run runtime:verify` exhausts the futex table here, so keep to one workspace command at a
-time.
+Host reminder: Termux/proot ARM64, 8 CPUs, ~11 GiB RAM (~3.9 GiB free). Product load is required
+by Tasks 5–6 and allowed; **build/test fan-out is not** — `npm run runtime:verify` exhausts the
+futex table here, so one workspace command at a time. 5,000 iterations × 13 targets is a
+several-minute run; use a background process with a log rather than a foreground call over the
+600 s cap.
 
 ## Phase 9 GOAT — planning state
 
