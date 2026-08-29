@@ -614,6 +614,35 @@ Companion headers: `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP and C
 `same-origin`, and a `Permissions-Policy` denying eight device sensors.
 `x-powered-by` and `server` are both absent.
 
+## Platform support
+
+One platform is verified. Six are not, and that is a statement about what has been *observed*, not a
+claim that BAYZ is broken elsewhere.
+
+**Verified: Termux/Android ARM64** (Ubuntu proot, Node v24.19.0 arm64). Every mandatory capability —
+install, first boot, schema creation, chat, streaming, proxying, dashboard serving, restart, upgrade
+from schema v1, data-directory permissions, uninstall — has been observed on this device against the
+**installed release artifact**, not the source tree. Evidence: `scripts/install-smoke.mjs` (64/64) and
+`scripts/upgrade-smoke.mjs` (83/83).
+
+**Do not claim support for:** Linux x64, Linux ARM64, Windows x64, Windows ARM64, macOS x64,
+macOS ARM64. Nothing has been run on any of them.
+
+The runtime is plausibly portable — zero native runtime dependencies, no install scripts in the
+closure, no POSIX shell on any user-facing path, and a data-directory resolver with per-platform
+fallbacks — but *plausible* is not *observed*, and the matrix does not promote a cell without evidence
+from that machine.
+
+Two platforms cannot be covered by CI at all: Termux/Android has no hosted runner (it is this device),
+and Windows ARM64 has none available here. On Windows generally, the `0700`/`0600` data-directory
+modes have no `chmod`-settable NTFS equivalent, so file-permission parity is not claimed even once
+Windows is otherwise verified.
+
+The authoritative record is `docs/superpowers/2026-08-27-bayz-platform-matrix.md`, and
+`node scripts/platform-gate.mjs --report` prints the list above directly from it. A `FAIL` on any
+platform blocks a release; an `UNVERIFIED` on a platform nobody has access to narrows this support
+claim instead.
+
 ## Deferred verification
 
 The existing private BAYZ Sites/UI review surface is not present in this

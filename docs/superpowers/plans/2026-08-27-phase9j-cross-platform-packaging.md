@@ -162,11 +162,20 @@ The workflow references `scripts/platform-gate.mjs`, which Task 8 creates next. 
 ### Task 8 — Platform gate
 
 **Create:** `scripts/platform-gate.mjs`
+**Test:** `tests/platform-gate.test.mjs` (13/13)
 
-- [ ] The gate reads the platform matrix. `--report` always exits 0 and prints the current state. `--enforce` exits non-zero if any cell is `FAIL`, or if the **primary platform** (Termux/Android ARM64, the device this release is qualified on) has any `UNVERIFIED` mandatory cell. Non-primary platforms being `UNVERIFIED` prints a prominent notice and does not block, because blocking on a machine that does not exist would make the gate a lie rather than a control.
-- [ ] The gate prints the exact list of platforms a user must not be told are supported. This list feeds the README support section.
-- [ ] Verify: `node scripts/platform-gate.mjs --report` exits 0; `--enforce` reflects the true current state; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add the Bayz platform gate`
+- [x] The gate reads the platform matrix. `--report` always exits 0 and prints the current state. `--enforce` exits non-zero if any cell is `FAIL`, or if the **primary platform** (Termux/Android ARM64, the device this release is qualified on) has any `UNVERIFIED` mandatory cell. Non-primary platforms being `UNVERIFIED` prints a prominent notice and does not block, because blocking on a machine that does not exist would make the gate a lie rather than a control.
+- [x] The gate prints the exact list of platforms a user must not be told are supported. This list feeds the README support section. — *A new `## Platform support` section in `README.md`, and a test asserts the two agree: every platform the gate calls unsupported must be disclaimed there, and every verified platform named. A README claiming a platform nobody has run is the most consequential lie this project could tell.*
+- [x] Verify: `node scripts/platform-gate.mjs --report` exits 0; `--enforce` reflects the true current state; `npm run runtime:verify` exits 0; `git diff --check` clean. — *`--report` exit 0, `--enforce` exit 0 (`PASS`) because the primary row is now 11/11 `PASS`; `git diff --check` clean. `runtime:verify` as a single command is replaced by the bounded sequential sequence, as everywhere else in 9J: its parallel fan-out exhausts the futex table on this host.*
+- [x] Commit — `test: add the Bayz platform gate`
+
+**Three extra guards beyond the plan text**, each because the obvious implementation would have been vacuous:
+
+- **A missing primary row blocks.** Every other rule is about the primary row, so a matrix that lost it would satisfy them all by having nothing to check — the classic way a gate silently stops gating.
+- **A dropped mandatory column blocks.** The mandatory list lives in the gate, not in the matrix header, so removing a column from the document cannot shrink the definition of "complete" into a pass.
+- **A `PASS` with no evidence reference blocks**, and an unparseable matrix throws rather than reading as empty.
+
+**Five mutations run, all caught:** a `FAIL` on a non-primary platform no longer blocking (1 red), a missing primary row treated as nothing to check (1 red), `uninstall` dropped from the mandatory set (1 red), an `UNVERIFIED` primary cell downgraded from blocking to a notice (1 red), and the README quietly dropping Linux x64/ARM64 and Windows x64 from its do-not-claim list (1 red).
 
 ## Completion checklist
 
