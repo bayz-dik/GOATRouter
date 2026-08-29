@@ -69,8 +69,13 @@
     silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
     could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
     rejected *after* the work was done). All four fixed with regression tests.
-  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–5 **COMPLETE**, Tasks 6–7
-    **NOT STARTED**. Seven tasks total.
+  - 9I Fuzz / Chaos / Load / Soak: **COMPLETE.** All seven tasks. Thirteen fuzz targets ×
+    5,000 iterations (`fuzz-run` 39/39), eleven chaos scenarios (`chaos-smoke` 83/83), five
+    concurrency levels (`load-smoke` 64/64, 3,288 requests, 0 failures), a 600 s soak
+    (`soak-smoke` 14/14, 18,741 requests, 0 failures), and a resilience report of 71 rows
+    behind `resilience-gate`. Fifteen mutations proved the checks bite; **zero BAYZ defects
+    were found** — the four found in 9H remain the only ones. `--enforce` exits 1 because two
+    chaos injections need mount privileges this device lacks, recorded UNVERIFIED with reasons.
     `scripts/fuzz/harness.mjs` + `tests/fuzz-harness.test.mjs` (**18/18**): xoshiro128\*\*
     over a SHA-256 seed expansion, zero dependencies, `node:crypto` for seeding only.
     Reproducible **across processes** — the load-bearing property, since a crash that
@@ -984,7 +989,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
-| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–5 of 7 done; `fuzz-run` **39/39**, `chaos-smoke` **83/83**, `load-smoke` **64/64** (5 concurrency levels, 3,288 requests, 0 failures), `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11; Task 6 (soak) next |
+| 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
 | 9J–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -3198,31 +3203,121 @@ which is red but reports that the *harness* broke rather than naming the missing
 Verified: `load-smoke` 64/64 ×3, `load-harness` 11/11, `chaos-smoke` 83/83, `fuzz-run` 39/39,
 `git diff --check` clean.
 
+### Task 6 — Soak measurement
+
+`scripts/soak-smoke.mjs` + `soak-lib.mjs` + `soak-traffic.mjs`, with `tests/soak-harness.test.mjs`
+(**13/13**). **14/14 checks, `soak: PASS`**, two clean 600 s runs after the measurement fix below.
+Evidence: `docs/transcripts/soak/soak.md`.
+
+600 s, sampled every 15 s (41 samples), mixed traffic: 5,206 non-streaming chat, 2,603 streaming,
+2,603 two-leg tool roundtrips, 2,603 model listings, 2,603 usage reads, 520 management writes —
+**18,741 requests, 0 failures**. All thirteen metrics the plan lists are in the series table.
+
+Results: heap second-half slope **+2.1 KiB/sample** (run 3) and **+8.4** (run 4) against a 256 KiB
+tolerance; RSS +0.084 and +0.086 MiB/sample against 1 MiB; handles 6 → 5, timers 1 → 0, fds 28 → 30
+after a quiet period; WAL peak 3.97 MiB against a 16 MiB ceiling; **200 telemetry rows retained from
+18,741 requests**; `PRAGMA integrity_check` ok.
+
+**The finding worth carrying forward: raw `heapUsed` is unusable as a leak signal here.** Two
+identical 600 s runs gave second-half slopes of **−338** and **+295 KiB/sample** — same code,
+opposite verdicts, one either side of the tolerance — because `heapUsed` is a sawtooth swinging
+between 29.7 and 137.7 MiB and a fixed cadence samples whichever tooth it lands on. The fix was not a
+wider tolerance, which would have kept the noise and blinded the check, but to measure the
+**post-collection floor**: a double `globalThis.gc()` before each sample, so what is recorded is
+retention rather than allocation rate. Heap then reads a flat 24 MiB throughout. `--expose-gc` is
+consequently load-bearing, and a run without it records the trend **UNVERIFIED with the series**
+rather than asserting on a number known to be unstable.
+
+Two related refusals, both recorded rather than papered over: a run whose second half holds fewer
+than six samples reports the trend UNVERIFIED (at `--duration=45` two points made a "slope" of
+1,144 KiB/sample out of ordinary warm-up), and `--duration` below 30 s is **refused with exit 2**
+rather than clamped — a soak that can be set to one second is a soak that can be passed by not
+running.
+
+Telemetry retention is set to **200 rows** through the documented `BAYZ_USAGE_RETENTION`, not to make
+the test easier but to make it real: the 5,000-row default is never reached in ten minutes, so the
+pruning assertion would have passed without the pruning code ever executing. A separate check proves
+the run crossed the bound.
+
+**Two mutations, reverted byte-identical.** Disabling `prune("usage_requests", …)` → `#11` red with
+2,960 rows against a bound of 200. Leaking one `setInterval` per request in the chat route → `#6`/`#7`
+red with 2,665 handles and 2,660 timers against a baseline of 6 and 1 — the leak detector detecting a
+planted leak.
+
+`--long` (7200 s) is implemented and documented but **UNVERIFIED on this host**: a two-hour
+unattended run cannot be supervised here, and documented host stalls up to 184 s would make the
+result unreadable.
+
+### Task 7 — Resilience report and gate wiring
+
+`docs/superpowers/2026-08-27-bayz-resilience-report.md` (**71 rows: 68 PASS, 0 FAIL, 3 UNVERIFIED,
+0 N/A**) plus `scripts/resilience-gate.mjs` + `-lib.mjs` + `-run.mjs`, with
+`tests/resilience-report.test.mjs` (**24/24**). RED confirmed first: 7 failures before the report
+existed.
+
+Report sections: fuzz (17 rows), chaos (15), load (18), soak (12), mutation proofs (9). Every `PASS`
+carries an evidence reference; every cited `test:`/`transcript:` path resolves on disk.
+
+**Gate exit contract** — deliberately the same shape as 9H's client gate so an operator learns one
+convention: `--report` → 0 · `--enforce` → 1 on any `FAIL`, any fuzz/chaos `UNVERIFIED`, or a
+malformed/missing/empty/device-less report · no flag, both flags, or an unknown flag → **2**.
+
+**The explicit policy decision the plan required:** fuzz and chaos `UNVERIFIED` **blocks**; load and
+soak `UNVERIFIED` **does not**. Fuzz and chaos are correctness and failure-handling properties where
+"not checked" is indistinguishable from "broken"; load and soak are capacity measurements whose
+feasibility depends on the host, and a gate that refused every release from this device would be
+routed around within a week. Non-blocking `UNVERIFIED` rows are **printed explicitly** under
+`--enforce` so they cannot quietly disappear.
+
+Current state: `--report` exit 0; `--enforce` **exit 1**, blocked by the two chaos rows needing mount
+privileges. Correct behaviour, the same shape as 9H's gate blocking on absent `antigravity`.
+
+Two report-integrity rules were tightened by their own tests failing first. A comma-list evidence
+reference (`smoke:load#4,9,14,19,24`) is **rejected** — a row citing five scattered check numbers
+cannot be confirmed or refuted by looking up any one of them — while a contiguous range
+(`smoke:chaos#31-44`) is accepted. And "capacity figure" is a *measured* quantity (a unit, a
+percentile, a thousands-separated count), not any digit: the first version flagged `limit 4, queue 2`,
+which is configuration verifiable by reading the code, not a measurement needing provenance.
+
+The gate is tested against **synthetic reports** in a temp directory, not only today's file — a gate
+checked only against the current report would pass even if hardcoded to succeed, the same trap 9H
+Task 6 avoided.
+
+### Phase 9I verification totals
+
+Sequential, one command at a time (`runtime:test` fans out `--workspaces` and exhausts the futex
+table on this host, so it was run as eleven separate workspace commands):
+
+- `@bayz/contracts` 3/3 · `@bayz/security` 6/6 · `@bayz/storage` 246/246 · `@bayz/telemetry` 55/55
+- `@bayz/identity` 69/69 · `@bayz/capability` 72/72 · `@bayz/providers` 286/286 · `@bayz/proxy` 121/121
+- `@bayz/gateway` 80/80 · `@bayz/router` 294/294 · `@bayz/server` 338/338
+- root `tests/*.test.mjs` **123/123** (12 files)
+- `fuzz-run` 39/39 · `chaos-smoke` 83/83 · `load-smoke` 64/64 · `soak-smoke` 14/14
+- `api-smoke` PASS · `stream-smoke` PASS · `security-smoke` PASS · `injection-smoke` PASS ·
+  `usage-smoke` PASS · `proxy-ux-smoke` PASS · `client-conformance` PASS
+- `npm run runtime:build` **exit 0** · `client-gate --report` 0 / `--enforce` 1 (expected) ·
+  `resilience-gate --report` 0 / `--enforce` 1 (expected) · `git diff --check` clean
+
 ### 9I resume point
 
-**Next: Task 6 — Soak measurement.** Create `scripts/soak-smoke.mjs` and `docs/transcripts/soak/`.
-Sustain mixed traffic — non-streaming chat, streaming chat, tool roundtrips, model listing, usage
-reads, and periodic management writes — for a documented duration, `--duration` configurable, default
-short enough for CI (**10 minutes**) plus a documented long mode (**2 hours**).
+**Phase 9I is COMPLETE. Next: Phase 9J — not started.** Read its plan under
+`docs/superpowers/plans/` before doing anything.
 
-Sample every **15 s** and record: heap used, heap total, external, RSS, active handle count, active
-request count, timer count, open fds (`/proc/self/fd`), socket count, `bayz.db` size, WAL size, and
-telemetry row count.
+Carry forward into 9J:
 
-Assert, with the numbers in the transcript: heap and RSS have **no positive linear trend beyond a
-documented tolerance across the second half** of the run; handle, timer and fd counts return to
-baseline **±2** after a quiet period; the WAL is checkpointed and does not grow without bound;
-telemetry rows are pruned to the retention bound rather than growing forever; `PRAGMA
-integrity_check` is `ok` at the end. **A leak is a FAIL with the sample series attached, not a
-warning.** A run that cannot complete on this device records `UNVERIFIED` with the reason and the
-partial series.
-
-Carry forward: the 10-minute default exceeds the 600 s foreground cap, so run it as a background
-process with a log and collect the result before claiming anything. Read timings through
-`scripts/fuzz/host-baseline.mjs` — host stalls up to 184 s at load average 0.12 are documented, so
-distinguish a stall from a leak by the *series*, not by one sample. One workspace test command at a
-time. Task 5's RSS observation (353 MiB after 3,288 requests, heap 29.5 MiB) is the baseline a soak
-trend should be read against.
+- **Host timing is not evidence.** `scripts/fuzz/host-baseline.mjs` measures a bare
+  connect/timeout/destroy loop with no BAYZ code in it and has recorded individual iterations at
+  8.2 s, 88 s and 184 s at load average 0.12 with GBs free. Assert on BAYZ's own error codes and
+  observable state, never the clock.
+- **Product load is allowed; build fan-out is not.** `npm run runtime:test` exhausts the futex table
+  here. Run one workspace test command at a time; `runtime:build` alone is fine (~3 min).
+- **Long runs go to the background with a log.** `fuzz-run` ~3 min, `chaos-smoke` ~2 min,
+  `load-smoke` ~4 min, `soak-smoke` 10 min — all exceed or approach the 600 s foreground cap.
+- **`--expose-gc` matters for any memory claim** (see Task 6). Raw `heapUsed` flips a leak verdict
+  between identical runs.
+- **Two host limitations are permanent here**, both recorded UNVERIFIED with reasons rather than
+  skipped: `chmod 0444` does not stop writes for root under proot, and `mount -t tmpfs` exits 0 while
+  mounting nothing. Any future scenario needing either must probe for effect before trusting it.
 
 ## Phase 9 GOAT — planning state
 

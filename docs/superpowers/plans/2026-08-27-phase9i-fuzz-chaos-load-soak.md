@@ -126,32 +126,32 @@ Each scenario runs against **real** components — a real listener, real origins
 
 **Create:** `scripts/soak-smoke.mjs`, `docs/transcripts/soak/`
 
-- [ ] Sustain mixed traffic — non-streaming chat, streaming chat, tool roundtrips, model listing, usage reads, and periodic management writes — for a documented duration with `--duration` configurable and a default short enough to run in CI (10 minutes) plus a documented long mode (2 hours).
-- [ ] Sample every 15 s and record: heap used, heap total, external, RSS, active handle count, active request count, timer count, open file descriptors (`/proc/self/fd`), socket count, `bayz.db` size, WAL size, and telemetry row count.
-- [ ] Assert, with the numbers in the transcript: heap and RSS have no positive linear trend beyond a documented tolerance across the second half of the run; handle, timer, and fd counts return to baseline ±2 after a quiet period; the WAL is checkpointed and does not grow without bound; telemetry rows are pruned to the retention bound rather than growing forever; `PRAGMA integrity_check` is `ok` at the end.
-- [ ] A leak is a **FAIL with the sample series attached**, not a warning. A run that cannot complete on this device records `UNVERIFIED` with the reason and the partial series.
-- [ ] Verify: `node scripts/soak-smoke.mjs` exits 0 and writes a transcript.
-- [ ] Commit — `test: add Bayz soak measurement with resource series`
+- [x] Sustain mixed traffic — non-streaming chat, streaming chat, tool roundtrips, model listing, usage reads, and periodic management writes — for a documented duration with `--duration` configurable and a default short enough to run in CI (10 minutes) plus a documented long mode (2 hours). — `smoke:soak#1-4`, `transcript:docs/transcripts/soak/soak.md`. 600 s default ran **four times**; 18,741 requests, **0 failures**. `--long` (7200 s) implemented and documented but **UNVERIFIED on this host** — a two-hour unattended run cannot be supervised here and host stalls up to 184 s would make it unreadable.
+- [x] Sample every 15 s and record: heap used, heap total, external, RSS, active handle count, active request count, timer count, open file descriptors (`/proc/self/fd`), socket count, `bayz.db` size, WAL size, and telemetry row count. — all thirteen metrics in the transcript's series table, 41 samples per run.
+- [x] Assert, with the numbers in the transcript: heap and RSS have no positive linear trend beyond a documented tolerance across the second half of the run; handle, timer, and fd counts return to baseline ±2 after a quiet period; the WAL is checkpointed and does not grow without bound; telemetry rows are pruned to the retention bound rather than growing forever; `PRAGMA integrity_check` is `ok` at the end. — `smoke:soak#5-13`. Second-half slopes **+2.1** and **+8.4 KiB/sample** (tolerance 256 KiB) across two runs; handles 6→5, timers 1→0, fds 28→30; WAL peak 3.97 MiB against a 16 MiB ceiling; 200 rows retained from 18,741 requests; `integrity_check` ok.
+- [x] A leak is a **FAIL with the sample series attached**, not a warning. A run that cannot complete on this device records `UNVERIFIED` with the reason and the partial series. — both implemented and both exercised: leaking one interval per request turned `smoke:soak#6-7` red (2,665 handles, 2,660 timers vs baseline 6 and 1), and a short run or a run without `--expose-gc` records the trend UNVERIFIED with the series rather than asserting on it.
+- [x] Verify: `node scripts/soak-smoke.mjs` exits 0 and writes a transcript. — **14/14 checks, `soak: PASS`**, two clean 600 s runs after the heap-measurement fix.
+- [x] Commit — `test: add Bayz soak measurement with resource series`
 
 ### Task 7 — Resilience report and gate wiring
 
 **Create:** `docs/superpowers/2026-08-27-bayz-resilience-report.md`, `scripts/resilience-gate.mjs`
 **Test:** `tests/resilience-report.test.mjs`
 
-- [ ] RED `tests/resilience-report.test.mjs`: the report exists; every fuzz target, chaos scenario, load point, and soak metric appears as a row with exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; every `PASS` carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; no capacity figure appears in the report without a `transcript:` reference on the same row; the device is named in the header.
-- [ ] GREEN: write the report from the actual outputs of Tasks 3–6.
-- [ ] `scripts/resilience-gate.mjs`: `--report` always exits 0; `--enforce` exits non-zero if any row is `FAIL`, or if any fuzz or chaos row is `UNVERIFIED`. Load and soak `UNVERIFIED` is permitted to block or not per an explicit documented decision — the gate names which, rather than leaving it implicit. 9L runs it with `--enforce`.
-- [ ] Verify: `node --test tests/resilience-report.test.mjs` exits 0; `node scripts/resilience-gate.mjs --report` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add the Bayz resilience report and gate`
+- [x] RED `tests/resilience-report.test.mjs`: the report exists; every fuzz target, chaos scenario, load point, and soak metric appears as a row with exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; every `PASS` carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; no capacity figure appears in the report without a `transcript:` reference on the same row; the device is named in the header. — **24/24**, RED confirmed first (7 failures before the report existed).
+- [x] GREEN: write the report from the actual outputs of Tasks 3–6. — `docs/superpowers/2026-08-27-bayz-resilience-report.md`, **71 rows: 68 PASS, 0 FAIL, 3 UNVERIFIED, 0 N/A**; every cited `test:`/`transcript:` path resolves on disk.
+- [x] `scripts/resilience-gate.mjs`: `--report` always exits 0; `--enforce` exits non-zero if any row is `FAIL`, or if any fuzz or chaos row is `UNVERIFIED`. Load and soak `UNVERIFIED` is permitted to block or not per an explicit documented decision — the gate names which, rather than leaving it implicit. 9L runs it with `--enforce`. — split entry/lib/run; the decision is **fuzz and chaos block, load and soak do not**, stated in both the gate's output and the report, with non-blocking UNVERIFIED rows printed explicitly so they cannot be hidden.
+- [x] Verify: `node --test tests/resilience-report.test.mjs` exits 0; `node scripts/resilience-gate.mjs --report` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean. — 24/24; `--report` exit 0; `--enforce` **exit 1**, blocked by the two chaos rows this host cannot exercise, which is the intended behaviour; `runtime:verify` run as its two halves sequentially (`runtime:test` fans out `--workspaces` and exhausts the futex table on this device) — all eleven workspaces green, `runtime:build` exit 0; `git diff --check` clean.
+- [x] Commit — `test: add the Bayz resilience report and gate`
 
 ## Completion checklist
 
-- [ ] Fuzz harness is seed-reproducible across processes; failing inputs are saved as regression corpus.
-- [ ] Thirteen fuzz targets, 5,000 iterations each, zero crashes, zero hangs, bounded RSS growth.
-- [ ] Every fuzz error is a known BAYZ code; no engine error escapes a boundary.
-- [ ] Chaos scenarios assert a specific recovery and `PRAGMA integrity_check` is `ok` after each.
-- [ ] Mid-stream failure never triggers failover; mid-stream restart leaves no orphaned state.
-- [ ] Load and soak figures exist only alongside transcripts naming this device.
-- [ ] Soak proves no handle, timer, fd, WAL, or telemetry-row unbounded growth.
-- [ ] No fuzz corpus file contains credential-shaped data.
-- [ ] No new runtime dependency added.
+- [x] Fuzz harness is seed-reproducible across processes; failing inputs are saved as regression corpus. — 24 draws compared byte-for-byte in a spawned child (`test:tests/fuzz-harness.test.mjs`); `scripts/fuzz/corpus/regression/` receives any failing input, credential-scanned first.
+- [x] Thirteen fuzz targets, 5,000 iterations each, zero crashes, zero hangs, bounded RSS growth. — `smoke:fuzz#1-39`, **39/39** across three consecutive full runs; largest growth 39.5 MiB (`sse`) against a 64 MiB bound.
+- [x] Every fuzz error is a known BAYZ code; no engine error escapes a boundary. — enforced by `rejectOrAccept` in `scripts/fuzz/targets/shared.mjs`; mutating it to accept engine errors turns the targets red.
+- [x] Chaos scenarios assert a specific recovery and `PRAGMA integrity_check` is `ok` after each. — `smoke:chaos#1-83`, **83/83**; ten storage-owning scenarios each end with an integrity check.
+- [x] Mid-stream failure never triggers failover; mid-stream restart leaves no orphaned state. — `smoke:chaos#6-10` (second origin observed **zero** requests) and `smoke:chaos#64-73` (schema, identities, providers, credential, route all survive; the pre-restart key still authenticates). Both mutation-proved.
+- [x] Load and soak figures exist only alongside transcripts naming this device. — `writeTranscript` throws if the file is absent and runs before any table is printed, in both harnesses; the resilience gate additionally refuses a capacity figure whose row lacks a `transcript:` reference.
+- [x] Soak proves no handle, timer, fd, WAL, or telemetry-row unbounded growth. — `smoke:soak#5-13`; leaking one interval per request turns `#6`/`#7` red, disabling retention pruning turns `#11` red.
+- [x] No fuzz corpus file contains credential-shaped data. — the harness refuses to run on a credential-shaped input, and a deliberately planted `Bearer …` corpus file was caught and removed.
+- [x] No new runtime dependency added. — all 9I code is plain Node using `node:` builtins; `package.json` devDependencies unchanged (`@types/node`, `tsx`, `typescript`).
