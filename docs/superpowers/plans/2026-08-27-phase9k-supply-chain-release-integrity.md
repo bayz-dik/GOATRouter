@@ -149,15 +149,23 @@ Its security shape is asserted structurally, since it **has never executed** —
 
 ### Task 6 — Build determinism, honestly bounded
 
-**Create:** `scripts/build-determinism.mjs`
-**Test:** `tests/build-determinism.test.mjs`
+**Create:** `scripts/build-determinism.mjs`, `docs/superpowers/2026-08-27-bayz-build-determinism.md`
+**Test:** `tests/build-determinism.test.mjs` (9/9)
 
-- [ ] RED `tests/build-determinism.test.mjs`: building twice from a clean state produces byte-identical output for every `tsc`-emitted file in `packages/*/dist` and `apps/server/dist`; for the `vite`-built dashboard bundle the script records whether the output matched and, if it did not, reports the differing files as `UNVERIFIED: bundler determinism not guaranteed` and exits **0** — the spec forbids claiming reproducible builds, and a red test for a property the toolchain does not promise would be dishonest noise rather than a finding.
-- [ ] RED same file: no emitted artifact contains an absolute path from the build machine, a timestamp, or a username — asserted by scanning the built bytes. This is the part of determinism that genuinely matters for privacy and is achievable.
-- [ ] Verify RED.
-- [ ] GREEN, including any `tsconfig`/`vite` setting needed to strip paths.
-- [ ] Verify: `node scripts/build-determinism.mjs` exits 0 with an explicit verdict per artifact class.
-- [ ] Commit — `test: measure Bayz build determinism without overclaiming`
+- [x] RED `tests/build-determinism.test.mjs`: building twice from a clean state produces byte-identical output for every `tsc`-emitted file in the per-package `dist` directories and `apps/server/dist`; for the `vite`-built dashboard bundle the script records whether the output matched and, if it did not, reports the differing files as `UNVERIFIED: bundler determinism not guaranteed` and exits **0** — the spec forbids claiming reproducible builds, and a red test for a property the toolchain does not promise would be dishonest noise rather than a finding. — ***The plan's premise is wrong, and this is recorded rather than papered over: there are no `tsc`-emitted files.* All **eleven** workspace build scripts are `tsc -p tsconfig.json --noEmit` — type checking only, measured from each manifest rather than assumed — and the shipped JavaScript comes from `esbuild` (the server bundle, inside `scripts/pack.mjs`) and `vite` (the dashboard). Neither directory the plan names exists. Comparing byte-identity across an empty file set would pass trivially, so that class is reported `N/A` **with its reason**, and determinism is measured where output actually is: the tarball (`PASS`, two packs byte-identical), the SBOM (`PASS`), and the dashboard bundle (`UNVERIFIED`).*
+- [x] RED same file: no emitted artifact contains an absolute path from the build machine, a timestamp, or a username — asserted by scanning the built bytes. This is the part of determinism that genuinely matters for privacy and is achievable. — *Scanned over the **tarball**, not the source tree: the bundler is what would embed a path and the tarball is what a user receives. Every shipped file is extracted and checked. Includes a **positive control** — a test plants known identity strings and asserts they are caught — because a scan that silently matched nothing would report `PASS` forever, which is worse than no scan since it reads as protection.*
+- [x] Verify RED. — *Module not found, then two genuine syntax errors of my own: a doc comment containing a glob pattern closed the block comment early in both files. Fixed by rewording, not by weakening the comment.*
+- [x] GREEN, including any `tsconfig`/`vite` setting needed to strip paths. — *None needed. The tarball scan came back clean once a real false positive was fixed (below), so no build setting had to change.*
+- [x] Verify: `node scripts/build-determinism.mjs` exits 0 with an explicit verdict per artifact class. — *Exit 0. `tsc-emitted-output: N/A`, `release-tarball: PASS`, `dashboard-bundle: UNVERIFIED`, `sbom: PASS`, `build-machine-identity: PASS`, then `build determinism: MEASURED`.*
+- [x] Commit — `test: measure Bayz build determinism without overclaiming`
+
+**A real false positive, and why the artifact was right.** The first run reported `FAIL` on `package/dist/server.mjs` for leaking the build hostname `localhost`. The scanner was wrong: `localhost` is this device's actual hostname *and* a legitimate shipped string, appearing nine times in the server bundle as part of the SSRF loopback allowlist (`localhost`, `localhost.localdomain`, `ip6-localhost`). The only two ways to make that check pass were to exempt generic hostnames or to delete a Fortress protection. Generic hostnames and usernames are now exempt, which costs nothing — knowing the builder was called `localhost` or `root` tells an attacker precisely nothing.
+
+**"Reproducible build" is never claimed.** A wording guard asserts the phrase never appears as an assertion in the script output, and that every occurrence in the report is a negation. It is a term of art meaning far more than "two runs on one machine matched", and borrowing its authority would mislead exactly the security-conscious reader who looks for it.
+
+**A mutation survived and forced a test redesign.** Deleting the `build-machine-identity` class from `ARTIFACT_CLASSES` left "every artifact class has an explicit verdict" green, because that test iterated the very list the mutation had shortened — a self-referential check that cannot notice a deletion. The expected class set now lives in the test file, so a dropped class fails by name. Re-run: 3 red. Suite 8 → 9.
+
+**Three further mutations, all caught:** the absolute-path check disabled (1 red, caught by the positive control), the tarball verdict reworded to claim a reproducible build (2 red).
 
 ### Task 7 — Offline test proof
 
