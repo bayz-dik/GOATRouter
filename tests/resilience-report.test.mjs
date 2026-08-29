@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -216,17 +216,30 @@ function withReport(body) {
 }
 
 function runAgainst(body, { enforce }) {
-  const { path } = withReport(body);
-  const script = join(root, "scripts/resilience-gate-probe.mjs");
+  const { dir, path } = withReport(body);
+  /*
+   * The probe lives in the **temp directory**, not in `scripts/`.
+   *
+   * It used to be written into the tracked `scripts/` directory and deleted afterwards. Two things
+   * went wrong with that, both real and both intermittent, because `node --test` runs test files
+   * concurrently with 9J's portability scanner:
+   *
+   *   1. the interpolated absolute `/tmp/...` report path was a genuine `hardcoded-path` violation
+   *      inside `scripts/` for as long as the probe existed, and
+   *   2. the scanner lists the directory then reads each file, so a probe deleted in between made the
+   *      scan die with `ENOENT`.
+   *
+   * Writing outside `scripts/` removes both. The import is an absolute `file:` URL because a relative
+   * specifier would no longer resolve from a temp directory.
+   */
+  const script = join(dir, "resilience-gate-probe.mjs");
+  const runModule = pathToFileURL(join(root, "scripts/resilience-gate-run.mjs")).href;
   writeFileSync(
     script,
-    `const { run } = await import("./resilience-gate-run.mjs");\nprocess.exit(await run({ enforce: ${enforce}, path: ${JSON.stringify(path)} }));\n`,
+    `const { run } = await import(${JSON.stringify(runModule)});\n` +
+      'process.exit(await run({ enforce: process.argv[3] === "true", path: process.argv[2] }));\n',
   );
-  try {
-    return spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8" });
-  } finally {
-    spawnSync("rm", ["-f", script]);
-  }
+  return spawnSync(process.execPath, [script, path, String(enforce)], { cwd: root, encoding: "utf8" });
 }
 
 const HEADER = "# report\n\n- Device: Termux/Android ARM64\n- Commit: abc1234\n\n";
@@ -314,20 +327,24 @@ test("an empty report blocks --enforce rather than passing vacuously", () => {
 });
 
 test("a missing report blocks --enforce but not --report", () => {
-  const script = join(root, "scripts/resilience-gate-probe.mjs");
+  // Same reasoning as `runAgainst`: the probe stays out of the tracked `scripts/` directory so the
+  // portability scanner cannot race it.
+  const dir = mkdtempSync(join(tmpdir(), "bayz-resilience-missing-"));
+  const script = join(dir, "resilience-gate-probe.mjs");
+  const runModule = pathToFileURL(join(root, "scripts/resilience-gate-run.mjs")).href;
   const missing = join(tmpdir(), "bayz-resilience-does-not-exist.md");
+  writeFileSync(
+    script,
+    `const { run } = await import(${JSON.stringify(runModule)});\n` +
+      'process.exit(await run({ enforce: process.argv[3] === "true", path: process.argv[2] }));\n',
+  );
   for (const [enforce, expected] of [
     [true, 1],
     [false, 0],
   ]) {
-    writeFileSync(
-      script,
-      `const { run } = await import("./resilience-gate-run.mjs");\nprocess.exit(await run({ enforce: ${enforce}, path: ${JSON.stringify(missing)} }));\n`,
-    );
-    const result = spawnSync(process.execPath, [script], { cwd: root, encoding: "utf8" });
+    const result = spawnSync(process.execPath, [script, missing, String(enforce)], { cwd: root, encoding: "utf8" });
     assert.equal(result.status, expected, `missing report with enforce=${enforce} exited ${result.status}`);
   }
-  spawnSync("rm", ["-f", script]);
 });
 
 test("--report never blocks, even on a report full of failures", () => {

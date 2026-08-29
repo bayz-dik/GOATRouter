@@ -998,7 +998,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
 | 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
-| 9J Cross-platform / Packaging / Upgrade | **IN PROGRESS** | Tasks 1–2 of 8 done; `platform-matrix` 10/10 (77 cells all UNVERIFIED), `dependency-closure` 12/12 (closure **96 = 10 links + 86 external**, native-free, 5 direct deps); Task 3 (path/permission/shell hygiene) next |
+| 9J Cross-platform / Packaging / Upgrade | **COMPLETE** | Tasks 1–8; `platform-matrix` 10/10, `dependency-closure` 12/12 (closure **96 = 10 links + 86 external**, native-free), `portability` 14/14 + scan 0 violations, `pack` 20/20 + `--self-test` 15/15, `install-smoke` **64/64**, `upgrade-ladder` 21/21 + `corrupt-row` 7/7 + `upgrade-smoke` **83/83** (every rung v1…v11), `ci-workflow` 8/8 (committed, inert, no remote exists), `platform-gate` 13/13 with `--report` 0 / `--enforce` **0**; Termux/Android ARM64 row **11/11 PASS** against the installed artifact, six other platforms honestly `UNVERIFIED`; six live production defects found and fixed |
 | 9K–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -3309,8 +3309,7 @@ table on this host, so it was run as eleven separate workspace commands):
 
 ### 9I resume point
 
-**Phase 9I is COMPLETE. Next: Phase 9J — not started.** Read its plan under
-`docs/superpowers/plans/` before doing anything.
+**Phase 9I is COMPLETE. Next: Phase 9J — COMPLETE as of this session; see the 9J section below.**
 
 Carry forward into 9J:
 
@@ -3328,9 +3327,21 @@ Carry forward into 9J:
   skipped: `chmod 0444` does not stop writes for root under proot, and `mount -t tmpfs` exits 0 while
   mounting nothing. Any future scenario needing either must probe for effect before trusting it.
 
-## Phase 9J Cross-platform / Packaging / Upgrade — as built so far
+## Phase 9J Cross-platform / Packaging / Upgrade — as built
 
-Eight tasks. **Tasks 1–2 COMPLETE; Tasks 3–8 not started.**
+Eight tasks. **Phase 9J is COMPLETE — all eight tasks committed.** Six commits, nothing pushed
+(there is no remote configured; `git remote -v` is empty).
+
+```text
+efac3b4  feat: single-source the Bayz data directory with portable permissions   (Task 3)
+44f2ca8  feat: add the Bayz release packaging script                             (Task 4)
+fa4e28d  test: add the Bayz install and first-boot smoke                         (Task 5)
+ad7a839  test: prove the Bayz upgrade ladder from every prior schema             (Task 6)
+1c6f02f  ci: add the Bayz platform matrix workflow, unpushed                     (Task 7)
+b9453d0  test: add the Bayz platform gate                                        (Task 8)
+```
+
+Tasks 1–2 were committed earlier (`6a6174d`, `54acf84`).
 
 ### Task 1 — Platform matrix document
 
@@ -3394,35 +3405,322 @@ importing the module from the test ran the whole report, and a real violation wo
 flagged. Three mutations reverted byte-identical: a genuinely flat walk → 4 red; `devDependencies`
 included in the walk → 8 red; install-script detection disabled → 1 red.
 
+### Task 3 — Cross-platform path, permission, and shell hygiene
+
+`apps/server/src/data-dir.ts` (new) with `apps/server/test/data-dir.test.ts` (**13/13**), and
+`scripts/portability-scan.mjs` with `tests/portability.test.mjs` (**14/14**, scan exit 0, 0
+violations).
+
+`resolveDataDir({ platform, home, env, cwd })` takes everything injected and never reads the real
+platform, home, or env, so every branch is testable. Order: `BAYZ_DATA_DIR` (relative resolved
+against cwd, empty or whitespace refused) → an existing `~/.bayz` → `%LOCALAPPDATA%/bayz` on Windows
+→ `~/Library/Application Support/bayz` on macOS → `$XDG_DATA_HOME/bayz` or `~/.local/share/bayz`
+elsewhere. It returns `{ path, reason }`, and `reason` is logged at startup so an operator can see
+*why* a directory was chosen. **An existing `~/.bayz` wins on every platform**, which is the
+backward-compatibility guarantee: abandoning it would leave existing installs with an unreadable
+database.
+
+`config.ts` now calls `resolveRuntimeDataDir(env)` and the scanner asserts `data-dir.ts` is the only
+file in the repository that asks the OS where home is.
+
+**The plan's "existing config tests unmodified" could not be honoured, and that is recorded rather
+than papered over.** `apps/server/test/config.test.ts:9` asserted `/\.bayz$/`, which pinned the old
+inlined default; this device has no `~/.bayz`, so the resolver correctly returns
+`~/.local/share/bayz`. The assertion was rewritten to assert the **chain** — branching on
+`existsSync(~/.bayz)` — rather than weakened to a substring match or forced green by creating the
+directory.
+
+Permissions were **verified, not re-implemented**: `packages/storage/src/paths.ts` already does
+`0o700`/`0o600` and already tolerates chmod failure. A child process probed the real filesystem and
+observed dir `0700`, `bayz.db`/`-wal`/`-shm` `0600`. Both Windows permission cells stay `UNVERIFIED`
+and a test asserts they do: NTFS has no `chmod`-settable equivalent for `0700`, so parity is not
+claimed.
+
+Two scanner defects were found and fixed **before** the commit, both false-positive floods totalling
+42 violations with none real. A character-walking comment stripper mistook quote characters inside
+regex literals for string delimiters, swallowed the rest of each file, stopped recognising block
+comments, and rewrote `\\` as spaces — destroying the very signal the Windows drive-letter rule needs.
+And `\b(exec|…)` matched `db.exec("PRAGMA …")` and `pattern.exec(line)`, reporting 22 SQL statements
+as shells. Rules also cannot spell live call forms in their *labels*, because the scanner scans
+itself; excluding it from its own scan would have been a hole rather than a fix.
+
+Five mutations, one of which **survived and forced a real test fix**: disabling the home-directory
+*call* rule stayed green, because the vacuity fixture fed an import line and a call line together and
+the import rule alone satisfied it. The fixtures were split into call-only forms (suite 13 → 14) and a
+third pattern was added for `const { homedir } = await import("node:os")`. The mutation was then
+caught.
+
+### Task 4 — Packaging artifact
+
+`scripts/pack.mjs` with `tests/pack.test.mjs` (**20/20**) and `packaging/README.md`. Output
+`packaging/out/bayz-router-0.1.0.tgz` — 7 files, 188 KB — with `packaging/out/` gitignored.
+
+Measured baseline defect: `npm pack --workspace @bayz/server` shipped **57 files including all 29
+`test/*.ts`**. A `files` field narrows that accident, but the real fix is that the release is a single
+bundled artifact rather than a workspace pack, because a workspace tarball's ten `@bayz/*`
+dependencies are unresolvable anywhere.
+
+**The artifact declares two dependencies, not the plan's five**, and this is a correction from
+measurement. `fastify` and `@fastify/static` stay external; `react`/`react-dom` belong to the
+dashboard bundle, and the server reaches `@bayz/contracts` only through `import type`, which erases at
+compile time — so `zod` is never loaded. Declaring all five would install four packages nothing can
+require. The test asserts declared **equals** imported in both directions, so a genuinely missing
+sixth dependency still fails.
+
+It installs for real: `npm install <tarball>` into a clean prefix added 83 packages, `.bin/bayz`
+booted, created the data directory at `0700` with the database and `master.key` at `0600`, reached
+schema v11, and served `/api/health` 200 plus the packaged dashboard.
+
+Licence is `UNLICENSED` — true today, and 9K Task 3 owns that decision. The test asserts a
+*consistency* rule rather than a value, so it survives 9K landing.
+
+Six mutations. Five were caught immediately: over-declaring the three unused dependencies, a
+hardcoded unused `zod`, shipping a test file (reproducing the 57-file defect), and a tar `mtime` from
+the clock. **One survived and exposed an unfalsifiable assertion**: removing `mtime: 0` from
+`gzipSync` stayed green, because zlib on this Node emits a zero gzip timestamp regardless of the
+option — so *no* assertion on the produced bytes could ever have caught a non-deterministic writer.
+The fix gives `writeTarGz` a test-only `mtime` injection point: the test packs once with a real clock
+injected and proves the bytes diverge, then proves production is byte-identical across two packs. Two
+positive controls confirm it now fails — production stamped with the clock, and the injection point
+neutered.
+
+### Task 5 — Install, first boot, restart, and uninstall
+
+`scripts/install-smoke.mjs` (**64/64**) and `docs/install.md`.
+
+Every check runs against the **installed artifact**, never the workspace: the tarball is installed
+into a clean temporary prefix with a temporary npm cache, and the checks drive the binary npm linked
+at `node_modules/.bin/bayz`. A workspace run would prove nothing about what an operator installs,
+because the workspace has ten `@bayz/*` symlinks a user will never have.
+
+Covered: install, first boot creating the data directory at `0700` with `bayz.db` and `master.key` at
+`0600`, the API token generated once and **reused** across a restart rather than regenerated, a real
+chat through a real loopback origin, streaming, proxying, dashboard serving, a generated token refused
+for a non-loopback bind, and uninstall leaving operator data untouched — with `docs/install.md`
+documenting that deleting the data directory is the operator's explicit choice.
+
+**Two real defects in the smoke itself, both found by running it rather than reading it.**
+`--@bayz:registry` passed as two argv entries is not recognised by npm, which treated the URL as a
+*second install target* and hung for over nine minutes retrying it as a package; it must be one
+`--flag=value` entry. And the fixture imports needed the `tsx` loader, without which the run died at
+check 20 with `ERR_MODULE_NOT_FOUND`. Everything under test is still the artifact's own compiled
+bundle in a separate process.
+
+### Task 6 — Upgrade from every prior schema version
+
+`packages/storage/test/upgrade-ladder.test.ts` (**21/21**),
+`packages/providers/test/corrupt-row.test.ts` (**7/7**), and `scripts/upgrade-smoke.mjs` (**83/83**).
+
+Every rung v1 through head v11, each fixture built by **truncating the real `MIGRATIONS` list**.
+Writing the head schema and editing `user_version` down would produce a shape no BAYZ build ever
+created — and the ahead-of-head refusal added here would reject it anyway.
+
+Two layers, answering different questions. The storage test proves the ladder: every rung reaches
+head, every secret still decrypts, every provider, proxy, route, identity and usage row survives with
+its values, and the 9F hash chain validates after each step. The smoke proves it where an operator
+meets it: each rung opened by the installed artifact's own bundle, a real chat completing through the
+pre-upgrade route and credential, and `PRAGMA integrity_check` `ok` after each. The artifact is a
+*bundle*, so migrations could in principle be reordered or dropped by bundling and the storage test
+would never notice.
+
+**Three live production defects, all fixed here:**
+
+1. **An ahead-of-head database opened cleanly.** A forged `user_version` 14 with a consistent ledger
+   passed every existing check: `verifyRecordedSchemaVersion` (its head matched), zero migrations
+   applied (every version this build knows was already `<= current`), and `verifyMigrationChain` —
+   because the chain folds only the migrations this build *has*, so `chain(…, 14)` and
+   `chain(…, 11)` are byte-identical. Measured: it opened and reported `schemaVersion: 14`. There is
+   no safe way to remove a column that already holds data, so `verifySchemaNotAheadOfHead` now
+   refuses it at a distinct stage, called from `openDatabase` **before** the runner.
+2. **A ledger gap was skipped.** `verifyMigrationChain` returns early when no chain is recorded —
+   the normal state for exactly the databases 9J upgrades — so a v11 database with ledger row 3
+   deleted opened fine. The count check moved into `verifyRecordedSchemaVersion`, before the runner,
+   where no early return can reach it.
+3. **One corrupt provider row killed the whole install.** `runtime.describe()` counts providers
+   through `listProviders()`, which mapped every row through `rowToRecord` and rethrew, so a single
+   unparseable `config_json` made the daemon **exit before listening** — every healthy provider and
+   every stored credential offline over one field. `ProviderRepository.list` now skips undecodable
+   rows and `listUnreadable()` reports their ids; tolerating without reporting would trade a dead
+   install for an invisible one, so `GET /api/providers` returns `unreadable` when non-empty. A
+   second defect in the same area: `deleteProvider` checked existence with `get`, which decodes, so
+   the documented repair failed with HTTP 400 on exactly the rows needing it — it now uses a
+   non-decoding `exists`.
+
+**The free-first default is asserted as a guarantee, not worked around.** Migration v10 adds
+`routes.free_only NOT NULL DEFAULT 1`, so an upgraded route arrives free-only and the first chat is
+*expected* to be refused with `no_free_route`; the completion is asserted after an explicit opt-in. An
+upgrade that silently cleared `free_only` would let a migrated route start spending money without
+anyone asking. My first reading of those 409s as a fixture bug was wrong and is recorded as such.
+
+v1–v3 predate the `routes` table, so those rungs assert the API answering rather than a chat —
+recorded rather than skipped silently, since inventing a route would test v11's schema, not v1's.
+
+Five mutations, all caught: `list` intolerant again, `listUnreadable` returning `[]`, ahead-of-head
+refused only 100+ versions out, a ledger gap accepted when rows are *fewer* than `user_version`, and
+corrupt rows undeletable again.
+
+### Task 7 — CI workflow for the untestable platforms
+
+`.github/workflows/platform-matrix.yml` and `docs/superpowers/2026-08-27-bayz-ci-notes.md`, with
+`tests/ci-workflow.test.mjs` (**8/8**).
+
+Five hosted runners (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `macos-latest`,
+`macos-13`), each running `npm ci`, the closure and portability gates, every workspace suite,
+`runtime:build`, `node --test tests/`, pack plus its self-test, then `install-smoke` and
+`upgrade-smoke` against the packed artifact, then `platform-gate --report`.
+
+**One deviation from the plan text, recorded rather than made silently:** `npm run runtime:verify` is
+replaced by the bounded sequential equivalent, one workspace per step. The parallel fan-out exhausts
+the futex table and cannot run on the primary device at all, so using it in CI would make a CI failure
+incomparable to a local one.
+
+The file is **committed and inert**. Trigger is `workflow_dispatch` only — no `push`,
+`pull_request`, or `schedule` — with `permissions: contents: read`, no `secrets.` reference, no
+token, and no publish step. If a remote is ever added, this must not start acting before someone
+re-reads it.
+
+The load-bearing test is the anti-cheat: the five CI-only platform rows must contain **no `PASS`** and
+no matrix cell may cite the workflow file. A workflow that has never executed is not a measurement,
+and that test is what stops a future edit from treating it as one.
+
+The notes record that Windows ARM64 and Termux/Android have **no hosted runner at all**, plus two ways
+a green CI run would still not equal the Termux row: Windows has no `chmod`-settable equivalent for
+`0700`, and `node:sqlite` binds its SQLite from the Node build rather than the OS.
+
+Three mutations, all caught: a `push` trigger on master, `NODE_AUTH_TOKEN` from `secrets.NPM_TOKEN`
+smuggled into a step, and the Linux x64 row upgraded to `PASS` on the strength of a workflow that has
+never run.
+
+### Task 8 — Platform gate
+
+`scripts/platform-gate.mjs` with `tests/platform-gate.test.mjs` (**13/13**). `--report` exit 0,
+`--enforce` exit 0.
+
+The asymmetry is the design. A `FAIL` anywhere blocks **unconditionally** — someone looked, it did not
+work, and shipping would be shipping a known defect. An `UNVERIFIED` mandatory cell on the **primary**
+platform blocks, because that is the device this release is qualified on. An `UNVERIFIED` anywhere else
+does **not** block: this repository has, by design, no access to five of its seven platforms, and a
+gate that can never pass is one that gets bypassed or ignored, which is strictly worse than one that
+reports honestly. What it does instead is print the exact list of platforms that must not be described
+as supported.
+
+`README.md` now carries that list in a `## Platform support` section, and a test asserts the two agree
+in both directions. A README claiming a platform nobody has ever run is the most consequential lie this
+project could tell, because a user would install on it.
+
+Three guards beyond the plan text, each because the obvious implementation would have been vacuous: a
+**missing primary row** blocks (every other rule is about that row, so losing it would satisfy them
+all by having nothing to check); a **dropped mandatory column** blocks (`MANDATORY_COLUMNS` lives in
+the gate, not the matrix header, so deleting a column cannot shrink "complete" into a pass); and a
+`PASS` with no evidence reference blocks, while an unparseable matrix throws rather than reading as
+empty.
+
+Five mutations, all caught: a `FAIL` on a non-primary platform no longer blocking, a missing primary
+row treated as nothing to check, `uninstall` dropped from the mandatory set, an `UNVERIFIED` primary
+cell downgraded to a notice, and the README quietly dropping Linux x64/ARM64 and Windows x64 from its
+do-not-claim list.
+
+### Phase 9J verification totals
+
+Run sequentially, one heavy worker at a time — `npm run runtime:verify` as a single command remains
+unusable on this host, exhausting the futex table and taking SIGKILL with gigabytes free.
+
+```text
+@bayz/contracts      3/3        @bayz/proxy        121/121
+@bayz/security       6/6        @bayz/gateway       80/80
+@bayz/storage      267/267      @bayz/router       294/294
+@bayz/telemetry     55/55       @bayz/providers    293/293
+@bayz/identity      69/69       @bayz/server       351/351
+@bayz/capability    72/72
+
+pack               20/20        portability         14/14
+platform-gate      13/13        platform-matrix     10/10
+matrix-integrity    9/9         ci-workflow          8/8
+dependency-closure 12/12
+
+api-smoke          70/70        install-smoke       64/64
+upgrade-smoke      83/83        pack --self-test    15/15
+root suite `node --test "tests/*.test.mjs"`  200/200, exit 0, four consecutive runs
+portability-scan   0 violations, exit 0
+platform-gate --report exit 0, --enforce exit 0
+builds: storage, providers, server, dashboard — all exit 0
+git diff --check  clean
+```
+
+Storage schema head remains **v11**. The runtime closure is unchanged at **96 = 10 workspace links +
+86 external** from 276 lockfile entries; `esbuild` was promoted to an explicit pinned root
+devDependency so the release path does not rely on npm hoisting from `tsx`, and a test asserts it never
+reaches the runtime closure.
+
+**25 mutations were run across Tasks 3–8. Two survived on first attempt and both forced real fixes** —
+the vacuity fixture that let the home-directory call rule be disabled, and the unfalsifiable gzip
+timestamp assertion. Both are described above.
+
+**One pre-existing flake was found and fixed while running the whole root suite together, and it was a
+real defect rather than a flaky assertion.** `node --test "tests/*.test.mjs"` failed roughly one run in
+three on `the scanner runs as a script and exits 0 on the clean tree`, with two different symptoms:
+sometimes a genuine `hardcoded-path` violation at `scripts/resilience-gate-probe.mjs:2`, sometimes
+`ENOENT` reading that same path from inside the scanner.
+
+Cause: `tests/resilience-report.test.mjs` wrote a temporary probe **into the tracked `scripts/`
+directory**, with an absolute `/tmp/...` report path interpolated into its source, then deleted it.
+Because `node --test` runs files concurrently, the portability scanner would either read the probe
+while it existed — correctly reporting a hardcoded path — or list the directory and then find the file
+gone mid-scan. The scanner was right both times. The probe now lives in the temp directory alongside
+its fixture, takes its arguments through `argv` instead of interpolation, and imports the gate through
+an absolute `file:` URL. Four consecutive root-suite runs: **200/200**, exit 0.
+
+That flake predates 9J; it was invisible until this phase added a scanner that reads `scripts/`.
+
+### Phase 9J honest limitations
+
+- **Six of seven platforms are `UNVERIFIED`**, and nothing has been run on any of them. Linux x64,
+  Linux ARM64, Windows x64, Windows ARM64, macOS x64, macOS ARM64. The runtime is *plausibly*
+  portable — zero native runtime dependencies, no install scripts in the closure, no POSIX shell on
+  any user path, a per-platform data-directory resolver — but plausible is not observed.
+- **Windows file-permission parity is not claimed** and cannot be until a Windows machine exists.
+  `0700` has no `chmod`-settable NTFS equivalent, so both Windows permission cells stay `UNVERIFIED`
+  by design, with a test asserting it.
+- **Termux/Android and Windows ARM64 have no hosted runner**, so CI can never fill those rows. Termux
+  is filled by real local runs; Windows ARM64 cannot be filled by anyone here.
+- **The upgrade ladder starts from databases this repository constructs.** No v1-era BAYZ binary
+  exists to have written one, so what is proven is that the migration sequence is correct and
+  complete, not that a database from a historical release has been recovered.
+- **The CI workflow has never executed.** It is committed and inert, cited by nothing.
+- **The artifact's licence is `UNLICENSED`.** True today; 9K Task 3 owns that decision.
+
+### Post-9J follow-up: operator session UX (NOT in the 9J plan)
+
+Recorded here rather than built, because it is outside this phase's plan and silently changing the
+auth architecture would be scope creep on a security surface.
+
+The requirement: an operator should not have to re-enter the bootstrap token after every browser
+refresh. `README.md:379` currently documents "The token is not remembered" as deliberate behaviour, so
+this is a **change of decision**, not a bug fix.
+
+If a later phase takes it, the shape is constrained: the bootstrap token is entered once to establish
+trust and is **never** persisted in `localStorage`, `sessionStorage`, IndexedDB, a URL, or a
+browser-readable cookie; trust is carried by a revocable **server-side session** behind an
+`HttpOnly`, `SameSite` cookie; Lock/Logout revokes the session server-side and clears the cookie;
+refresh and reopen stay authenticated until explicit lock or revocation; CSRF and origin protections
+are retained; and a test proves the raw bootstrap token is not browser-persisted.
+
+No Fortress protection was weakened in 9J. Token enforcement, encrypted secret storage, master-key
+permissions, loopback/remote rules, SSRF defences, scoped identities, admin locality, credential
+redaction, request limits, and TLS/mTLS/signing behaviour are all untouched — the install smoke
+asserts several of them against the installed artifact.
+
 ### 9J resume point
 
-**Next: Task 3 — Cross-platform path, permission, and shell hygiene.** Create
-`scripts/portability-scan.mjs` and `apps/server/src/data-dir.ts`, modify `apps/server/src/config.ts`,
-test in `tests/portability.test.mjs` and `apps/server/test/data-dir.test.ts`.
+**Phase 9J is COMPLETE. Next: Phase 9K — Supply chain / release integrity — not started.** Read its
+plan at `docs/superpowers/plans/2026-08-27-phase9k-supply-chain-release-integrity.md`.
 
-`config.ts:27` currently resolves `${homedir()}/.bayz` with `BAYZ_DATA_DIR` as override — one
-hardcoded POSIX-flavoured path, not a resolver. **The compatibility decision is already made in the
-plan: `~/.bayz` stays the default on every platform.** Changing it would orphan every existing
-install's database. Platform paths are a *fallback chain read in order*: an existing `~/.bayz` always
-wins, and a platform path is used only when none exists.
-
-`resolveDataDir` must take injected platform, home, and env — never reading the real ones — so all
-branches are testable. Order: `BAYZ_DATA_DIR` (relative resolved to absolute, empty string refused)
-→ existing `~/.bayz` → `%LOCALAPPDATA%/bayz` on Windows → `~/Library/Application Support/bayz` on
-macOS → `$XDG_DATA_HOME/bayz` or `~/.local/share/bayz` elsewhere.
-
-The portability scan must find no hardcoded `/tmp`, `/home`, `C:\`, and **no `homedir()` call outside
-`data-dir.ts`** — one resolver, and the scan is what stops a second appearing. No user-run script may
-use a shell builtin, bare `sh`/`bash`, `chmod`, `rm -rf`, or a `&&` chain inside one `exec` string;
-`execFile` with an argument array is required. `npm` lifecycle scripts count, since `npm run` uses
-`cmd.exe` on Windows — the existing `runtime:build` `&&` chain is explicitly acceptable while
-`$(...)`, backticks, `||`, single-quoted args, and `2>&1` are forbidden.
-
-Permissions are **verified, not re-implemented**: `packages/storage/src/paths.ts` already does
-`0o700`/`0o600` and already tolerates chmod failure. Assert the *observed* mode, and record
-`UNVERIFIED` with the mode actually seen if a filesystem cannot represent POSIX modes. Note the 9I
-finding: this host's `/tmp` honours `0o700` but `chmod 0444` does **not** prevent writes for root
-under proot, so any read-only assertion must probe for effect first.
+One decision is **already blocking 9K Task 3 and must come from the user**: the licence identifier.
+There is no `LICENSE` file, root `package.json` has no `license` field, and all nine `@bayz/*`
+packages declare none (masked by `private: true`). The task deliberately does not pick one; until it
+is chosen the inventory records the repository's own licence as `UNKNOWN`, and an `UNKNOWN` in the
+runtime closure blocks the 9K release gate. The packaged artifact currently declares `UNLICENSED`,
+which is accurate and will need updating when the decision is made.
 
 Planning only. **No source file was created or modified.** One spec, twelve
 subprogram plans, 86 tasks, 608 checkbox steps, all under `docs/superpowers/`.
