@@ -22,11 +22,11 @@
 **Rows:** Linux x64, Linux ARM64, Termux/Android ARM64, Windows x64, Windows ARM64, macOS x64, macOS ARM64
 **Columns:** install, first boot, schema create, chat, stream, proxy, dashboard serve, restart, upgrade from v1, data dir permissions, uninstall
 
-- [ ] RED `tests/platform-matrix.test.mjs`: the matrix exists; all seven platform rows are present; every cell is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; no cell is empty or a placeholder; every `PASS` carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; the header names the device that produced the Termux row; a `PASS` on a platform with no transcript for that platform fails the test.
-- [ ] Verify RED.
-- [ ] GREEN: initialise every cell `UNVERIFIED` with a legend, then fill the Termux row from the later tasks' evidence.
-- [ ] Verify: `node --test tests/platform-matrix.test.mjs` exits 0.
-- [ ] Commit — `docs: add the Bayz platform support matrix`
+- [x] RED `tests/platform-matrix.test.mjs`: the matrix exists; all seven platform rows are present; every cell is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A`; no cell is empty or a placeholder; every `PASS` carries an evidence reference matching `^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$`; the header names the device that produced the Termux row; a `PASS` on a platform with no transcript for that platform fails the test. — **10 tests**, table-driven parser keyed on the document's own header row.
+- [x] Verify RED. — all **10 failed** before the matrix existed.
+- [x] GREEN: initialise every cell `UNVERIFIED` with a legend, then fill the Termux row from the later tasks' evidence. — 77 cells all `UNVERIFIED`; the Termux row is filled by Tasks 3–6 as their evidence lands.
+- [x] Verify: `node --test tests/platform-matrix.test.mjs` exits 0. — **10/10**. Three mutations reverted byte-identical: a Windows `PASS` citing the Termux smoke → 2 red (the citation only proves the platform it ran on); a `TODO` placeholder → 2 red; a removed column → 1 red.
+- [x] Commit — `docs: add the Bayz platform support matrix`
 
 ### Task 2 — Runtime dependency closure guard
 

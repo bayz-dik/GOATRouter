@@ -120,7 +120,11 @@
     `unsupported_operation`, `createIdentity` not `create`, and a generator ordering bug),
     as was the `migration` target's first "half-applied schema" finding — nothing calls
     `runMigrations` without `verifyRecordedSchemaVersion` first.
-  - 9J–9L: **NOT STARTED.**
+  - 9J Cross-platform / Packaging / Upgrade: **IN PROGRESS.** Task 1 **COMPLETE**, Tasks 2–8
+    **NOT STARTED**. Eight tasks total. `platform-matrix` **10/10**: 7 platforms × 11 columns =
+    77 cells, all **UNVERIFIED**, primary device named. A `PASS` must cite a transcript from
+    that platform; a `smoke:`/`test:` citation counts only for the primary platform.
+  - 9K–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -990,7 +994,8 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
 | 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
-| 9J–9L | NOT STARTED | — |
+| 9J Cross-platform / Packaging / Upgrade | **IN PROGRESS** | Task 1 of 8 done; `platform-matrix` 10/10, 77 cells all UNVERIFIED with the primary device named; Task 2 (dependency closure guard) next |
+| 9K–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
 
@@ -3319,7 +3324,47 @@ Carry forward into 9J:
   skipped: `chmod 0444` does not stop writes for root under proot, and `mount -t tmpfs` exits 0 while
   mounting nothing. Any future scenario needing either must probe for effect before trusting it.
 
-## Phase 9 GOAT — planning state
+## Phase 9J Cross-platform / Packaging / Upgrade — as built so far
+
+Eight tasks. **Task 1 COMPLETE; Tasks 2–8 not started.**
+
+### Task 1 — Platform matrix document
+
+`docs/superpowers/2026-08-27-bayz-platform-matrix.md` with `tests/platform-matrix.test.mjs`
+(**10/10**). Seven rows (Linux x64/ARM64, Termux/Android ARM64, Windows x64/ARM64, macOS
+x64/ARM64) × eleven columns (install, first boot, schema create, chat, stream, proxy, dashboard
+serve, restart, upgrade from v1, data dir permissions, uninstall). Every cell starts `UNVERIFIED`.
+
+The parser is table-driven off the document's own header row, so a column inserted without
+updating the test shows up as a mismatch rather than silently shifting every value one place left.
+
+Two tests carry the phase's real constraint. `a PASS on a platform with no transcript for that
+platform fails` requires a cited transcript path to contain that platform's slug, and permits a
+`smoke:`/`test:` citation **only** for the primary platform — a suite proves the machine it ran
+on, and nothing else. `no non-primary platform claims PASS` is the stronger form, true while this
+repository has one device; when CI or a real machine produces a transcript, that test is the one
+that must be deliberately relaxed, which puts the decision somewhere visible.
+
+The matrix also states plainly which platforms **must not be described** as supported, and why
+Windows ARM64 and Termux/Android will stay `UNVERIFIED` even after CI exists: neither has a hosted
+runner.
+
+Three mutations, each reverted byte-identical: a Windows x64 `PASS` citing `smoke:install#1` → 2
+red; a `TODO` placeholder cell → 2 red; a removed column → 1 red.
+
+### 9J resume point
+
+**Next: Task 2 — Runtime dependency closure guard.** Create `scripts/dependency-closure.mjs` and
+`tests/dependency-closure.test.mjs`. Compute the **runtime** closure from `package-lock.json` — the
+transitive `dependencies` and `optionalDependencies` of every `@bayz/*` workspace package,
+excluding `devDependencies` — and assert no package ships a `.node` binary, declares
+`hasInstallScript`, or carries a `gypfile`. The plan's measured baseline: lockfileVersion 3, 270
+entries, closure of **93 = 7 workspace links + 86 external**. Pin the five direct external
+dependencies by name and the closure size as an exact number. Assert the 53 `os`/`cpu`-restricted
+and 2 install-scripted packages are **dev-only**, reachable through `vite`. The walker must follow
+npm's nested `node_modules` lookup rules — a flat lookup misses four nested entries
+(`ajv/node_modules/fast-uri`, `light-my-request/node_modules/process-warning`,
+`path-scurry/node_modules/lru-cache`, `thread-stream/node_modules/real-require`) and under-reports.
 
 Planning only. **No source file was created or modified.** One spec, twelve
 subprogram plans, 86 tasks, 608 checkbox steps, all under `docs/superpowers/`.
