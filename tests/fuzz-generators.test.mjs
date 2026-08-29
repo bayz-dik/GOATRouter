@@ -141,9 +141,18 @@ test("every generator varies with the seed", () => {
 });
 
 test("no generator exceeds the harness input cap", () => {
-  // A generator over 1 MiB would abort every Task 3 run with input_too_large.
+  /*
+   * A generator over 1 MiB would abort every Task 3 run with `input_too_large`.
+   *
+   * The draw count here is 4,000, not the 120 it started at. Task 3 hit a 1,072,923-byte
+   * input at iteration 155 of a tool-args run because `generateJsonValue` recursed without a
+   * depth guard, and the encoded size compounded — twelve children each able to hold a
+   * 10,000-element array. 120 draws never reached that tail. The generator now bounds nested
+   * width and excludes the large cases below the top level, and this test draws enough to
+   * have caught it.
+   */
   for (const name of REQUIRED_GENERATORS) {
-    for (const value of draw(generators[name], `cap-${name}`, 120)) {
+    for (const value of draw(generators[name], `cap-${name}`, 4000)) {
       const bytes =
         typeof value === "string"
           ? Buffer.byteLength(value)

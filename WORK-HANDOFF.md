@@ -69,7 +69,7 @@
     silently dropped (18 identical retries), a 1 KiB tool-description cap no agent client
     could satisfy, and `name` refused on `role: "tool"` messages (the Hermes tool result
     rejected *after* the work was done). All four fixed with regression tests.
-  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–2 **COMPLETE**, Tasks 3–7
+  - 9I Fuzz / Chaos / Load / Soak: **IN PROGRESS.** Tasks 1–3 **COMPLETE**, Tasks 4–7
     **NOT STARTED**. Seven tasks total.
     `scripts/fuzz/harness.mjs` + `tests/fuzz-harness.test.mjs` (**18/18**): xoshiro128\*\*
     over a SHA-256 seed expansion, zero dependencies, `node:crypto` for seeding only.
@@ -94,6 +94,27 @@
     written by the committed `scripts/fuzz/write-corpus.mjs`; `corpus/regression/` awaits
     Task 3's discoveries. Five generator mutations red and reverted, plus a planted
     `Bearer …` corpus file to prove the credential scan reads committed bytes.
+    Task 3: thirteen targets under `scripts/fuzz/targets/` + `scripts/fuzz-run.mjs`,
+    **39/39 checks**, 5,000 iterations each, three consecutive clean runs.
+    **Host finding that governs every timing in this phase:**
+    `scripts/fuzz/host-baseline.mjs` runs a bare socket loop with *no BAYZ code* and shows
+    p50 63 ms with outliers at 8.2 s / 88 s / 184 s under swap pressure (load 0.12, 4 fds,
+    3.9 GiB swap in use). Wall-clock budgets are valid for CPU-bound boundaries and **not**
+    for socket-bound ones here; `socks5` therefore asserts BAYZ's own
+    `ProxyError("timeout")` fired instead of trusting the clock.
+    `sse` RSS was 147 MiB over a 64 MiB bound — measured as allocator retention, not a leak
+    (decelerating growth, flat heap/arrayBuffers, 6.5 MiB for buffer-build vs 65.1 MiB for
+    reader-push over 600 iterations). Bound left intact; the two byte-cap shapes moved to a
+    deterministic sparse schedule, giving 41.5 MiB.
+    **A mutation passed twice**: gutting `parseChatRequest`'s `isPlainObject` + unknown-key
+    loop stayed green because the parser copies only known fields, so a leaked key is absent
+    from the output. Fixed with a `mustReject(input)` oracle whose key sets are mirrored,
+    not imported — importing them would agree with any regression by construction.
+    Five target-side defects were mine, not BAYZ's (`grantedScopes` is a Set,
+    `assertModelPattern` reports `invalid_route_config`, SOCKS5 0x07/0x08 →
+    `unsupported_operation`, `createIdentity` not `create`, and a generator ordering bug),
+    as was the `migration` target's first "half-applied schema" finding — nothing calls
+    `runMigrations` without `verifyRecordedSchemaVersion` first.
   - 9J–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -963,7 +984,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9F Fortress Security | COMPLETE | Tasks 1–9; migration v11; `security-smoke` 82/82 |
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
-| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–2 of 7 done; `fuzz-harness` 18/18, `fuzz-generators` 21/21, corpus 93 files / 111,914 bytes; Task 3 (thirteen boundary targets) next |
+| 9I Fuzz / Chaos / Load / Soak | **IN PROGRESS** | Tasks 1–3 of 7 done; `fuzz-harness` 18/18, `fuzz-generators` 21/21, `fuzz-run` **39/39** (13 targets × 5,000 iterations), corpus 93 files; Task 4 (chaos scenarios) next |
 | 9J–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -2925,38 +2946,130 @@ writer.
 
 Verified: `fuzz-generators` **21/21**, with Task 1 **39/39**, `git diff --check` clean.
 
+### Task 3 — Boundary fuzz targets
+
+Thirteen targets under `scripts/fuzz/targets/` plus `scripts/fuzz-run.mjs`, 5,000 iterations
+each at pinned seeds, **39/39 checks**, three consecutive clean runs. `scripts/fuzz/targets/shared.mjs`
+carries the contract: `expectBayzError` (engine error named separately from a stray custom
+error — different diagnosis, different report line) and `globalStateSnapshot` /
+`assertGlobalStateUnchanged`, which watch `Object.prototype` because a target that fuzzes
+prototype-pollution shapes and never checks it would miss the exact defect it aims at.
+
+Real boundaries throughout: `authorization` uses real `openSecretStorage` with real envelope
+crypto and a real identity manager; `socks5` drives real TCP against a real listener;
+`migration` runs real SQLite DDL in real transactions; `storage-envelope` uses real AES-GCM.
+
+Measured RSS growth per target on this device: `sse` 41.5 MiB, `socks5` 22.3, `tool-args` 18.7,
+`authorization` 10.8, `api-schema` 5.4, everything else under 1 MiB. Slowest target `socks5` at
+143 s (socket-bound), then `migration` 10 s, `authorization` 6 s; the rest 1–3 s each.
+
+#### The host finding that governs every timing in this phase
+
+`socks5` reported iterations at 8.5 s and 72 s against the 250 ms budget. Before calling that a
+hang I wrote `scripts/fuzz/host-baseline.mjs` — a bare `connect` + `setTimeout(60)` + `destroy`
+loop with **no BAYZ code in it**. It reproduced the same shape: p50 63 ms with individual
+iterations at 8.2 s, 88 s and 184 s, while load average was 0.12, four descriptors were open, and
+3,905 MiB of swap was in use. Diagnosis **D — Termux/proot host stall**, not a BAYZ defect, and
+intermittent (a later run showed max 68 ms). `timer.unref()` was ruled out separately: ref'd and
+unref'd 60 ms timers both delivered 60–63 ms.
+
+Consequence: a wall-clock budget is a valid DoS signal for CPU-bound boundaries and **not** for
+socket-bound ones here. `socks5` asserts BAYZ's own deadline fired — the returned
+`ProxyError("timeout")` — and carries a widened budget citing that file. Tasks 5 and 6 must read
+their own latency numbers the same way.
+
+#### `sse` RSS: 147 MiB over a 64 MiB bound, and the bound stayed
+
+Growth *decelerated* across 1,250 → 10,000 iterations (67.6, 34.6, 50.1, 5.8 MiB, plateauing near
+220 MiB) with heap growth 0.4/−1.1/0.0/0.0 MiB and `arrayBuffers` growth 0.0 MiB throughout;
+first half +65.1 MiB against second half +40.9 MiB — the opposite of a leak's signature.
+Isolated: building a 64 KiB buffer and discarding it costs 6.5 MiB over 600 iterations, pushing
+it through a real `SseLineReader` costs 65.1 MiB, and a shared `TextDecoder`, a fresh one, and
+`Buffer.toString("utf8")` each cost ~0 MiB. Allocator retention of large short-lived strings.
+
+Raising the bound would blind the target to a future real leak, which is the only thing the bound
+is for. Instead the two expensive shapes stopped being re-proved hundreds of times — `overflow`
+had been drawn 481 times and `long-line` 612 — since a byte cap is proved at, below and above the
+boundary. Both now run on a deterministic sparse schedule (ten each per 5,000) and growth
+measures 41.5 MiB with the bound intact.
+
+#### A mutation that passed twice
+
+Replacing `parseChatRequest`'s `isPlainObject` check and unknown-key loop with a bare
+`typeof === "object"` test left `api-schema` green through two rounds of added assertions. The
+reason is worth keeping: the parser builds a fresh `ChatRequest` copying only known fields, so an
+undocumented key that slips past validation is simply *absent* from the output and invisible to
+any output-shape check.
+
+The target now carries `mustReject(body)`, which reads the **input** and decides independently
+whether acceptance is permitted. Its key sets are mirrored deliberately rather than imported —
+importing `ALLOWED_KEYS` would make the assertion agree with any regression by construction, and
+the friction of updating both in one commit is the point. The same mutation then failed at
+iteration 31 on `{"prototype":1}` and was reverted byte-identical.
+
+#### Findings that were mine, not BAYZ's
+
+Six, each fixed in the target rather than reported as a product defect: `deriveProfile` takes
+`grantedScopes` as a `ReadonlySet` (400/400 false failures); `assertModelPattern` reports
+`invalid_route_config`, not `invalid_model` (62 false failures); SOCKS5 reply codes 0x07/0x08
+legitimately map to `unsupported_operation`; `IdentityManager` exposes `createIdentity`, not
+`create`; a generator reached into `choices[0]` *after* replacing `choices`, throwing inside
+`generate` and aborting the run; and `generateJsonValue` recursed without a depth guard, producing
+a 1,072,923-byte input at iteration 155 (fixed, and the Task 2 cap test's draw count went
+120 → 4,000 so it would now catch it).
+
+The `migration` target's first finding was the same category: it reported a half-applied schema at
+iteration 48, but nothing in BAYZ calls `runMigrations` on an unverified database —
+`openDatabase` calls `verifyRecordedSchemaVersion` first, which refuses that exact state with
+`storage_unavailable/verify-user-version`. The target now models the real open sequence, which
+turns the finding into proof the guard is load-bearing.
+
+#### Two constraints that collided, resolved without weakening either
+
+The plan wants a 3 MiB SSE stream; the harness caps a generated input at 1 MiB so a runaway
+generator cannot exhaust memory. Both are right, so `generate` emits a descriptor and `run`
+materialises the bytes — the boundary sees a genuine 3 MiB stream while the recorded input stays a
+few hundred bytes. The same shape solved `authorization`, where putting real 64-hex keys in
+generated inputs made the harness refuse the run at iteration 2 with `credential_shape`: correct
+behaviour, since failing inputs are committed, so the key is now materialised only inside `run`.
+
+On-disk migration cost was measured rather than assumed: 60–213 ms per file-backed open against
+~2.5 ms in memory, essentially all fsync, which produced budget failures at iterations 0 and 250.
+Rather than raising the budget (blinding the target) or dropping the case (leaving WAL unproven),
+the on-disk path runs as a bounded timed pre-check at `user_version` 0, 3, 11, 12 and 255 with its
+cost printed in the run output.
+
+Verified: `fuzz-run` **39/39** ×3, `fuzz-harness` 18/18, `fuzz-generators` 21/21, root suites
+27/27, `@bayz/router` 294/294, `@bayz/storage` 246/246, `@bayz/providers` 286/286,
+`@bayz/proxy` 121/121, `@bayz/identity` 69/69, `@bayz/telemetry` 55/55, `@bayz/gateway` 80/80,
+`@bayz/server` 338/338, `git diff --check` clean.
+
 ### 9I resume point
 
-**Next: Task 3 — Boundary fuzz targets.** Create thirteen targets under
-`scripts/fuzz/targets/` — `api-schema`, `authorization`, `sse`, `tool-args`,
-`provider-response`, `provider-config`, `proxy-config`, `socks5`, `telemetry`,
-`storage-envelope`, `migration`, `url`, `identifier` — plus `scripts/fuzz-run.mjs`.
+**Next: Task 4 — Chaos scenarios.** Create `scripts/chaos-smoke.mjs`; the script's own exit code
+is the test. Every scenario runs against **real** components — a real listener, real origins, real
+proxies, a real database — and must assert a *specific recovery*, not merely "no crash".
 
-Contract for every target: the boundary must **reject or accept** — never crash, never hang,
-never throw a non-BAYZ error, never mutate global state. Per target: 5,000 iterations at a
-pinned seed; every thrown error an instance of the owning package's error type with a code from
-the existing vocabulary; no `RangeError`, `TypeError`, `ERR_INTERNAL_ASSERTION` or
-`ERR_OUT_OF_RANGE` escaping; no iteration over 250 ms; RSS growth under 64 MiB across the 5,000.
+Scenarios the plan names: provider dies mid-request; provider dies mid-**stream** after the first
+byte (**no failover may be attempted** — assert the second origin saw zero requests, per 9B's
+honest semantics — and no partial row is written); proxy dies mid-handshake and mid-tunnel with
+distinct fixed codes and the provider credential never sent in the clear; RST at pre-request,
+post-headers, mid-body and mid-SSE; DNS failure and DNS *change* between resolve and connect (the
+second resolution re-checked against the egress policy per 9D Task 1); upstream timeout, with idle
+timeout distinct from total; credential revoked mid-operation (in-flight completes or fails
+cleanly, *next* request fails `credential_missing`, never a stale success); client identity
+revoked mid-stream (stream terminates, reconnect is 401); BAYZ restarted mid-stream (terminal
+error, schema opens, identities and providers survive, no orphaned row or lock); SQLite reopen
+under a held WAL plus an injected read-only-file failure surfacing `storage_unavailable`; and a
+disk-full simulation — recorded `UNVERIFIED` with a reason if it cannot be simulated here rather
+than skipped silently. `PRAGMA integrity_check` must return `ok` after **every** scenario.
 
-Target-specific extras the plan names: `authorization` — a 1 MiB bearer, embedded CR/LF, 10,000
-spaces, and a valid-but-revoked identity all end `401` with no distinguishable timing class
-(bounded, documented as indicative). `sse` — interleaved partial frames, a split mid-UTF-8
-sequence, a 64 KiB line, a 3 MiB total stream, `[DONE]` inside a JSON string, pure `\r` bytes.
-`migration` — `user_version` 0–255 including past head either opens or fails closed, and the
-schema afterwards is the original or the head, **never in between**. `storage-envelope` — a
-bit-flip in every byte position fails closed with `master_key_invalid` or `storage_unavailable`,
-never returning plaintext.
-
-`scripts/fuzz-run.mjs` prints `ok N`/`FAIL N` per target so a matrix row can cite
-`smoke:fuzz#N`, writes failing inputs to `scripts/fuzz/corpus/regression/` (credential-scanned
-first — the harness already refuses to record a failure carrying credential shapes), and exits
-non-zero on any failure.
-
-Host reminder: Termux/proot ARM64, 8 CPUs, ~11 GiB RAM (~3.9 GiB free). Product load is required
-by Tasks 5–6 and allowed; **build/test fan-out is not** — `npm run runtime:verify` exhausts the
-futex table here, so one workspace command at a time. 5,000 iterations × 13 targets is a
-several-minute run; use a background process with a log rather than a foreground call over the
-600 s cap.
+Carry forward from Task 3: on this host, read timings through
+`scripts/fuzz/host-baseline.mjs`. A multi-second outlier in a socket-bound scenario is the host
+stalling, not BAYZ hanging — assert on BAYZ's own error codes and observable state, not the clock.
+Keep to one workspace test command at a time; `npm run runtime:verify` exhausts the futex table
+here. A full `fuzz-run` takes ~3 minutes, dominated by `socks5`; use a background process with a
+log rather than a foreground call against the 600 s cap.
 
 ## Phase 9 GOAT — planning state
 

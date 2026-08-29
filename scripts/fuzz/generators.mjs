@@ -76,7 +76,19 @@ function nestedChain(depth) {
   return value;
 }
 
-export function generateJsonValue(rng) {
+/**
+ * A JSON value, hostile in one of fourteen ways.
+ *
+ * `depth` is not decoration: cases 7, 8 and 12 recurse, and without a depth guard the
+ * *encoded* size compounds — twelve children each of which may hold a 10,000-element array
+ * reaches megabytes. Task 3 found exactly that at iteration 155 of a tool-args run, aborting
+ * the whole run with `input_too_large`, and Task 2's own cap test had missed it because 120
+ * draws per generator is not enough to hit a compounding tail. So at depth ≥ 1 the
+ * large-array and deep-chain cases are excluded and widths shrink, which bounds the encoded
+ * form well under the harness's 1 MiB cap by construction rather than by luck.
+ */
+export function generateJsonValue(rng, depth = 0) {
+  const nested = depth >= 1;
   const kind = rng.int(0, 13);
 
   switch (kind) {
@@ -94,12 +106,12 @@ export function generateJsonValue(rng) {
     }
     case 4:
       // Depth at and beyond the plan's 64: MAX_PARAMETERS_DEPTH is 16, so both sides of the
-      // bound are covered.
-      return nestedChain(rng.int(60, 70));
+      // bound are covered. Only at the top level — a nested chain would compound.
+      return nested ? { n: rng.int(-1000, 1000) } : nestedChain(rng.int(60, 70));
     case 5: {
       // Arrays of 10,000 — the plan's figure. Filled with a small repeated value so the
-      // encoded form stays well under the 1 MiB input cap.
-      const length = rng.pick([10_000, 10_001, 9_999]);
+      // encoded form stays well under the 1 MiB input cap, and only at the top level.
+      const length = nested ? rng.int(0, 8) : rng.pick([10_000, 10_001, 9_999]);
       return Array.from({ length }, (_v, i) => (i % 2 === 0 ? 0 : rng.bool() ? null : 1));
     }
     case 6:
@@ -108,14 +120,14 @@ export function generateJsonValue(rng) {
       // way to carry the shape through a round-trip.
       return { value: "1e400", also: "1e+400", neg: "-1e400" };
     case 7: {
-      const width = rng.int(1, 12);
+      const width = nested ? rng.int(1, 3) : rng.int(1, 12);
       const out = {};
-      for (let i = 0; i < width; i += 1) out[`k${i}`] = generateJsonValue(rng);
+      for (let i = 0; i < width; i += 1) out[`k${i}`] = generateJsonValue(rng, depth + 1);
       return out;
     }
     case 8: {
-      const length = rng.int(0, 8);
-      return Array.from({ length }, () => generateJsonValue(rng));
+      const length = nested ? rng.int(0, 3) : rng.int(0, 8);
+      return Array.from({ length }, () => generateJsonValue(rng, depth + 1));
     }
     case 9:
       // An OpenAI-shaped body with one hostile field, which is the realistic attack: a
@@ -133,7 +145,10 @@ export function generateJsonValue(rng) {
       return { raw: '{"a":1,"a":2}' };
     }
     case 12:
-      return { deep: nestedChain(rng.int(1, 20)), wide: Array.from({ length: rng.int(0, 50) }, () => 0) };
+      return {
+        deep: nested ? { leaf: true } : nestedChain(rng.int(1, 20)),
+        wide: Array.from({ length: nested ? rng.int(0, 4) : rng.int(0, 50) }, () => 0),
+      };
     default:
       return { n: rng.int(-1000, 1000), s: rng.pick(AWKWARD_STRINGS) };
   }
