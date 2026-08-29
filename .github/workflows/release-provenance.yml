@@ -1,0 +1,162 @@
+# BAYZ release provenance — Phase 9K Task 5
+#
+# Keyless Sigstore-style signing and provenance through GitHub OIDC. This is the owner-decided release
+# signing mode: there is NO long-lived private signing key in this repository, in its history, or on any
+# developer device. Identity is minted per run by GitHub's OIDC provider and expires with the job.
+#
+# THIS WORKFLOW HAS NEVER BEEN EXECUTED. No remote is configured for this repository and no workflow run
+# exists. Its status is therefore UNVERIFIED, and nothing in this repository cites it as evidence —
+# `tests/release-workflow.test.mjs` asserts that, because committing a file is not the same as running
+# it. Every check in that suite is structural: the file is read as text.
+#
+# Security shape, and why each line is the way it is:
+#
+#   * `id-token: write` appears ONLY on the `sign` job. It is the credential that mints an OIDC identity,
+#     so a workflow-level grant would hand every step — including every third-party action — the ability
+#     to impersonate this repository to Sigstore.
+#   * Every action is pinned to a full 40-character commit SHA. Tags are mutable: the March 2025
+#     `tj-actions/changed-files` compromise repointed tags, and every workflow on `@v35` ran the
+#     attacker's code. Each SHA carries a version comment so it stays auditable and updatable.
+#   * No `secrets.*` reference anywhere. Keyless signing needs none, so one would mean a smuggled
+#     long-lived credential.
+#   * Dispatch-only. No `push`, no `schedule`, no `pull_request_target`.
+#   * The artifact that gets signed is the artifact that gets verified, in the same job, by digest.
+
+name: release-provenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'release' to confirm this is an intentional release build"
+        required: true
+        default: ""
+
+# Read-only by default. The signing job widens this for itself and nothing else.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and validate. No elevated permission of any kind: this job touches
+  # untrusted-ish inputs (the dependency tree) and must not be able to sign.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build and validate the release candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      # `npm ci` and not `npm install`: the lockfile is the dependency contract, and a release build
+      # must not be allowed to resolve something new.
+      - name: install from the lockfile
+        run: npm ci
+
+      - name: lockfile integrity
+        run: node scripts/lockfile-check.mjs
+
+      - name: vulnerability audit against the written policy
+        run: node scripts/audit-check.mjs
+
+      - name: licence inventory
+        run: node scripts/license-inventory.mjs
+
+      - name: build the workspaces
+        run: npm run runtime:build
+
+      - name: pack the release artifact
+        run: node scripts/pack.mjs
+
+      - name: generate the SBOM
+        run: node scripts/sbom.mjs --out packaging/out/bayz.cdx.json
+
+      # Digests are produced here, in the same job that built the artifact, so the manifest describes
+      # what was actually built rather than whatever arrived later.
+      - name: compute release digests
+        run: node scripts/sign-release.mjs --dir packaging/out
+
+      - name: enforce the supply-chain gate
+        run: node scripts/supply-chain-gate.mjs --enforce --mode release-candidate
+
+      - name: upload the release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate
+          path: packaging/out
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Sign. The only job with an OIDC identity, and it does nothing but sign and
+  # verify — no build, no dependency installation, no network fetch of code.
+  # ---------------------------------------------------------------------------
+  sign:
+    name: keyless signing and provenance
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Mints the short-lived OIDC token. This is the whole basis of keyless signing, and it exists
+      # here and nowhere else in this file.
+      id-token: write
+      # Stores the provenance attestation against the repository.
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: download the release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-candidate
+          path: packaging/out
+
+      # Re-verify BEFORE signing. The artifact crossed a job boundary, so its digests are checked again
+      # against the manifest built alongside it. Signing something that changed in transit is exactly
+      # the "sign one artifact, ship another" failure this phase exists to prevent.
+      - name: verify the candidate digests before signing
+        run: node scripts/verify-release.mjs --dir packaging/out
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Keyless: no key argument, no secret. cosign exchanges the job's OIDC token for a short-lived
+      # Fulcio certificate and records the signature in the Rekor transparency log.
+      - name: sign the digest manifest keylessly
+        run: cosign sign-blob --yes --bundle packaging/out/SHA256SUMS.bundle packaging/out/SHA256SUMS
+
+      # Provenance binds the artifact's own digest to this workflow's identity, not merely to its name.
+      - name: attest build provenance for the tarball
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: packaging/out/*.tgz
+
+      - name: attest build provenance for the SBOM
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: packaging/out/*.cdx.json
+
+      # Verify the signature we just made, against this workflow's own identity. A signature nobody
+      # verifies is decoration.
+      - name: verify the keyless signature
+        run: |
+          cosign verify-blob \
+            --bundle packaging/out/SHA256SUMS.bundle \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-provenance.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            packaging/out/SHA256SUMS
+
+      - name: gate the signed release
+        run: node scripts/supply-chain-gate.mjs --enforce --mode hosted-release
+
+      - name: upload the signed release
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-release
+          path: packaging/out
+          if-no-files-found: error

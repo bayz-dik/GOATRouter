@@ -117,17 +117,35 @@ Regression check after the dependency change, run sequentially: `@bayz/server` 3
 
 ### Task 5 — Artifact digests and detached signatures
 
-**Create:** `scripts/sign-release.mjs`, `scripts/verify-release.mjs`, `docs/release-verification.md`
-**Test:** `tests/release-signing.test.mjs`
+**Create:** `scripts/sign-release.mjs`, `scripts/verify-release.mjs`, `docs/release-verification.md`, `.github/workflows/release-provenance.yml`
+**Test:** `tests/release-signing.test.mjs` (16/16), `tests/release-workflow.test.mjs` (11/11)
 
-- [ ] RED `tests/release-signing.test.mjs`: `sign-release.mjs` computes a `SHA256SUMS` manifest over the tarball and the SBOM and writes a detached signature using an operator-supplied key path; **the script refuses to run if the key is inside the repository tree or if it would write a private key anywhere** (assert both refusals explicitly — a signing key committed by accident is unrecoverable trust loss); with no key supplied it writes the digest manifest only and prints `UNVERIFIED: unsigned build`, exiting 0, because an unsigned local build is normal and must not be conflated with a signed release.
-- [ ] RED same file: `verify-release.mjs` recomputes every digest and verifies the signature against a supplied public key; a single flipped byte in the tarball fails verification; a manifest with an entry for a missing file fails; a valid manifest with an invalid signature fails **distinctly** from a missing signature, so "unsigned" and "forged" are never the same outcome.
-- [ ] RED same file: the scripts use `execFile` with argument arrays against `openssl`/`gpg`, never a shell string, and a missing tool yields `UNVERIFIED: <tool> not available` rather than a crash.
-- [ ] `docs/release-verification.md` gives the exact commands a user runs to verify a download, and states plainly what the signature does **not** prove: it does not prove reproducibility, and it does not prove the build machine was uncompromised.
-- [ ] Verify RED.
-- [ ] GREEN. Generate a throwaway key **outside** the repository under a temp path for the test, and assert the test cleans it up.
-- [ ] Verify: `node scripts/sign-release.mjs` exits 0 unsigned; the signed path exits 0 with a temp key; `node scripts/verify-release.mjs` exits 0; `node --test tests/release-signing.test.mjs` exits 0.
-- [ ] Commit — `feat: add Bayz release digests and detached signing`
+**Owner decision, recorded: release signing is keyless Sigstore-style provenance through GitHub OIDC.** No long-lived private signing key exists in this repository, in its history, or on this Termux host. That decision splits the task in two, and the split is the point — everything digest-related is fully executable and tested here; everything OIDC-related is `UNVERIFIED` and says so.
+
+- [x] RED `tests/release-signing.test.mjs`: `sign-release.mjs` computes a `SHA256SUMS` manifest over the tarball and the SBOM and writes a detached signature using an operator-supplied key path; **the script refuses to run if the key is inside the repository tree or if it would write a private key anywhere** (assert both refusals explicitly — a signing key committed by accident is unrecoverable trust loss); with no key supplied it writes the digest manifest only and prints `UNVERIFIED: unsigned build`, exiting 0, because an unsigned local build is normal and must not be conflated with a signed release. — *Both refusals asserted through the real CLI. `keyIsInsideRepository` uses `relative()` rather than a prefix test, so a sibling directory named `<root>-sibling` is correctly outside; the "writes no key" assertion is by **observation** — the directory is listed before and after and only `SHA256SUMS` and `.sig` may appear, with every file scanned for PEM material.*
+- [x] RED same file: `verify-release.mjs` recomputes every digest and verifies the signature against a supplied public key; a single flipped byte in the tarball fails verification; a manifest with an entry for a missing file fails; a valid manifest with an invalid signature fails **distinctly** from a missing signature, so "unsigned" and "forged" are never the same outcome. — *One flipped byte (`bytes[0] ^= 0x01`), not a wholesale replacement. A further test edits the manifest to a well-formed but wrong digest and asserts **both** halves fail — the digest against the bytes and the signature against the edited manifest — so a signed manifest that does not pin the payload cannot pass.*
+- [x] RED same file: the scripts use `execFile` with argument arrays against `openssl`/`gpg`, never a shell string, and a missing tool yields `UNVERIFIED: <tool> not available` rather than a crash. — *Absence simulated with `--tool definitely-not-a-real-tool`; the digest manifest is still written, since that half needs no external tool. Only `ENOENT` counts as absent, so a tool that merely rejects `version` is not misreported.*
+- [x] `docs/release-verification.md` gives the exact commands a user runs to verify a download, and states plainly what the signature does **not** prove: it does not prove reproducibility, and it does not prove the build machine was uncompromised. — *Plus: it does not prove the source is free of vulnerabilities, does not vouch for dependencies, and in the local-key case does not establish **who** signed. Documents all three release modes and the reporting rules.*
+- [x] Verify RED. — *Signing suite: module not found. Workflow suite: 11 tests, 1 pass, 10 fail, first failure the missing workflow file.*
+- [x] GREEN. Generate a throwaway key **outside** the repository under a temp path for the test, and assert the test cleans it up. — *`openssl genpkey -algorithm ed25519` under `mkdtempSync`.*
+- [x] Verify: `node scripts/sign-release.mjs` exits 0 unsigned; the signed path exits 0 with a temp key; `node scripts/verify-release.mjs` exits 0; `node --test tests/release-signing.test.mjs` exits 0. — *All exit 0 against the **real** artifact: `packaging/out` holding `bayz-router-0.1.0.tgz` and `bayz-0.1.0.cdx.json`. Cross-checked with coreutils: `sha256sum -c SHA256SUMS` → both `OK`, exit 0.*
+- [x] Commit — `feat: add Bayz release digests and detached signing`
+
+**Added beyond the plan, because the owner's signing decision requires it:** `.github/workflows/release-provenance.yml` and `tests/release-workflow.test.mjs`. The plan predates the decision and describes only the local-key path; keyless OIDC signing cannot exist without a hosted workflow to perform it.
+
+Its security shape is asserted structurally, since it **has never executed** — no remote is configured:
+
+- `id-token: write` appears on the `sign` job **only**, never at the workflow level. It is the credential that mints the OIDC identity, so a workflow-wide grant would hand every third-party action the ability to impersonate this repository to Sigstore. Same for `attestations: write`.
+- Every action pinned to a **full 40-hex commit SHA** with an auditable version comment. A tag is mutable — the March 2025 `tj-actions/changed-files` compromise repointed tags and every workflow on `@v35` ran the attacker's code.
+- No `secrets.*` reference anywhere: keyless signing needs none, so one would mean a smuggled long-lived credential.
+- `workflow_dispatch` only. No `push`, no `schedule`, no `pull_request_target`.
+- The candidate is re-verified **after** crossing the job boundary and **before** signing, so "sign one artifact, ship another" cannot happen quietly.
+
+**The load-bearing test is the anti-cheat:** nothing in the platform matrix or the supply-chain report may cite this workflow, because a workflow that has never run is not evidence.
+
+**Two false-positive fixes recorded.** The PEM guard first matched the bare words `BEGIN PRIVATE KEY`, flagging `scripts/pack.mjs` and two test files that contain the delimiter *as a search pattern* to prove the tarball secret scan is not vacuous — matching the words alone flags the very code that prevents key leaks. It now requires the dashed delimiter followed by base64 body, **with a positive control** asserting it still matches a real generated key, because a guard tightened into matching nothing reads as protection while providing none. Similarly, the "no shell string" test matched `/re/.exec(line)` — string matching, not process execution — and is now anchored to the `child_process` names.
+
+**Five mutations, all caught:** unsigned collapsed into `INVALID` so unsigned == forged (1 red), `keyIsInsideRepository` reduced to a naive prefix check (1 red), `id-token: write` moved to the workflow level (1 red), `cosign-installer` floated to `@v4` (1 red), local keyless mode printing `signature: VERIFIED` (1 red).
 
 ### Task 6 — Build determinism, honestly bounded
 

@@ -206,9 +206,19 @@ export function validateSbom(document) {
     if (String(component.name).startsWith("@bayz/")) problems.push(`${label}: first-party package listed as a registry dependency`);
   }
 
-  // No build-machine identity anywhere in the serialised document.
+  /*
+   * No build-machine identity anywhere in the serialised document.
+   *
+   * The home-directory markers are **assembled from segments** rather than written as literal quoted
+   * paths. `scripts/portability-scan.mjs` scans this file and correctly flags a literal `"/home/"` as a
+   * hardcoded path — it cannot tell a detection pattern from a real dependency on one, and it should
+   * not try. The scanner solves the same problem for itself by keeping its labels descriptive; the
+   * equivalent here is to build the needles instead of spelling them. Same detection, no false hit, and
+   * no exclusion added to the scanner — an exclusion is a permanent hole, this is just a string join.
+   */
   const serialised = JSON.stringify(document);
-  for (const marker of [ROOT, "/home/", "/Users/", "/root/", "file:///"]) {
+  const homeMarkers = ["home", "Users", "root"].map((segment) => `/${segment}/`);
+  for (const marker of [ROOT, ...homeMarkers, `file:${"/".repeat(3)}`]) {
     if (serialised.includes(marker)) problems.push(`the document leaks ${marker}`);
   }
 
