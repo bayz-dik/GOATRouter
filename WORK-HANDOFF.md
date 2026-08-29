@@ -120,10 +120,14 @@
     `unsupported_operation`, `createIdentity` not `create`, and a generator ordering bug),
     as was the `migration` target's first "half-applied schema" finding — nothing calls
     `runMigrations` without `verifyRecordedSchemaVersion` first.
-  - 9J Cross-platform / Packaging / Upgrade: **IN PROGRESS.** Task 1 **COMPLETE**, Tasks 2–8
+  - 9J Cross-platform / Packaging / Upgrade: **IN PROGRESS.** Tasks 1–2 **COMPLETE**, Tasks 3–8
     **NOT STARTED**. Eight tasks total. `platform-matrix` **10/10**: 7 platforms × 11 columns =
     77 cells, all **UNVERIFIED**, primary device named. A `PASS` must cite a transcript from
     that platform; a `smoke:`/`test:` citation counts only for the primary platform.
+    `dependency-closure` **12/12**: runtime closure **96 = 10 workspace links + 86 external**
+    from 276 lockfile entries, 5 direct external deps, **native-free** — no install script, no
+    gypfile, no `libc`, no `os`/`cpu` restriction. The 53 platform-restricted and 2
+    install-scripted packages in the tree are all dev-only, reached through `vite`.
   - 9K–9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
@@ -994,7 +998,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9G Agent / Tool Injection Security | **COMPLETE** | Tasks 1–5; `@bayz/capability` 72 tests; `injection-smoke` 179/179 |
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
 | 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
-| 9J Cross-platform / Packaging / Upgrade | **IN PROGRESS** | Task 1 of 8 done; `platform-matrix` 10/10, 77 cells all UNVERIFIED with the primary device named; Task 2 (dependency closure guard) next |
+| 9J Cross-platform / Packaging / Upgrade | **IN PROGRESS** | Tasks 1–2 of 8 done; `platform-matrix` 10/10 (77 cells all UNVERIFIED), `dependency-closure` 12/12 (closure **96 = 10 links + 86 external**, native-free, 5 direct deps); Task 3 (path/permission/shell hygiene) next |
 | 9K–9L | NOT STARTED | — |
 
 ## Phase 9E resume point
@@ -3326,7 +3330,7 @@ Carry forward into 9J:
 
 ## Phase 9J Cross-platform / Packaging / Upgrade — as built so far
 
-Eight tasks. **Task 1 COMPLETE; Tasks 2–8 not started.**
+Eight tasks. **Tasks 1–2 COMPLETE; Tasks 3–8 not started.**
 
 ### Task 1 — Platform matrix document
 
@@ -3352,19 +3356,73 @@ runner.
 Three mutations, each reverted byte-identical: a Windows x64 `PASS` citing `smoke:install#1` → 2
 red; a `TODO` placeholder cell → 2 red; a removed column → 1 red.
 
+### Task 2 — Runtime dependency closure guard
+
+`scripts/dependency-closure.mjs` with `tests/dependency-closure.test.mjs` (**12/12**). Script exit
+0, prints the closure and the native-free verdict.
+
+Measured, from the lockfile alone: lockfileVersion 3, **276** entries in the tree, runtime closure
+**96 = 10 workspace links + 86 external**, **5** direct external dependencies (`@fastify/static`,
+`fastify`, `react`, `react-dom`, `zod`). Verdict: no install script, no gypfile, no `libc`
+constraint, no `os`/`cpu` restriction anywhere in the runtime closure.
+
+Two plan figures were estimates and are corrected here rather than matched: the tree has **276**
+entries, not 270, and **10** workspace links are reached, not 7 — `@bayz/server` and
+`@bayz/dashboard` are leaves that nothing depends on, so a dependency walk never reaches them.
+
+The tree genuinely contains **53** `os`/`cpu`-restricted and **2** install-scripted packages
+(`esbuild`, `fsevents`). Saying so is more useful than implying the tree is pristine: all 55 are
+reachable only through `vite`, a dev dependency of `@bayz/dashboard` that never runs in production,
+and each is asserted absent from the runtime closure. The tree-wide counts are pinned too, so a new
+install-scripted package gets looked at even when it lands in devDependencies.
+
+The walker follows npm's nested `node_modules` rules — walk up from the requiring directory, exactly
+as Node resolves. A companion test runs a deliberately flat resolver to prove the nested assertion is
+not decoration, and that measurement corrected my own arithmetic: flat finds **83**, not 82, because
+it misses the four nested entries *and gains* the hoisted `lru-cache` it resolved to instead. The
+test now asserts the **set difference** rather than `86 − 4`.
+
+`libc` is checked alongside `hasInstallScript` and `gypfile`, because a package shipping a prebuilt
+binary declares which C library it was built against without needing an install script.
+
+One structural fix: the CLI is behind an `import.meta.url === process.argv[1]` guard. Without it,
+importing the module from the test ran the whole report, and a real violation would have called
+`process.exit(1)` *inside the test runner* — killing the suite instead of failing an assertion.
+
+`--self-test` injects five synthetic violations into the real closure (install script, gypfile,
+`libc`, `os`, `cpu`) and confirms each is caught, plus that a dev-only native package is **not**
+flagged. Three mutations reverted byte-identical: a genuinely flat walk → 4 red; `devDependencies`
+included in the walk → 8 red; install-script detection disabled → 1 red.
+
 ### 9J resume point
 
-**Next: Task 2 — Runtime dependency closure guard.** Create `scripts/dependency-closure.mjs` and
-`tests/dependency-closure.test.mjs`. Compute the **runtime** closure from `package-lock.json` — the
-transitive `dependencies` and `optionalDependencies` of every `@bayz/*` workspace package,
-excluding `devDependencies` — and assert no package ships a `.node` binary, declares
-`hasInstallScript`, or carries a `gypfile`. The plan's measured baseline: lockfileVersion 3, 270
-entries, closure of **93 = 7 workspace links + 86 external**. Pin the five direct external
-dependencies by name and the closure size as an exact number. Assert the 53 `os`/`cpu`-restricted
-and 2 install-scripted packages are **dev-only**, reachable through `vite`. The walker must follow
-npm's nested `node_modules` lookup rules — a flat lookup misses four nested entries
-(`ajv/node_modules/fast-uri`, `light-my-request/node_modules/process-warning`,
-`path-scurry/node_modules/lru-cache`, `thread-stream/node_modules/real-require`) and under-reports.
+**Next: Task 3 — Cross-platform path, permission, and shell hygiene.** Create
+`scripts/portability-scan.mjs` and `apps/server/src/data-dir.ts`, modify `apps/server/src/config.ts`,
+test in `tests/portability.test.mjs` and `apps/server/test/data-dir.test.ts`.
+
+`config.ts:27` currently resolves `${homedir()}/.bayz` with `BAYZ_DATA_DIR` as override — one
+hardcoded POSIX-flavoured path, not a resolver. **The compatibility decision is already made in the
+plan: `~/.bayz` stays the default on every platform.** Changing it would orphan every existing
+install's database. Platform paths are a *fallback chain read in order*: an existing `~/.bayz` always
+wins, and a platform path is used only when none exists.
+
+`resolveDataDir` must take injected platform, home, and env — never reading the real ones — so all
+branches are testable. Order: `BAYZ_DATA_DIR` (relative resolved to absolute, empty string refused)
+→ existing `~/.bayz` → `%LOCALAPPDATA%/bayz` on Windows → `~/Library/Application Support/bayz` on
+macOS → `$XDG_DATA_HOME/bayz` or `~/.local/share/bayz` elsewhere.
+
+The portability scan must find no hardcoded `/tmp`, `/home`, `C:\`, and **no `homedir()` call outside
+`data-dir.ts`** — one resolver, and the scan is what stops a second appearing. No user-run script may
+use a shell builtin, bare `sh`/`bash`, `chmod`, `rm -rf`, or a `&&` chain inside one `exec` string;
+`execFile` with an argument array is required. `npm` lifecycle scripts count, since `npm run` uses
+`cmd.exe` on Windows — the existing `runtime:build` `&&` chain is explicitly acceptable while
+`$(...)`, backticks, `||`, single-quoted args, and `2>&1` are forbidden.
+
+Permissions are **verified, not re-implemented**: `packages/storage/src/paths.ts` already does
+`0o700`/`0o600` and already tolerates chmod failure. Assert the *observed* mode, and record
+`UNVERIFIED` with the mode actually seen if a filesystem cannot represent POSIX modes. Note the 9I
+finding: this host's `/tmp` honours `0o700` but `chmod 0444` does **not** prevent writes for root
+under proot, so any read-only assertion must probe for effect first.
 
 Planning only. **No source file was created or modified.** One spec, twelve
 subprogram plans, 86 tasks, 608 checkbox steps, all under `docs/superpowers/`.
