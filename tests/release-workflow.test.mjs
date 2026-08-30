@@ -180,18 +180,85 @@ test("the gate and the report run in the workflow", () => {
   assert.match(text, /--enforce/, "the gate runs in report mode only");
 });
 
+/**
+ * Whether a document line invokes the release workflow illegitimately.
+ *
+ * Returns a reason string, or `null` when the mention is an acceptable disclaimer. Shared by the
+ * live document scan and by the negative controls below, so the rule that guards the real documents
+ * is the same rule proven able to fail.
+ */
+const WORKFLOW_NEGATION = /\b(no|not|never|cannot|does not|inert|unverified|unpushed|without|prohibit)\b/i;
+
+export function workflowCitationViolation(line) {
+  if (!line.includes("release-provenance")) return null;
+
+  if (line.trimStart().startsWith("|")) {
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    const [, status = "", evidence = "", notes = ""] = cells;
+    if (evidence.includes("release-provenance")) return "cites the release workflow as evidence, and it has never run";
+    if (status === "PASS") return "claims PASS on a row that invokes the unrun workflow";
+    if (!WORKFLOW_NEGATION.test(notes)) return "invokes the release workflow without disclaiming it";
+    return null;
+  }
+
+  if (!WORKFLOW_NEGATION.test(line)) return "invokes the release workflow as though it had run";
+  return null;
+}
+
 test("nothing in the repository cites this workflow as evidence", () => {
   /*
    * **The load-bearing test.** A workflow that has never executed proves nothing, and the temptation
    * is to let its existence upgrade a matrix cell or a report row. Committing a file is not evidence.
+   *
+   * The rule is *structural where it can be, negation-aware where it cannot*, which is stronger than
+   * banning the filename outright:
+   *
+   *   - In a verdict table, the **evidence cell** may never reference the workflow, and a row that
+   *     mentions it may not carry a `PASS`. That is the actual cheat — a cell laundering an unpushed
+   *     file into a verdict — and a substring ban never checked which column the name appeared in.
+   *   - In prose, and in a row's notes, a mention must be a **negation**: the documents are required
+   *     elsewhere to record that hosted signing is unperformed, and Task 8's report cannot state that
+   *     the signature row is `UNVERIFIED` *because* the workflow has never run without naming it. A
+   *     blanket ban would forbid the disclaimer and the claim alike, and the way that gets resolved
+   *     under time pressure is by deleting the disclaimer — losing the honest statement to protect a
+   *     test that was aiming at the opposite thing. Same negation-aware shape as the
+   *     `reproducible build` guard in `tests/build-determinism.test.mjs`.
    */
   for (const path of [MATRIX, REPORT]) {
     if (!existsSync(path)) continue;
-    const text = readFileSync(path, "utf8");
-    assert.ok(
-      !/release-provenance/.test(text),
-      `${path} cites the release workflow, which has never run`,
-    );
+    for (const [index, line] of readFileSync(path, "utf8").split("\n").entries()) {
+      const violation = workflowCitationViolation(line);
+      assert.equal(violation, null, `${path}:${index + 1} ${violation}`);
+    }
+  }
+});
+
+test("the citation rule is not vacuous: every way of laundering the workflow is caught", () => {
+  /*
+   * The positive control. A negation-aware rule is one edit away from accepting everything — the
+   * negation list contains `not`, and almost any sentence can be made to contain `not`. So each
+   * cheat shape is asserted to fire, and the real disclaimers are asserted to pass, because a rule
+   * that matched nothing would report a clean document forever.
+   */
+  const caught = [
+    "| signature | PASS | test:.github/workflows/release-provenance.yml | signed by the hosted workflow |",
+    "| signature | UNVERIFIED | evidence:release-provenance | hosted run |",
+    "| signature | PASS | test:tests/release-signing.test.mjs | verified by release-provenance.yml |",
+    "| signature | UNVERIFIED | | release-provenance.yml signs every release |",
+    "Releases are signed keylessly by `.github/workflows/release-provenance.yml`.",
+  ];
+  for (const line of caught) {
+    assert.notEqual(workflowCitationViolation(line), null, `this should have been caught: ${line}`);
+  }
+
+  const allowed = [
+    "| signature | UNVERIFIED | | `.github/workflows/release-provenance.yml` exists and is inert — no remote is configured. |",
+    "- **`.github/workflows/release-provenance.yml` has never executed.** No row here cites it.",
+    "| offline | PASS | test:tests/offline.test.mjs | 12 suites with egress blocked |",
+    "Performed by `release-provenance.yml`, which has not run on this host.",
+  ];
+  for (const line of allowed) {
+    assert.equal(workflowCitationViolation(line), null, `this honest line was rejected: ${line}`);
   }
 });
 

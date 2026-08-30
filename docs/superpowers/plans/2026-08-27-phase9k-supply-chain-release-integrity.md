@@ -178,7 +178,7 @@ Its security shape is asserted structurally, since it **has never executed** —
 - [x] Verify RED.
 - [x] GREEN.
 - [x] Verify: `node scripts/offline-check.mjs` exits 0. — *Exit 0 in 108.8s, 12/12 suites, **1,927 tests passing with off-host egress blocked** (`/tmp/9k-diag/run-t7-offline-check.log`).*
-- [ ] Commit — `test: prove the Bayz suite needs no network`
+- [x] Commit — `test: prove the Bayz suite needs no network`
 
 **Two real network dependencies found, and fixed in the code rather than exempted in the guard.** The first run reported `router: dns.lookup -> 192.168.100.53` and `server: dns.lookup -> 192.168.100.53` — genuine, not guard false positives.
 
@@ -228,22 +228,50 @@ Every mutation run recorded `survivors_after_cleanup: 0` and a `peak_group_size`
 **Create:** `docs/superpowers/2026-08-27-bayz-supply-chain-report.md`, `scripts/supply-chain-gate.mjs`
 **Test:** `tests/supply-chain-report.test.mjs`
 
-- [ ] RED `tests/supply-chain-report.test.mjs`: the report has a row for audit, lockfile integrity, licence inventory, SBOM, digests, signature, determinism, offline, native-free closure, and tarball secret scan; each row is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A` with an evidence reference; the runtime dependency count is stated and matches the closure computation; the report explicitly records that signing is `UNVERIFIED` for any unsigned local build.
-- [ ] `scripts/supply-chain-gate.mjs`: `--report` exits 0; `--enforce` exits non-zero on any `FAIL`, on an `UNKNOWN` runtime licence, on a `critical`/`high` runtime vulnerability, or on a tarball secret-scan hit. An `UNVERIFIED` signature does **not** block, because a local release candidate is legitimately unsigned; the gate prints that distinction so it cannot be mistaken for a pass.
-- [ ] Verify: `node scripts/supply-chain-gate.mjs --report` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean.
-- [ ] Commit — `test: add the Bayz supply-chain report and gate`
+- [x] RED `tests/supply-chain-report.test.mjs`: the report has a row for audit, lockfile integrity, licence inventory, SBOM, digests, signature, determinism, offline, native-free closure, and tarball secret scan; each row is exactly one of `PASS`, `FAIL`, `UNVERIFIED`, `N/A` with an evidence reference; the runtime dependency count is stated and matches the closure computation; the report explicitly records that signing is `UNVERIFIED` for any unsigned local build. — *24 tests. Every `PASS` citation is resolved on disk **and** its assertion count checked (`>= 5`), because pointing a verdict at an empty test file is the cheapest way to launder it. The stated count is compared against `computeClosure` rather than a constant.*
+- [x] `scripts/supply-chain-gate.mjs`: `--report` exits 0; `--enforce` exits non-zero on any `FAIL`, on an `UNKNOWN` runtime licence, on a `critical`/`high` runtime vulnerability, or on a tarball secret-scan hit. An `UNVERIFIED` signature does **not** block, because a local release candidate is legitimately unsigned; the gate prints that distinction so it cannot be mistaken for a pass. — *439 lines. It **re-measures three rows live** — runtime licences, `npm audit`, the tarball secret scan — and a live `FAIL` blocks whatever the prose says; the disagreement is additionally reported as an integrity violation in its own right, since a gate that trusted the document could be passed by editing the document. Composes `dependency-closure.mjs`, `license-inventory.mjs` and `pack.mjs` instead of copying their policy, and a test asserts it defines no closure walk, licence set or secret regex of its own.*
+- [x] Verify: `node scripts/supply-chain-gate.mjs --report` exits 0; `npm run runtime:verify` exits 0; `git diff --check` clean. — *`--report` exit 0, `--enforce` exit 0 (`/tmp/9k-diag/t8-final-report.log`, `t8-final-enforce.log`), `git diff --check` clean.*
+- [x] Commit — `test: add the Bayz supply-chain report and gate`
+
+**Six mutations against the gate, all caught** (`/tmp/9k-diag/t8-mutation-results.jsonl`, `log-K26*.txt`). No `RLIMIT_NPROC` cap here — this target cannot fork — but the harness still restores the mutated file byte-identically and asserts the restore, since a crash leaving a mutated gate in the tree would be a silently weakened release gate.
+
+| id | mutation | red |
+|---|---|---|
+| K26a | a `FAIL` row no longer blocks | 1 |
+| K26b | a live re-measurement failure no longer blocks, so the document can out-claim the tree | 2 |
+| K26c | every row's `UNVERIFIED` becomes advisory, so nothing mandatory can block | 1 |
+| K26d | the missing-mandatory-row violation removed — the vacuity hole | 1 |
+| K26e | a `PASS` with no evidence reference accepted | 1 |
+| K26f | an `UNVERIFIED` row with no stated reason accepted | 1 |
+
+**One real regression found by Task 8's own document, and fixed in the test rather than the document.** Writing the report tripped `tests/release-workflow.test.mjs`: its load-bearing assertion banned the substring `release-provenance` from the matrix and the report outright, and the report's signature row cannot explain *why* signing is `UNVERIFIED` without naming the inert workflow. A substring ban forbids the disclaimer and the claim identically, and the way that gets resolved under time pressure is by deleting the disclaimer — losing the honest statement in order to protect a test that was aiming at the opposite thing. The rule is now structural where it can be and negation-aware where it cannot: the workflow may never appear in an **evidence cell**, no row mentioning it may carry a `PASS`, and any other mention must contain a negation. Same shape as the `reproducible build` guard in `tests/build-determinism.test.mjs`. A positive control asserts all five laundering shapes still fire and all four honest disclaimers still pass, because a negation-aware rule is one edit away from accepting everything.
+
 
 ## Completion checklist
 
-- [ ] Audit policy written, with an explicit runtime-versus-dev distinction and a network-unavailable `UNVERIFIED` path.
-- [ ] Every lockfile entry has a `sha512-` integrity hash and an `registry.npmjs.org` origin; the mutation probe proves the check can actually fail.
-- [ ] Licence inventory generated; no `UNKNOWN` or copyleft licence in the runtime closure; `LICENSE` file added and all nine workspace packages declare the same identifier.
-- [ ] **Open decision:** the licence identifier itself. Task 3 blocks on a user choice rather than guessing, and the gate reports `UNKNOWN` until then.
-- [ ] CycloneDX 1.5 SBOM generated from the lockfile; scoped purls percent-encoded and pinned for the six scoped packages; runtime component count tied to the 9J closure walk; no build-machine path.
-- [ ] No `@bayz/*` workspace package carries a fictional registry purl.
-- [ ] SBOM regeneration is byte-stable at a pinned timestamp.
-- [ ] Digest manifest always produced; signing optional, refuses in-repo keys, unsigned reported as `UNVERIFIED`.
-- [ ] "Unsigned" and "forged" are distinct verification outcomes.
-- [ ] Determinism measured per artifact class with no reproducible-build claim.
-- [ ] Full unit suite passes with non-loopback egress blocked, and the block is proven effective.
-- [ ] Zero new runtime dependencies added by this subprogram.
+- [x] Audit policy written, with an explicit runtime-versus-dev distinction and a network-unavailable `UNVERIFIED` path.
+- [x] Every lockfile entry has a `sha512-` integrity hash and an `registry.npmjs.org` origin; the mutation probe proves the check can actually fail. — *Every assertion is paired with a mutated copy of the real lockfile, not only the `sha1` one.*
+- [x] Licence inventory generated; no `UNKNOWN` or copyleft licence in the runtime closure; `LICENSE` file added and all nine workspace packages declare the same identifier. — ***Twelve** workspaces, not nine. 74 runtime packages: 60 MIT, 5 BlueOak-1.0.0, 5 ISC, 4 BSD-3-Clause. The one `MPL-2.0` in the tree is dev-only, on 12 `lightningcss` builds reached through `vite`.*
+- [x] **Open decision:** the licence identifier itself. Task 3 blocks on a user choice rather than guessing, and the gate reports `UNKNOWN` until then. — **RESOLVED by the repository owner: `Apache-2.0`.** *No longer blocking; the gate reports the real identifier.*
+- [x] CycloneDX 1.5 SBOM generated from the lockfile; scoped purls percent-encoded and pinned for the six scoped packages; runtime component count tied to the 9J closure walk; no build-machine path. — ***Eleven** scoped packages, not six, and the set differs from the plan's list: `@isaacs/cliui` left the tree with the Task 1 security upgrade and eight `@fastify/*` packages arrived with it. 239 components, 74 runtime, 165 dev-only.*
+- [x] No `@bayz/*` workspace package carries a fictional registry purl. — *They carry **no `purl` at all**, plus a `bayz:workspace` property; `validateSbom` refuses any `@bayz/*` name in the third-party list.*
+- [x] SBOM regeneration is byte-stable at a pinned timestamp. — *Forced the `serialNumber` to be a content hash rather than `randomUUID()`; a random serial is spec-legal and would have destroyed this property.*
+- [x] Digest manifest always produced; signing optional, refuses in-repo keys, unsigned reported as `UNVERIFIED`.
+- [x] "Unsigned" and "forged" are distinct verification outcomes. — *Asserted as distinct exit paths in `verify-release.mjs`, not merely distinct wording.*
+- [x] Determinism measured per artifact class with no reproducible-build claim. — *Tarball `PASS`, SBOM `PASS`, build-machine identity `PASS`, `tsc`-emitted output `N/A` (nothing is emitted — all 11 builds are `--noEmit`), dashboard bundle `UNVERIFIED`. The row takes the **weakest** class verdict rather than an average.*
+- [x] Full unit suite passes with non-loopback egress blocked, and the block is proven effective. — *12 suites, 1,927 tests, exit 0 in 108.8s. Effectiveness proven by a deliberate `fetch("https://example.invalid")` in a child before any suite is trusted; two real network dependencies were found this way and fixed in the code rather than exempted.*
+- [x] Zero new runtime dependencies added by this subprogram. — *5 direct external dependencies, 74 in the runtime closure, unchanged across the phase apart from the `@fastify/static` security upgrade Task 1 required.*
+
+**Phase 9K is COMPLETE: 8/8 tasks.** Verification at close, all recorded:
+
+| gate | result |
+|---|---|
+| `node --test tests/*.test.mjs` | 345/345 pass, exit 0, contained (`/tmp/9k-diag/run-t8-root-final.log`) |
+| `node scripts/offline-check.mjs` | 12 suites, 1,927 tests, exit 0 (`/tmp/9k-diag/run-t7-offline-check.log`) |
+| `node scripts/supply-chain-gate.mjs --report` | exit 0 (`/tmp/9k-diag/t8-final-report.log`) |
+| `node scripts/supply-chain-gate.mjs --enforce` | exit 0, `supply-chain gate: PASS` (`/tmp/9k-diag/t8-final-enforce.log`) |
+| mutation sweep | 15/15 caught — K24a–f, K25a–c (Task 7), K26a–f (Task 8) |
+| `git diff --check` | clean |
+
+Two rows remain honestly `UNVERIFIED` and are documented as non-blocking: `signature` (unsigned local build; keyless OIDC needs a hosted run that Phase 9 prohibits) and bundler `determinism`. Nothing was pushed.
+

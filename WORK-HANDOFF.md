@@ -128,7 +128,18 @@
     from 276 lockfile entries, 5 direct external deps, **native-free** — no install script, no
     gypfile, no `libc`, no `os`/`cpu` restriction. The 53 platform-restricted and 2
     install-scripted packages in the tree are all dev-only, reached through `vite`.
-  - 9K–9L: **NOT STARTED.**
+  - 9K Supply Chain / SBOM / Release Integrity: **COMPLETE.** Tasks 1–8.
+    Licence `Apache-2.0` (owner decision), signing keyless Sigstore/OIDC (owner decision).
+    `audit-policy` 14/14, `lockfile-integrity` 17/17, `license-inventory` 13/13,
+    `sbom` 22/22, `release-signing` 19/19, `release-workflow` 12/12,
+    `build-determinism` 9/9, `offline` 16/16, `offline-recursion` 10/10,
+    `supply-chain-report` 24/24. Root suite **345/345**.
+    `offline-check` **12 suites / 1,927 tests** with off-host egress blocked, exit 0.
+    `supply-chain-gate --report` 0 and `--enforce` **0**. CycloneDX 1.5 SBOM: 239
+    components (74 runtime, 165 dev-only); runtime closure **84 = 10 links + 74 external**.
+    15/15 mutations caught (K24a–f, K25a–c, K26a–f). Two rows honestly `UNVERIFIED` and
+    documented non-blocking: `signature` (unsigned local build) and bundler `determinism`.
+  - 9L: **NOT STARTED.**
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -999,7 +1010,8 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9H Client Compatibility Matrix | **COMPLETE** | Tasks 1–6; `matrix-integrity` 9/9, `client-docs` 6/6, `client-gate` 11/11, `client-conformance` 55/55, `verify-opencode` 16V/1U exit 0, `verify-hermes` 17V exit 0, `verify-antigravity` absent exit 0; 46 VERIFIED / 2 PARTIAL / 0 BLOCKED / 54 UNVERIFIED; **`client-gate --enforce` exits 1 — correct, `antigravity` is absent** |
 | 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
 | 9J Cross-platform / Packaging / Upgrade | **COMPLETE** | Tasks 1–8; `platform-matrix` 10/10, `dependency-closure` 12/12 (closure **96 = 10 links + 86 external**, native-free), `portability` 14/14 + scan 0 violations, `pack` 20/20 + `--self-test` 15/15, `install-smoke` **64/64**, `upgrade-ladder` 21/21 + `corrupt-row` 7/7 + `upgrade-smoke` **83/83** (every rung v1…v11), `ci-workflow` 8/8 (committed, inert, no remote exists), `platform-gate` 13/13 with `--report` 0 / `--enforce` **0**; Termux/Android ARM64 row **11/11 PASS** against the installed artifact, six other platforms honestly `UNVERIFIED`; six live production defects found and fixed |
-| 9K–9L | NOT STARTED | — |
+| 9K Supply Chain / SBOM / Release Integrity | **COMPLETE** | Tasks 1–8; `audit-policy` 14/14, `lockfile-integrity` 17/17, `license-inventory` 13/13, `sbom` 22/22, `release-signing` 19/19, `release-workflow` 12/12, `build-determinism` 9/9, `offline` 16/16, `offline-recursion` 10/10, `supply-chain-report` 24/24; root suite **345/345**; `offline-check` **12 suites / 1,927 tests** with off-host egress blocked exit 0; `supply-chain-gate --report` 0 / `--enforce` **0**; CycloneDX 1.5 SBOM 239 components (74 runtime, 165 dev-only), runtime closure **84 = 10 links + 74 external**, native-free; **15/15 mutations caught** (K24a–f, K25a–c, K26a–f); licence `Apache-2.0`; two rows honestly `UNVERIFIED` and non-blocking — `signature` (unsigned local build, keyless OIDC needs a hosted run) and bundler `determinism` |
+| 9L Feature Completeness Gate | NOT STARTED | — |
 
 ## Phase 9E resume point
 
