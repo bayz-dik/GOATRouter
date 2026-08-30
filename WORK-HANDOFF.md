@@ -139,7 +139,14 @@
     components (74 runtime, 165 dev-only); runtime closure **84 = 10 links + 74 external**.
     15/15 mutations caught (K24a–f, K25a–c, K26a–f). Two rows honestly `UNVERIFIED` and
     documented non-blocking: `signature` (unsigned local build) and bundler `determinism`.
-  - 9L: **NOT STARTED.**
+  - 9L Feature Completeness Gate: **Tasks 1–6 COMPLETE, Task 7 remaining.**
+    `evidence` 18/18, `feature-gate-integrity` 29/29, `release-gate` 19/19,
+    `no-fabrication` 20/20, `phase9-locks` 22/22, `readiness` 11/11.
+    `scripts/evidence.mjs` is the single citation grammar; all four subordinate matrix
+    tests import it, and the consolidation found **fifteen unresolvable citations in a
+    shipped report**. Feature inventory: **27 `PASS`, 0 `FAIL`, 2 `UNVERIFIED`** of 29 —
+    client integrations (9H, `antigravity` absent) and cross-platform qualification (9J,
+    no runner). `release-gate --enforce` is therefore expected non-zero, which is correct.
   - Plans and spec are committed at `bad8325` and amended at `8069b65`; every
     subsequent commit is implementation.
 - Approved plans:
@@ -1011,7 +1018,7 @@ Authoritative resume point. Everything below is measured, not asserted.
 | 9I Fuzz / Chaos / Load / Soak | **COMPLETE** | Tasks 1–7; `fuzz-run` **39/39** (13 targets × 5,000 iterations), `chaos-smoke` **83/83** (11 scenarios), `load-smoke` **64/64** (1/8/32/128/256, 3,288 requests, 0 failures), `soak-smoke` **14/14** (600 s, 18,741 requests, 0 failures), `resilience-report` 24/24, plus `fuzz-harness` 18/18, `fuzz-generators` 21/21, `chaos-suite` 9/9, `load-harness` 11/11, `soak-harness` 13/13; report 71 rows = 68 PASS / 0 FAIL / 3 UNVERIFIED; **`resilience-gate --enforce` exits 1 — correct, two chaos injections need mount privileges this host lacks** |
 | 9J Cross-platform / Packaging / Upgrade | **COMPLETE** | Tasks 1–8; `platform-matrix` 10/10, `dependency-closure` 12/12 (closure **96 = 10 links + 86 external**, native-free), `portability` 14/14 + scan 0 violations, `pack` 20/20 + `--self-test` 15/15, `install-smoke` **64/64**, `upgrade-ladder` 21/21 + `corrupt-row` 7/7 + `upgrade-smoke` **83/83** (every rung v1…v11), `ci-workflow` 8/8 (committed, inert, no remote exists), `platform-gate` 13/13 with `--report` 0 / `--enforce` **0**; Termux/Android ARM64 row **11/11 PASS** against the installed artifact, six other platforms honestly `UNVERIFIED`; six live production defects found and fixed |
 | 9K Supply Chain / SBOM / Release Integrity | **COMPLETE** | Tasks 1–8; `audit-policy` 14/14, `lockfile-integrity` 17/17, `license-inventory` 13/13, `sbom` 22/22, `release-signing` 19/19, `release-workflow` 12/12, `build-determinism` 9/9, `offline` 16/16, `offline-recursion` 10/10, `supply-chain-report` 24/24; root suite **345/345**; `offline-check` **12 suites / 1,927 tests** with off-host egress blocked exit 0; `supply-chain-gate --report` 0 / `--enforce` **0**; CycloneDX 1.5 SBOM 239 components (74 runtime, 165 dev-only), runtime closure **84 = 10 links + 74 external**, native-free; **15/15 mutations caught** (K24a–f, K25a–c, K26a–f); licence `Apache-2.0`; two rows honestly `UNVERIFIED` and non-blocking — `signature` (unsigned local build, keyless OIDC needs a hosted run) and bundler `determinism` |
-| 9L Feature Completeness Gate | NOT STARTED | — |
+| 9L Feature Completeness Gate | **Tasks 1–6 COMPLETE, Task 7 remaining** | `evidence` 18/18, `feature-gate-integrity` 29/29, `release-gate` 19/19, `no-fabrication` 20/20, `phase9-locks` 22/22, `readiness` 11/11. One citation grammar in `scripts/evidence.mjs`, imported by all four subordinate matrix tests; the consolidation found 15 unresolvable citations in a shipped report and 2 evidence collisions. Inventory **27 `PASS` / 0 `FAIL` / 2 `UNVERIFIED`** of 29. Aggregate `release-gate.mjs` composes 6 gates over 30 steps, classifies 18 smoke scripts `fast`/`long`, and refuses to run inside itself. `no-fabrication` scans 48 documents under 4 rules; `phase9-locks` mechanises 6 §18 locks plus §25 no-paid-fallback; the readiness statement is generated and byte-identity-checked. `--enforce` non-zero on the 2 `UNVERIFIED` rows, which is correct |
 
 ## Phase 9E resume point
 
@@ -3855,16 +3862,128 @@ reproducible-build claim · no prompt-injection filtering as a boundary · no `P
 for a platform or client that cannot run here. Six of seven platforms and two of
 three Core clients are `UNVERIFIED` on this device by measurement, not by choice.
 
+## Phase 9L Feature Completeness Gate — as built (Tasks 1–6)
+
+**Plan:** `docs/superpowers/plans/2026-08-27-phase9l-feature-completeness-gate.md`
+**Spec:** §16, §17, amended by §25.
+
+This is the gate, not a feature. One document and one command answer "is BAYZ actually done?", and
+every `PASS` is defended by a citation that resolves on disk.
+
+### Architecture as built
+
+```text
+scripts/evidence.mjs ......... the ONE citation grammar + resolver (Task 1)
+scripts/feature-gate.mjs ..... 29-row §17 inventory policy (Task 2)
+scripts/release-gate.mjs ..... composes 6 gates over 30 steps (Task 3)
+scripts/pin-flux-core.mjs .... Flux Core V2 SHA manifest writer (Task 5)
+scripts/readiness.mjs ........ generates the readiness statement (Task 6)
+
+tests/evidence.test.mjs ................ 18/18
+tests/feature-gate-integrity.test.mjs .. 29/29
+tests/release-gate.test.mjs ............ 19/19  (spawns nothing at all)
+tests/no-fabrication.test.mjs .......... 20/20
+tests/phase9-locks.test.mjs ............ 22/22
+tests/readiness.test.mjs ............... 11/11
+
+docs/superpowers/2026-08-27-bayz-feature-completeness-gate.md   29 rows
+docs/superpowers/2026-08-27-bayz-release-readiness.md           GENERATED
+docs/superpowers/flux-core-v2-manifest.json                     12 files pinned
+```
+
+### Deviations from the plan text
+
+1. **The evidence grammar had already drifted, in four copies.** 9H, 9I, 9J and 9K each specified the
+   same regex inline. 9H's copy rejected the contiguous range 9I's report legitimately uses, and only
+   9K's accepted `::name`. Consolidating onto `scripts/evidence.mjs` found **fifteen unresolvable
+   citations sitting in a shipped report** — every `smoke:fuzz#…` row cited the script name `fuzz`
+   while the file is `fuzz-run.mjs`, and every previous copy of the rule was a pattern that never
+   opened a file. Fixed in the resolver, not by editing the rows: the citations named the right script.
+2. **Thirteen smoke scripts had to be renumbered.** `api`, `custom-provider`, `dashboard`, `identity`,
+   `injection`, `provider`, `proxy`, `proxy-ux`, `router`, `security`, `storage`, `stream` and `usage`
+   printed `ok <label>` with no number, so the citations the inventory needs were unresolvable — not
+   because a check was missing but because it could not be looked up. All thirteen were rerun live.
+   *Numbers are contractual: append checks, never insert one.*
+3. **Task 4's scope wording omitted the file with the most measurements in it.** The plan says "every
+   tracked `docs/**/*.md` and `README.md`", which silently excludes `WORK-HANDOFF.md`,
+   `packaging/README.md` and `scripts/fuzz/corpus/regression/README.md`. Scope is now every tracked
+   `.md` except `docs/transcripts/**` — 48 documents — and a test asserts the exclusion list contains
+   nothing but transcripts.
+4. **Negation had to be sentence-scoped, not line-scoped.** Line-scoping accepted
+   `The proxy is not enabled by default. Secrets are zeroized from memory.` — one honest refusal
+   laundering one real claim on the same line. Two further carve-outs, each forced by a document that
+   would otherwise have to be damaged: an inline code span or quoted phrase is a *mention* (§25.6
+   writes `not *"you will never be charged"*` in order to forbid it), and a mutation record is evidence
+   *for* the policy (9K records "the tarball verdict reworded to claim a reproducible build (2 red)").
+5. **Task 5's "client names only in `presets.ts`" is wrong about the tree.** Three more files hold the
+   names as data: an identity-repository `Set` that rejects `preset: "not-a-client"` at the storage
+   boundary, the dashboard's form list with per-preset default scopes, and one `DEFAULT_PRESET` line.
+   Editing four honest files to satisfy a one-file rule would have deleted real validation, so the lock
+   became **two** rules: a four-file allowlist, and — with no allowlist at all, `presets.ts` included —
+   no client name in any control-flow position. The second is the property §18 actually cares about.
+6. **`continue` was unchecked by 9A's own scan**, because a substring search for a JavaScript keyword
+   fires on every loop. It is now matched only as a quoted or property identifier.
+7. **The readiness statement is generated and byte-identity-checked**, which the plan implies but does
+   not specify. A handwritten readiness document is a snapshot of what somebody believed on the day
+   they wrote it; `tests/readiness.test.mjs` fails if the committed file differs from a fresh
+   generation, so drift is a failure rather than a discrepancy nobody noticed.
+8. **The readiness generator initially applied a stricter client policy than the gate it summarises.**
+   It withheld any client not 100% `VERIFIED`, which listed `generic-openai` (13 `VERIFIED`, 2
+   `PARTIAL`) as unsupported. `PARTIAL` is acceptable at release by 9H's policy — evidence plus a named
+   limit. It now uses 9H's own `BLOCKING` set and reports `PARTIAL` separately with its count.
+
+### Measured results
+
+- **Feature inventory: 27 `PASS`, 0 `FAIL`, 2 `UNVERIFIED`** across 29 features. The two are client
+  integrations (9H — `antigravity` is a Core 3 client and is absent from this host) and cross-platform
+  qualification (9J — six platform rows have no runner). Neither was talked into `PASS`.
+- **Document gate verdicts:** 9J platform `PASS`, 9K supply-chain `PASS`, 9F posture `PASS` (derived);
+  9H client `BLOCKED` (18 cells), 9I resilience `BLOCKED` (2 chaos scenarios needing mount privileges),
+  9L feature `BLOCKED` (the 2 rows above). So `release-gate.mjs --enforce` is expected non-zero.
+- **Anti-fabrication corpus:** 48 documents. 32 forbidden-term mentions, **all 32 refusals**. 198
+  positively-claimed table rows carrying 210 citations, **all resolving** through `scripts/evidence.mjs`.
+- **Aggregate `UNVERIFIED` inventory: 67 entries**, each with a documented reason, read through each
+  subprogram's own parser by `collectUnverified()`.
+- **Mutation proofs.** Task 4: three claims planted in `README.md` → 3 red across exactly the three
+  intended rules. Task 5: a poisoned manifest hash → 1 red; `economics === undefined ? true` → 1 red;
+  `{ freeOnly: false }` planted in `router.ts` → 1 red. All reverted.
+
+### Residual risks
+
+- **The two `UNVERIFIED` features are environmental, not unfinished.** `antigravity` is not installable
+  here and six platforms have no runner. Both represent large bodies of completed work whose end-to-end
+  proof is a transcript from hardware this session does not have.
+- **The two blocking chaos scenarios need mount privileges proot does not grant** — `chmod 0444` does
+  not stop writes for root under proot, and `mount -t tmpfs` exits 0 while mounting nothing.
+- **The anti-fabrication scan reads documents, not code.** It cannot catch a claim made only in a UI
+  string or a log line; those are covered by the sentinel drills and the posture smoke instead.
+- **The Flux visual lock pins bytes, not appearance.** It proves no file changed; it cannot prove the
+  rendered output matches the approved standalone file, which still needs a real browser.
+
+### 9L resume point
+
+**Phase 9L Tasks 1–6 are COMPLETE. Task 7 — final gate execution — is the only remaining work in
+Phase 9.** It runs the live set: `npm run runtime:verify`, the sixteen fast-class smoke scripts, the
+root suite, `fuzz-run`, `chaos-smoke`, `offline-check`, then the long class (`load-smoke`,
+`soak-smoke`), then `release-gate.mjs --report` and `--enforce --full`. Results are appended to the
+readiness statement by regenerating it.
+
+`--enforce` is **expected to exit non-zero** on the two `UNVERIFIED` feature rows, the 9H client
+blockers, and the two 9I chaos scenarios. That is the correct outcome. **Do not adjust a status to make
+the gate pass** — the failing rows are the remaining work, and they are environmental.
+
 ## Next steps
 
-1. **Answer the two open decisions** above — licence identifier and signing key
-   custody. 9K Task 3 blocks on the first.
-2. **Execute Phase 9 in dependency order**: 9C → 9A → 9B → 9G, with 9D, 9E, and
-   9F's independent tasks in parallel, then 9H, then 9I, then 9J → 9K, then 9L last.
-   9F Tasks 2, 6, and 7 wait on 9C Task 1.
-3. **Verify Flux Core in a real browser.** Motion and typography equivalence with
-   the approved standalone file is *unverified* — this environment has no browser.
-   Compare side by side before treating the port as visually final.
-4. **Do not push to GitHub.** A push requires implementation complete, the feature
-   gate green, the security gate green, a clean tree, a verified release candidate,
-   and an explicit user instruction.
+1. **Run Phase 9L Task 7.** Bounded: the fast class alone is roughly six minutes of `tsc` plus sixteen
+   smoke scripts plus the root suite. `soak-smoke` defaults to 10 minutes and `--long` to two hours;
+   the two-hour mode has never been run here and the host is documented to stall for up to 184 s at
+   load average 0.12, which would make an unattended two-hour result unreadable.
+2. **Do not push to GitHub.** A push requires implementation complete, this gate green, the security
+   gate green, a clean tree, a verified release candidate, and an explicit user instruction. Three of
+   those are currently unmet, and `tests/phase9-locks.test.mjs` asserts no remote exists.
+3. **Verify Flux Core in a real browser.** Motion and typography equivalence with the approved
+   standalone file is *unverified* — this environment has no browser. The 9L visual lock pins the
+   bytes, which is a different guarantee. Compare side by side before treating the port as final.
+4. **To close the two `UNVERIFIED` features**, either install `antigravity` on a host that can run it
+   and capture transcripts, or run the committed `.github/workflows/platform-matrix.yml` on real
+   runners. Both need resources this device does not have; neither is a code defect.

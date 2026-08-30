@@ -659,6 +659,61 @@ The authoritative record is `docs/superpowers/2026-08-27-bayz-platform-matrix.md
 platform blocks a release; an `UNVERIFIED` on a platform nobody has access to narrows this support
 claim instead.
 
+## Client support
+
+Same rule as platforms: this records clients that were **driven for real** against a running BAYZ,
+not clients whose protocol BAYZ implements. Every capability BAYZ exposes is covered by its own tests
+and smoke checks; none of that is a compatibility claim, because a client can fail a correct server by
+sending a header nobody anticipated or reconnecting in an unexpected way.
+
+**Verified:** `hermes` (17 of 17 capabilities) and `opencode` (16 of 17 — the client never calls
+`GET /v1/models`, offering the models from its own config instead, so BAYZ's discovery endpoint is not
+exercised by it). Both were run as real binaries against a real listener; transcripts are under
+`docs/transcripts/`.
+
+**Verified with a stated limit:** `generic-openai` — 13 capabilities verified, 2 `PARTIAL`. Read the
+named limit in the matrix before quoting support.
+
+**Do not describe as working:** `antigravity`, `cline`, `continue`. None is present on this host, so
+nothing has been attempted. `antigravity` is a release-blocking Core 3 client, which is why
+`node scripts/client-gate.mjs --enforce` exits non-zero today — the gate working, not a defect.
+
+The authoritative record is `docs/superpowers/2026-08-27-bayz-client-compatibility-matrix.md`, and the
+per-client pages are under `docs/clients/`.
+
+## Honest limitations
+
+Every one of these is a boundary BAYZ **does not cross and does not claim to have crossed**. They are
+collected in spec §24, reproduced in the generated readiness statement, and
+`tests/no-fabrication.test.mjs` mechanically forbids any document in this repository from claiming
+otherwise — including this one.
+
+- **No rollback prevention.** Database rollback to an earlier state is *detected*, not prevented.
+  Prevention needs trusted monotonic storage this device does not have.
+- **No memory wiping.** JavaScript strings cannot be overwritten. `Buffer`s holding key material are
+  zeroed after use, which narrows the window without closing it; the garbage collector may already
+  have copied them.
+- **No secure overwrite on disk.** Flash storage cannot be overwritten from Node. Erasure is
+  cryptographic — destroy the key, not the bytes.
+- **No OS keystore on Termux/Android.** No `secret-tool`, `security`, or `keyctl` is reachable from
+  Node here. The keychain interface exists and reports itself unavailable rather than pretending.
+- **No mid-stream failover.** Once a byte has reached the client the response is committed; failover
+  before the first byte is supported, after it is not.
+- **No reproducible-build guarantee.** The `vite`/`rolldown` chain does not promise byte-identical
+  output. Two consecutive packs of the tarball and the SBOM were byte-identical on this device, which
+  is a measurement and not the term of art.
+- **No DNS-rebinding elimination.** Re-checking before connect narrows the window; Node cannot close
+  it.
+- **No prompt-injection filtering.** Injection is not treated as the boundary — the capability
+  registry and its scopes are. A model's text is never trusted to authorise anything.
+- **No guarantee you will never be charged.** BAYZ never selected a paid model on your behalf without
+  metadata saying it was free, and it never widens a free-only candidate set on failure. But
+  classification comes from the provider's own catalogue, so a provider that misreports its pricing is
+  misclassified and BAYZ cannot detect that.
+
+Release readiness, including every gate verdict and the complete `UNVERIFIED` list, is generated from
+the gates into `docs/superpowers/2026-08-27-bayz-release-readiness.md`.
+
 ## Deferred verification
 
 The existing private BAYZ Sites/UI review surface is not present in this
