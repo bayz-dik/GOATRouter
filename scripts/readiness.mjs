@@ -150,10 +150,44 @@ export async function unverifiedInventory() {
   return runner.collectUnverified();
 }
 
-/** One verdict line per gate: the label, whether its own policy blocks, and why. */
-function verdictRow(label, subprogram, blocked, reasons) {
-  return { label, subprogram, verdict: blocked ? "BLOCKED" : "PASS", reasons };
+/**
+ * One verdict line per gate: the label, whether its own policy blocks, why, and the evidence the
+ * verdict rests on.
+ *
+ * The citation is not decoration. A `PASS` row with nothing to look up is a bare claim, and
+ * `tests/no-fabrication.test.mjs`'s repo-wide sweep is right to refuse it: the first generated
+ * statement rendered 9J, 9K and the derived 9F as `PASS` with `—` in every other cell, and three
+ * unfalsifiable rows shipped in a document whose entire purpose is falsifiability. Required of
+ * **every** row rather than only the passing ones, because the evidence a verdict rests on is the
+ * same policy test whichever way the verdict came out — a rule that only bound `PASS` rows would
+ * stop applying the moment a row flipped, which is precisely when it matters.
+ */
+function verdictRow(label, subprogram, blocked, reasons, evidence) {
+  return { label, subprogram, verdict: blocked ? "BLOCKED" : "PASS", reasons, evidence };
 }
+
+/**
+ * The evidence each gate verdict rests on, by subprogram.
+ *
+ * A gate's verdict is a statement about what its *document* says under its own policy, so the thing
+ * a reader must be able to open is the policy test that mechanically enforces that reading — not the
+ * document, which would have the row citing the very text it summarises. 9F is the exception the
+ * aggregate gate already makes: it has no gate script, and `release-gate.mjs` derives its row from
+ * `scripts/security-smoke.mjs`, so the citation is the numbered check in that smoke where the posture
+ * ladder is actually observed.
+ *
+ * Held as a map rather than inlined per row so `tests/readiness.test.mjs` can resolve every entry
+ * through `scripts/evidence.mjs` — the same resolver the four matrix-integrity tests use, so a
+ * citation here cannot be a string nobody ever opened.
+ */
+export const VERDICT_EVIDENCE = Object.freeze({
+  "9H": "test:tests/client-gate.test.mjs",
+  "9I": "test:tests/resilience-report.test.mjs",
+  "9J": "test:tests/platform-gate.test.mjs",
+  "9K": "test:tests/supply-chain-report.test.mjs",
+  "9L": "test:tests/feature-gate-integrity.test.mjs",
+  "9F": "smoke:security#6",
+});
 
 /**
  * Assemble every gate verdict.
@@ -184,31 +218,36 @@ export async function allVerdicts() {
         "9H",
         client.blockers.length > 0,
         client.blockers.map((entry) => `${entry.client}/${entry.capability}: ${entry.status}`),
+        VERDICT_EVIDENCE["9H"],
       ),
       verdictRow(
         "resilience",
         "9I",
         resilience.blocking.length > 0 || resilience.violations.length > 0,
         [...resilience.violations, ...resilience.blocking],
+        VERDICT_EVIDENCE["9I"],
       ),
-      verdictRow("platform qualification", "9J", platform.blocked, platform.reasons),
+      verdictRow("platform qualification", "9J", platform.blocked, platform.reasons, VERDICT_EVIDENCE["9J"]),
       verdictRow(
         "supply chain (document only)",
         "9K",
         supplyChain.blocking.length > 0 || supplyChain.violations.length > 0,
         [...supplyChain.violations, ...supplyChain.blocking],
+        VERDICT_EVIDENCE["9K"],
       ),
       verdictRow(
         "feature completeness",
         "9L",
         feature.blocking.length > 0 || feature.violations.length > 0,
         [...feature.violations, ...feature.blocking],
+        VERDICT_EVIDENCE["9L"],
       ),
       verdictRow(
         "security posture (derived)",
         "9F",
         !posturePresent,
         posturePresent ? [] : [`${postureScript} does not exist — a missing check is a FAIL, never a skip`],
+        VERDICT_EVIDENCE["9F"],
       ),
     ],
   };
@@ -306,13 +345,18 @@ export async function renderStatement() {
     "",
     "## Gate verdicts",
     "",
-    "| gate | subprogram | verdict | blocking reasons |",
-    "|---|---|---|---|",
+    "Each row cites the policy test that mechanically enforces its gate's reading of its own document,",
+    "so a verdict here is something a reader can open rather than something they must take on trust.",
+    "9F cites a numbered check in `scripts/security-smoke.mjs` instead, because 9F has no gate script:",
+    "`scripts/release-gate.mjs` derives that row the same way, from the same smoke.",
+    "",
+    "| gate | subprogram | verdict | evidence | blocking reasons |",
+    "|---|---|---|---|---|",
   );
 
   for (const row of verdicts.rows) {
     const reasons = row.reasons.length === 0 ? "—" : `${row.reasons.length}: ${cell(row.reasons.slice(0, 2).join("; "))}`;
-    push(`| ${row.label} | ${row.subprogram} | ${row.verdict} | ${reasons} |`);
+    push(`| ${row.label} | ${row.subprogram} | ${row.verdict} | ${cell(row.evidence)} | ${reasons} |`);
   }
 
   const blocked = verdicts.rows.filter((row) => row.verdict === "BLOCKED");

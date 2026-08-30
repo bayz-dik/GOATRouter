@@ -23,14 +23,19 @@ a claim about a run that happened today.
 
 ## Gate verdicts
 
-| gate | subprogram | verdict | blocking reasons |
-|---|---|---|---|
-| client compatibility | 9H | BLOCKED | 18: opencode/models.list: UNVERIFIED; antigravity/configure: UNVERIFIED |
-| resilience | 9I | BLOCKED | 2: chaos/read-only database injection: UNVERIFIED in a blocking section (chaos); chaos/disk exhaustion: UNVERIFIED in a blocking section (chaos) |
-| platform qualification | 9J | PASS | — |
-| supply chain (document only) | 9K | PASS | — |
-| feature completeness | 9L | BLOCKED | 2: Client integrations: UNVERIFIED; Cross-platform qualification: UNVERIFIED |
-| security posture (derived) | 9F | PASS | — |
+Each row cites the policy test that mechanically enforces its gate's reading of its own document,
+so a verdict here is something a reader can open rather than something they must take on trust.
+9F cites a numbered check in `scripts/security-smoke.mjs` instead, because 9F has no gate script:
+`scripts/release-gate.mjs` derives that row the same way, from the same smoke.
+
+| gate | subprogram | verdict | evidence | blocking reasons |
+|---|---|---|---|---|
+| client compatibility | 9H | BLOCKED | test:tests/client-gate.test.mjs | 18: opencode/models.list: UNVERIFIED; antigravity/configure: UNVERIFIED |
+| resilience | 9I | BLOCKED | test:tests/resilience-report.test.mjs | 2: chaos/read-only database injection: UNVERIFIED in a blocking section (chaos); chaos/disk exhaustion: UNVERIFIED in a blocking section (chaos) |
+| platform qualification | 9J | PASS | test:tests/platform-gate.test.mjs | — |
+| supply chain (document only) | 9K | PASS | test:tests/supply-chain-report.test.mjs | — |
+| feature completeness | 9L | BLOCKED | test:tests/feature-gate-integrity.test.mjs | 2: Client integrations: UNVERIFIED; Cross-platform qualification: UNVERIFIED |
+| security posture (derived) | 9F | PASS | smoke:security#6 | — |
 
 **3 of 6 gates block:** client compatibility, resilience, feature completeness.
 

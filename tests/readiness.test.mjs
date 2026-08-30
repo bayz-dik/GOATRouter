@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, "..");
 
 const readiness = await import(join(ROOT, "scripts/readiness.mjs"));
+const evidence = await import(join(ROOT, "scripts/evidence.mjs"));
 
 /**
  * Release readiness statement integrity — Phase 9L Task 6.
@@ -78,6 +79,38 @@ test("a BLOCKED gate states its reasons, and a PASS gate has none", async () => 
     } else {
       assert.deepEqual(row.reasons, [], `${row.label} is PASS but carries reasons: ${row.reasons.join("; ")}`);
     }
+  }
+});
+
+test("every gate verdict row cites resolvable evidence, so a PASS row is not a bare claim", async () => {
+  /*
+   * The regression this test exists for. The first generated statement rendered every gate row with
+   * `—` in the reasons cell and no citation anywhere, which made three `PASS` rows — 9J, 9K and the
+   * derived 9F — positive verdicts carrying no evidence at all. `tests/no-fabrication.test.mjs`'s
+   * repo-wide sweep caught them, and through it `scripts/offline-check.mjs` failed.
+   *
+   * Asserted here rather than left to the sweep because the sweep reports a *symptom* in a generated
+   * file, and the fix for a generated file is never in the file. This test fails on the generator,
+   * which is the only place the defect can be repaired.
+   *
+   * Every row is required to cite, not only the passing ones: the evidence a gate's verdict rests on
+   * is the same document and the same policy test whichever way the verdict came out, and a rule that
+   * only demanded citations from `PASS` rows would quietly stop applying the moment a row flipped.
+   */
+  const verdicts = await readiness.allVerdicts();
+  const text = statement();
+
+  for (const row of verdicts.rows) {
+    assert.ok(
+      typeof row.evidence === "string" && row.evidence.length > 0,
+      `the ${row.label} (${row.subprogram}) row carries no evidence citation — a verdict nobody can look up`,
+    );
+    const resolved = await evidence.resolveEvidence(row.evidence);
+    assert.ok(resolved.ok, `${row.label}: ${row.evidence} does not resolve — ${resolved.reason}`);
+    assert.ok(
+      text.includes(row.evidence),
+      `the statement's ${row.label} row does not render its ${row.evidence} citation`,
+    );
   }
 });
 
