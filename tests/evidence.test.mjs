@@ -10,6 +10,7 @@ const root = join(here, "..");
 
 const {
   EVIDENCE_RE,
+  emitsNumberedChecks,
   isSafeRepoPath,
   parseEvidence,
   readManifest,
@@ -228,20 +229,42 @@ test("a smoke script with no manifest resolves, but reports the weaker bound hon
 
 test("a smoke citation into a script that emits no numbered checks is refused", async () => {
   /*
-   * `proxy-ux-smoke.mjs` prints `ok <label>` with no number. `#n` cannot mean anything there, so
-   * accepting it would be accepting a number nobody could ever look up in the output.
+   * `#n` cannot mean anything in output that has no numbers, so accepting it would be accepting a
+   * number nobody could ever look up.
    *
-   * This is a live constraint, not a hypothetical: the 9L plan's own amendment table proposes
-   * `smoke:proxy-ux#N` for the free-only routing row. Under this rule that row cannot reach `PASS`
-   * by citation alone until the script is numbered, which is the honest outcome and is recorded in
-   * the plan rather than worked around here.
+   * The predicate is exercised against **fixture sources**, not a repository script. This test used
+   * to pin `scripts/proxy-ux-smoke.mjs`, which was unnumbered at the time — and 9L Task 2 then
+   * numbered it along with twelve siblings, precisely so their checks could be cited. A test whose
+   * subject the next task is expected to fix fails for the right reason at the wrong time. A fixture
+   * cannot be numbered out from under it, and it is written outside `scripts/` because 9J's
+   * portability scanner lists that directory concurrently and a vanishing file there made that scan
+   * die with ENOENT once already.
    */
-  const source = readFileSync(join(root, "scripts/proxy-ux-smoke.mjs"), "utf8");
-  assert.ok(!/checkNumber/.test(source), "proxy-ux-smoke has gained numbering; this test needs a new subject");
+  const dir = mkdtempSync(join(tmpdir(), "bayz-evidence-fixture-"));
+  try {
+    // Counts but never prints the number — the exact pre-Task-2 shape of thirteen smoke scripts.
+    const counting = join(dir, "counting.mjs");
+    writeFileSync(counting, "let checks = 0;\nchecks += 1;\nconsole.log(`  ok   ${label}`);\nconsole.log(`${checks} checks passed`);\n");
+    assert.equal(emitsNumberedChecks(counting), false, "a script that counts without printing the number was accepted");
 
-  const result = await resolveEvidence("smoke:proxy-ux#12");
-  assert.equal(result.ok, false, "a citation into an unnumbered script was accepted");
-  assert.match(result.reason, /emits no numbered checks/);
+    // Prints a number it never counted: the citation would resolve against a constant.
+    const literal = join(dir, "literal.mjs");
+    writeFileSync(literal, "console.log('  ok    7  a hardcoded number');\n");
+    assert.equal(emitsNumberedChecks(literal), false, "a script printing a literal number was accepted");
+
+    // Both halves present.
+    const numbered = join(dir, "numbered.mjs");
+    writeFileSync(numbered, "let checks = 0;\nchecks += 1;\nconsole.log(`  ok   ${String(checks).padStart(2)}  ${label}`);\n");
+    assert.equal(emitsNumberedChecks(numbered), true, "a genuinely numbered script was refused");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // And the real corpus: the scripts Task 2's rows cite must actually be numbered.
+  for (const script of ["proxy-ux", "storage", "api", "stream", "security", "usage", "identity", "injection"]) {
+    const result = await resolveEvidence(`smoke:${script}#3`);
+    assert.equal(result.ok, true, `smoke:${script}#3 — ${result.reason}`);
+  }
 });
 
 test("a smoke citation resolves through a script's helper modules, not only its entry point", async () => {

@@ -157,8 +157,13 @@ function scriptClosure(entry) {
  * template would accept a script that prints a literal number, and matching only the counter would
  * accept one that counts without ever showing the number — either way the cited `#n` would be
  * unlookupable in the output a reader actually sees.
+ *
+ * Exported so it can be tested against a fixture. It takes a path rather than a script name
+ * deliberately: the alternative was planting a fixture inside `scripts/`, which 9J's portability
+ * scanner lists and reads concurrently, and a file appearing and vanishing there made that scan die
+ * with `ENOENT` when 9I tried the same trick.
  */
-function emitsNumberedChecks(entry) {
+export function emitsNumberedChecks(entry) {
   return scriptClosure(entry).some((path) => {
     let source = "";
     try {
@@ -166,7 +171,9 @@ function emitsNumberedChecks(entry) {
     } catch {
       return false;
     }
-    return /checkNumber\s*(?:\+=|\+\+|=\s*0)/.test(source) && /\$\{String\(checkNumber\)|\$\{checkNumber\}/.test(source);
+    const counts = /checkNumber\s*(?:\+=|\+\+|=\s*0)/.test(source) || /\bchecks\s*\+=\s*1/.test(source);
+    const prints = /\$\{String\((?:checkNumber|checks)\)|\$\{checkNumber\}|\$\{checks\}\s{2}/.test(source);
+    return counts && prints;
   });
 }
 

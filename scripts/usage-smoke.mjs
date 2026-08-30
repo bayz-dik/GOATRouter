@@ -82,13 +82,22 @@ const stderrCapture = [];
 const failures = [];
 let checks = 0;
 
+/**
+ * Record one check, numbered.
+ *
+ * The number is what makes a citation resolvable: 9L Task 1's `resolveEvidence` refuses
+ * `smoke:<script>#<n>` against a script that prints no numbers, because `#n` cannot be looked up in
+ * output that has none — and 9L Task 2's feature inventory needs exactly that citation for the
+ * Phase 1-8 features this script proves. **Numbers are contractual: append checks, never insert
+ * one**, or every citation after the insertion point silently starts pointing at the wrong check.
+ */
 function check(label, condition) {
   checks += 1;
   if (condition) {
-    console.log(`  ok   ${label}`);
+    console.log(`  ok   ${String(checks).padStart(2)}  ${label}`);
   } else {
-    console.error(`  FAIL ${label}`);
-    failures.push(label);
+    console.error(`  FAIL ${String(checks).padStart(2)}  ${label}`);
+    failures.push(`#${checks} ${label}`);
   }
 }
 
