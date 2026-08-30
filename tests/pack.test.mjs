@@ -115,13 +115,20 @@ test("the tarball contents are exactly the intended set", () => {
    * conditionally; before 9K there was no file to ship, so the artifact declared `UNLICENSED`.
    * Redistribution under Apache-2.0 clause 4(a) requires the licence copy to travel with the
    * artifact, so this entry is a requirement rather than a convenience.
+   *
+   * The two `assets/index-*` names carry vite's content hash, so they move whenever the dashboard
+   * source does — and they are still written out literally rather than globbed, because deriving them
+   * from `apps/dashboard/dist` would make those two entries assert nothing. Re-pinned here for the
+   * Usage-screen shell integration (`Shell.tsx`, `src/usage/`, the widened `styles.css`), which is a
+   * source change and therefore a legitimate hash move; the count, the paths, and every other entry
+   * are unchanged. A re-pin that added or dropped a file would show up as a length change.
    */
   assert.deepEqual(files, [
     "package/LICENSE",
     "package/README.md",
     "package/dist/bayz.mjs",
-    "package/dist/dashboard/assets/index-B6wiUNeX.js",
-    "package/dist/dashboard/assets/index-VNKm-hop.css",
+    "package/dist/dashboard/assets/index-CG1SpnTD.css",
+    "package/dist/dashboard/assets/index-DNsUQghD.js",
     "package/dist/dashboard/index.html",
     "package/dist/server.mjs",
     "package/package.json",

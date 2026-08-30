@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 import { createTokenStore } from "../src/api/token";
@@ -284,8 +284,65 @@ describe("dashboard runtime guarantees", () => {
         },
       ]),
       listModels: vi.fn(async () => ["gpt-4o"]),
+      getUsageSummary: vi.fn(async () => ({
+        period: "today",
+        totalRequests: 3,
+        okRequests: 2,
+        failedRequests: 1,
+        promptTokens: 1200,
+        completionTokens: 340,
+        cachedTokens: 90,
+        tokenReports: 3,
+        averageLatencyMs: 410,
+        costAvailable: false,
+        costReason: "no_pricing_data",
+        retention: { requests: 5000, attempts: 20000 },
+      })),
+      listUsageProviders: vi.fn(async () => [
+        {
+          providerId: "p1",
+          displayName: "P1",
+          kind: "openai-compatible",
+          enabled: true,
+          credentialPresent: true,
+          attempts: 3,
+          failures: 1,
+          lastOutcome: "ok" as const,
+          lastFailureCategory: "timeout",
+          averageLatencyMs: 410,
+          // A hostile or buggy Core returning secrets on a usage row must not render.
+          credential: CREDENTIAL,
+          apiKey: CREDENTIAL,
+        } as never,
+      ]),
+      listUsageRequests: vi.fn(async () => [
+        {
+          requestId: "req_1",
+          occurredAt: new Date().toISOString(),
+          routeId: "r1",
+          providerId: "p1",
+          proxyId: null,
+          model: "gpt-4o",
+          routingMode: "direct",
+          outcome: "ok",
+          failureCategory: null,
+          latencyMs: 410,
+          attempts: 1,
+          promptTokens: 1200,
+          completionTokens: 340,
+          cachedTokens: 90,
+          // Content the router never stores. If it ever appeared, it must not render.
+          prompt: CREDENTIAL,
+          completion: PASSWORD,
+        } as never,
+      ]),
       ...overrides,
     } as unknown as ApiClient;
+  }
+
+  /** Visit one screen through the real navigation, exactly as an operator would. */
+  function goTo(label: string): void {
+    fireEvent.click(screen.getByRole("button", { name: label }));
   }
 
   it("renders no secret from any panel, even when the API returns one", async () => {
@@ -299,16 +356,30 @@ describe("dashboard runtime guarantees", () => {
       />,
     );
 
-    await screen.findByText("P1");
-    await screen.findByText("OpenCode");
-    const html = container.innerHTML;
-    expect(html).not.toContain(CREDENTIAL);
-    expect(html).not.toContain(PASSWORD);
-    expect(html).not.toContain(TOKEN);
-    // A client key smuggled into a list response must not reach the DOM either.
-    expect(html).not.toContain(CLIENT_KEY);
-    expect(html).not.toMatch(/[0-9a-f]{64}/);
-  });
+    /*
+     * Every screen is visited, because the panels no longer share one page: a scan of
+     * the home screen alone would report clean for the same reason a working one does.
+     */
+    for (const [label, marker] of [
+      ["Providers", "P1"],
+      ["Identities", "OpenCode"],
+      ["Proxies", "x1"],
+      ["Routes", "r1"],
+      ["Usage", "gpt-4o"],
+    ] as const) {
+      goTo(label);
+      await screen.findAllByText(new RegExp(marker, "i"));
+      const html = container.innerHTML;
+      expect(html, `${label} rendered a credential`).not.toContain(CREDENTIAL);
+      expect(html, `${label} rendered a password`).not.toContain(PASSWORD);
+      expect(html, `${label} rendered the API token`).not.toContain(TOKEN);
+      // A client key smuggled into a list response must not reach the DOM either.
+      expect(html, `${label} rendered a client key`).not.toContain(CLIENT_KEY);
+      expect(html, `${label} rendered a key-shaped literal`).not.toMatch(/[0-9a-f]{64}/);
+    }
+    // Six screens rendered in one test, each awaiting its own fetch: the default
+    // five-second budget is for a single render, not a whole tour.
+  }, 30_000);
 
   it("keeps the token out of the DOM while unlocked", async () => {
     const store = createTokenStore();
@@ -321,6 +392,7 @@ describe("dashboard runtime guarantees", () => {
       />,
     );
 
+    goTo("Providers");
     await screen.findByText("P1");
     expect(document.body.innerHTML).not.toContain(TOKEN);
   });
@@ -337,6 +409,7 @@ describe("dashboard runtime guarantees", () => {
       />,
     );
 
+    goTo("Providers");
     await screen.findByText("P1");
     expect(setItem).not.toHaveBeenCalled();
     expect(window.localStorage.length).toBe(0);
@@ -356,10 +429,28 @@ describe("dashboard runtime guarantees", () => {
     );
 
     expect(await screen.findByLabelText(/api token/i)).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Providers" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Proxies" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Routes" })).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Test chat" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Runtime" })).toBeNull();
+
+    /*
+     * Navigation must not be a way around the gate. Each screen is visited locked, and
+     * each must still present the token field and none of its panel headings — a screen
+     * reachable without a token would make the gate decorative.
+     */
+    for (const [label, heading] of [
+      ["Providers", "Providers"],
+      ["Proxies", "Proxies"],
+      ["Routes", "Routes"],
+      ["Identities", "Client identities"],
+      ["Chat", "Test chat"],
+      ["Usage", "Recent requests"],
+    ] as const) {
+      goTo(label);
+      expect(screen.getByLabelText(/api token/i), `${label} is not gated`).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: heading, level: 2 }),
+        `${label} rendered its panel while locked`,
+      ).toBeNull();
+    }
   });
 
   it("still reports Core liveness before unlocking", async () => {
@@ -404,11 +495,35 @@ describe("dashboard runtime guarantees", () => {
               updatedAt: "x",
             },
           ]) as never,
+          listUsageRequests: vi.fn(async () => [
+            {
+              requestId: "req_hostile",
+              occurredAt: new Date().toISOString(),
+              routeId: payload,
+              providerId: payload,
+              proxyId: null,
+              // Model, route, and failure category all reach the Usage table as text.
+              model: payload,
+              routingMode: payload,
+              outcome: "failed",
+              failureCategory: payload,
+              latencyMs: 12,
+              attempts: 2,
+              promptTokens: null,
+              completionTokens: null,
+              cachedTokens: null,
+            },
+          ]) as never,
         })}
       />,
     );
 
+    // Status on home, provider name on Providers, request metadata on Usage.
     await screen.findAllByText(payload);
+    for (const label of ["Providers", "Usage"] as const) {
+      goTo(label);
+      await screen.findAllByText(new RegExp("<img", "i"));
+    }
     expect(container.querySelector("img")).toBeNull();
     expect((window as unknown as Record<string, unknown>).__xssApp).toBeUndefined();
   });
@@ -424,7 +539,10 @@ describe("dashboard runtime guarantees", () => {
       />,
     );
 
-    await screen.findByText("P1");
+    // The relay stage lives on the Usage screen, which is where the approved reference
+    // puts it.
+    goTo("Usage");
+    await screen.findByText("Recent requests");
     const slot = container.querySelector("[data-bayz-flux-core-slot]");
     expect(slot).not.toBeNull();
     // This assertion previously required an EMPTY slot, which was the correct pin

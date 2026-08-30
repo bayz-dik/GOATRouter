@@ -1,0 +1,1065 @@
+html
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#050505"/>
+<title>BAYZ — Relay Track / Flux Core v2</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --black:#050505;--near:#171717;--dark:#2a2a2a;--mid:#707070;
+  --soft:#b8b8b8;--line:#d7d7d7;--field:#f1f1f1;--white:#fff;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--white);color:var(--black);font-family:Archivo,sans-serif;overflow-x:hidden}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+
+/* ================= BAYZ master shell ================= */
+.app{min-height:100dvh;background:var(--white);display:grid;grid-template-columns:1fr;overflow:hidden}
+.side-nav{display:none;background:var(--black);color:var(--white);height:100dvh;position:sticky;top:0}
+.brand{height:72px;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--dark)}
+.brand-mark{width:54px;height:34px;position:relative;flex:none}
+.brand-mark::before,.brand-mark::after{content:"";position:absolute;background:#fff;transform:skewX(-22deg)}
+.brand-mark::before{width:31px;height:10px;left:2px;top:5px}
+.brand-mark::after{width:42px;height:10px;left:9px;top:19px}
+.brand strong{font-family:"Archivo Black";font-size:22px;letter-spacing:-1.5px}
+.nav-stack{display:flex;flex-direction:column;padding:14px 10px;gap:2px}
+.nav-button{position:relative;min-height:54px;width:100%;border:0;background:transparent;color:var(--soft);display:flex;align-items:center;gap:13px;padding:0 14px;text-align:left;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;transition:background-color 140ms,color 140ms}
+.nav-button:hover:not(:disabled){background:var(--near);color:var(--white)}
+.nav-button.active{background:var(--white);color:var(--black)}
+.nav-button.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--black);border:1px solid var(--white)}
+.nav-button:disabled{cursor:default;opacity:.55}
+.nav-icon{font-family:"IBM Plex Mono";width:22px;text-align:center;font-weight:600}
+.side-foot{position:absolute;left:20px;right:20px;bottom:22px;border-top:1px solid var(--dark);padding-top:14px;font-family:"IBM Plex Mono";font-size:10px;line-height:1.6;color:var(--soft)}
+.mobile-head{height:56px;background:var(--black);color:var(--white);display:flex;align-items:center;justify-content:space-between;padding:0 14px;position:sticky;top:0;z-index:30}
+.mobile-brand{display:flex;align-items:center;gap:9px}
+.mobile-brand .brand-mark{transform:scale(.72);transform-origin:left center;width:40px}
+.mobile-brand strong{font-family:"Archivo Black";font-size:19px;letter-spacing:-1.3px}
+.preview-tag{font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.12em;color:#aaa}
+.main{height:calc(100dvh - 56px);overflow:auto;background:var(--white)}
+
+/* ================= usage screen (master system) ================= */
+.screen{padding:16px 14px 28px}
+.screen-header{border-bottom:4px solid var(--black);padding-bottom:12px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+.kicker{margin:0 0 5px;font-family:"IBM Plex Mono";font-size:10px;font-weight:500;letter-spacing:.12em;text-transform:uppercase;color:var(--mid)}
+.screen-title{margin:0;font-family:"Archivo Black";font-size:clamp(34px,7vw,68px);line-height:.88;letter-spacing:-.065em;text-transform:uppercase}
+.header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.tag{min-height:32px;border:1px solid var(--black);padding:0 10px;display:inline-flex;align-items:center;font-family:"IBM Plex Mono";font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;background:var(--white)}
+.periods{display:flex;border:1px solid var(--black);overflow:auto;max-width:100%}
+.period-button{min-width:54px;min-height:46px;border:0;border-right:1px solid var(--black);background:var(--white);font-family:"IBM Plex Mono";font-size:10px;font-weight:600;text-transform:uppercase}
+.period-button:last-child{border-right:0}
+.period-button.active{background:var(--black);color:var(--white)}
+.score-strip{margin-top:14px;border-top:2px solid var(--black);border-bottom:2px solid var(--black);display:grid;grid-auto-flow:column;grid-auto-columns:minmax(144px,1fr);overflow-x:auto;scroll-snap-type:x mandatory}
+.score{min-height:94px;padding:13px 12px;border-right:1px solid var(--black);scroll-snap-align:start}
+.score:last-child{border-right:0}
+.score-label{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.score-value{margin-top:8px;font-family:"Archivo Black";font-size:25px;line-height:1;letter-spacing:-.045em}
+.score-note{margin-top:6px;font-family:"IBM Plex Mono";font-size:9px;color:var(--mid)}
+.usage-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:14px}
+.panel{border:1px solid var(--black);background:var(--white)}
+.panel-head{min-height:52px;border-bottom:1px solid var(--black);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.panel-head h2{margin:0;font-family:"Archivo Black";font-size:18px;letter-spacing:-.04em;text-transform:uppercase}
+.panel-meta{font-family:"IBM Plex Mono";font-size:9px;text-transform:uppercase;color:var(--mid)}
+.head-actions{display:flex;gap:8px;align-items:center}
+.button{min-height:44px;border:1px solid var(--black);background:var(--white);color:var(--black);padding:0 13px;display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:800;text-transform:uppercase;transition:background-color 140ms,color 140ms,transform 100ms}
+.button:hover:not(:disabled),.button.primary{background:var(--black);color:var(--white)}
+.button:active:not(:disabled){transform:scale(.98)}
+.button:disabled{opacity:.45;cursor:default}
+.button.small{min-height:36px;padding:0 11px;font-size:10px}
+
+.table-wrap{overflow:auto;max-height:410px}
+.usage-table{width:100%;border-collapse:collapse;min-width:650px;font-size:12px}
+.usage-table th{height:38px;padding:0 10px;text-align:left;border-bottom:2px solid var(--black);font-size:9px;text-transform:uppercase;letter-spacing:.07em}
+.usage-table td{height:45px;padding:0 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.usage-table tbody tr:hover{background:var(--field)}
+.mono{font-family:"IBM Plex Mono"}
+.status{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;text-transform:uppercase}
+.status::before{content:"";width:8px;height:8px;background:var(--black)}
+.state-square{display:inline-block;width:9px;height:9px;background:var(--black);margin-right:6px}
+.state-hatch{position:relative;display:inline-block;width:10px;height:10px;margin-right:6px;border:1px solid var(--black);background:var(--white);overflow:hidden;vertical-align:middle}
+.state-hatch::before,.state-hatch::after{content:'';position:absolute;width:1px;height:16px;background:var(--black);transform:rotate(45deg);top:-4px}
+.state-hatch::before{left:3px}.state-hatch::after{left:7px}
+
+.chart-panel{margin-top:14px}
+.chart-body{height:210px;padding:12px;position:relative}
+.chart-svg{width:100%;height:100%}
+.chart-line{fill:none;stroke:var(--black);stroke-width:4}
+.chart-grid{stroke:var(--line);stroke-width:1}
+.chart-bar{fill:var(--black)}
+
+/* ================= relay stage ================= */
+.stage-zone{position:relative}
+.relay-wrap{position:relative;height:500px;background:#040404;overflow:hidden;isolation:isolate}
+#flux{position:absolute;inset:0;width:100%;height:100%;z-index:2;display:block}
+.flux-vignette{position:absolute;inset:0;z-index:3;pointer-events:none;box-shadow:inset 0 0 130px #000}
+
+.core-copy{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;color:#fff;text-align:center;pointer-events:none;text-shadow:0 0 16px #000,0 0 38px #000}
+.core-copy strong{display:block;font-family:"Archivo Black";font-size:clamp(30px,8vw,54px);letter-spacing:-.06em;line-height:.88}
+.core-copy span{display:block;margin-top:7px;font-family:"IBM Plex Mono";font-size:9px;letter-spacing:.22em;color:#d9d9d9}
+.core-copy em{display:block;width:76px;height:2px;background:#fff;margin:10px auto 0}
+.core-copy small{display:block;margin-top:8px;font-family:"IBM Plex Mono";font-size:7.5px;letter-spacing:.16em;color:#8f8f8f}
+
+.provider{position:absolute;z-index:7;transform:translate(-50%,-50%);width:148px;min-height:52px;background:#050505;color:#fff;border:1px solid #fff;padding:9px 11px;text-align:left;transition:opacity 200ms,border-color 200ms,transform 160ms}
+.provider:hover{transform:translate(-50%,-50%) translateY(-2px)}
+.provider b{display:block;font-family:"IBM Plex Mono";font-size:10px;line-height:1.15}
+.provider small{display:flex;align-items:center;gap:5px;margin-top:5px;font-family:"IBM Plex Mono";font-size:7.5px;letter-spacing:.09em;color:#949494}
+.pdot{width:6px;height:6px;background:#fff;box-shadow:0 0 9px #fff;flex:none;animation:dotPulse 1.7s ease-in-out infinite}
+@keyframes dotPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.provider[data-state="off"]{opacity:.30;border-color:#4a4a4a}
+.provider[data-state="off"] .pdot{display:none}
+.provider[data-state="off"] .pstate{color:#777}
+.provider[data-state="degraded"]{opacity:.78;border-color:#8a8a8a}
+.provider[data-state="degraded"] .pdot{background:transparent;border:1px solid #fff;box-shadow:none;animation:none}
+.provider[data-state="wake"]{animation:wakePulse .85s ease-out 2}
+@keyframes wakePulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.55)}100%{box-shadow:0 0 0 9px rgba(255,255,255,0)}}
+.provider.deny{animation:deny .3s ease}
+@keyframes deny{0%,100%{transform:translate(-50%,-50%)}30%{transform:translate(calc(-50% - 4px),-50%)}70%{transform:translate(calc(-50% + 4px),-50%)}}
+
+.p1{left:17%;top:18%}.p2{left:83%;top:18%}.p3{left:11%;top:52%}.p4{left:89%;top:52%}.p5{left:50%;top:87%}
+
+.stage-hud{position:absolute;left:12px;right:12px;bottom:12px;z-index:8;display:flex;justify-content:space-between;gap:10px;pointer-events:none;flex-wrap:wrap}
+.hud-group{pointer-events:auto;display:flex;align-items:center;border:1px solid #fff;background:#050505;color:#fff}
+.hud-label{padding:0 10px;font-family:"IBM Plex Mono";font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:#8f8f8f}
+.hud-btn{min-width:38px;height:38px;border:0;border-left:1px solid #fff;background:#050505;color:#fff;font-family:"IBM Plex Mono";font-size:10px;font-weight:600;text-transform:uppercase;transition:background-color 120ms,color 120ms}
+.hud-btn:hover{background:#222}
+.hud-btn.active{background:#fff;color:#050505}
+
+.legend{border-top:1px solid var(--black);display:grid;grid-template-columns:repeat(3,1fr)}
+.legend div{padding:10px;border-right:1px solid var(--black);font-size:10px}
+.legend div:last-child{border-right:0}
+.legend b{display:block;font-family:"IBM Plex Mono";font-size:9px;margin-bottom:3px}
+
+.live-activity{display:grid}
+.live-row{min-height:46px;display:grid;grid-template-columns:10px 1fr auto;gap:9px;align-items:center;border-bottom:1px solid var(--line);padding:0 12px;font-size:10px}
+.live-row:last-child{border-bottom:0}
+.live-dot{width:7px;height:7px;background:#050505}
+.live-row b{font-weight:600}
+.live-row span{font-family:"IBM Plex Mono";font-size:9px;color:var(--mid)}
+.load-meter{padding:14px 12px;border-top:1px solid var(--line)}
+.load-meter header{display:flex;justify-content:space-between;font-family:"IBM Plex Mono";font-size:9px;margin-bottom:8px}
+.load-track{height:8px;border:1px solid #050505;background:#fff;overflow:hidden}
+.load-fill{height:100%;width:61%;background:#050505;transition:width 300ms}
+
+/* ================= responsive ================= */
+@media(min-width:640px){
+  .app{grid-template-columns:84px 1fr}
+  .side-nav{display:block}
+  .brand{padding:0;justify-content:center}
+  .brand strong,.nav-label,.side-foot{display:none}
+  .brand-mark{width:48px}
+  .nav-stack{padding:12px 8px}
+  .nav-button{justify-content:center;padding:0}
+  .nav-button.active::before{width:4px}
+  .mobile-head{display:none}
+  .main{height:100dvh}
+  .screen{padding:22px 24px 42px}
+  .score-strip{grid-auto-flow:initial;grid-template-columns:repeat(5,1fr);overflow:visible}
+  .score{min-height:104px}
+  .relay-wrap{height:520px}
+}
+@media(min-width:1024px){
+  .app{grid-template-columns:224px 1fr}
+  .brand{justify-content:flex-start;padding:0 20px}
+  .brand strong,.nav-label,.side-foot{display:block}
+  .nav-stack{padding:14px 10px}
+  .nav-button{justify-content:flex-start;padding:0 14px}
+  .screen{padding:26px 32px 56px;max-width:1700px;margin:0 auto}
+  .usage-grid{grid-template-columns:minmax(0,1.45fr) minmax(420px,.85fr)}
+  .relay-wrap{height:560px}
+  .chart-body{height:270px}
+  .score-value{font-size:32px}
+  .panel-head h2{font-size:21px}
+}
+@media(min-width:1800px){
+  .screen{max-width:none;padding:34px 44px 70px}
+  .usage-grid{grid-template-columns:minmax(0,1.7fr) minmax(560px,.8fr);gap:20px}
+  .relay-wrap{height:640px}
+  .score-value{font-size:40px}
+  .panel-head h2{font-size:26px}
+  .usage-table{font-size:14px}
+}
+@media(max-width:639px){
+  .provider{width:106px;padding:8px 9px}
+  .provider b{font-size:8px}
+  .provider small{font-size:6.5px;letter-spacing:.05em}
+  .p1{left:21%;top:13%}.p2{left:79%;top:13%}.p3{left:10%;top:47%}.p4{left:90%;top:47%}.p5{left:50%;top:81%}
+  .stage-hud{position:static;margin-top:10px;justify-content:center}
+  .hud-label{display:none}
+  .hud-group:first-child .hud-btn{border-left:0}
+  .core-copy strong{font-size:clamp(26px,9vw,40px)}
+}
+@media(prefers-reduced-motion:reduce){
+  .pdot{animation:none}
+  .provider,.button,.hud-btn{transition:none}
+  .provider[data-state="wake"]{animation:none}
+  .provider.deny{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ======== side navigation ======== -->
+  <aside class="side-nav" aria-label="Navigasi BAYZ">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"></div><strong>BAYZ</strong></div>
+    <div class="nav-stack">
+      <button class="nav-button" disabled title="Preview ini fokus ke Usage"><span class="nav-icon">&#8962;</span><span class="nav-label">Home</span></button>
+      <button class="nav-button" disabled title="Preview ini fokus ke Usage"><span class="nav-icon">&#8599;</span><span class="nav-label">Routes</span></button>
+      <button class="nav-button" disabled title="Preview ini fokus ke Usage"><span class="nav-icon">&#9638;</span><span class="nav-label">Providers</span></button>
+      <button class="nav-button active" aria-current="page"><span class="nav-icon">&#8967;</span><span class="nav-label">Usage</span></button>
+      <button class="nav-button" disabled title="Preview ini fokus ke Usage"><span class="nav-icon">&#9881;</span><span class="nav-label">Settings</span></button>
+    </div>
+    <div class="side-foot">LOCAL ROUTER<br>localhost:20128/v1<br>RELAY TRACK / FLUX CORE V2</div>
+  </aside>
+
+  <div>
+    <header class="mobile-head">
+      <div class="mobile-brand"><div class="brand-mark" aria-hidden="true"></div><strong>BAYZ</strong></div>
+      <span class="preview-tag">USAGE / FLUX CORE V2</span>
+    </header>
+
+    <main class="main">
+      <section class="screen">
+
+        <div class="screen-header">
+          <div><p class="kicker">Request performance</p><h1 class="screen-title">USAGE.</h1></div>
+          <div class="header-actions">
+            <span class="tag">Demo data</span>
+            <div class="periods" role="tablist" aria-label="Rentang waktu">
+              <button class="period-button active" role="tab" aria-selected="true" data-period="Today">Today</button>
+              <button class="period-button" role="tab" aria-selected="false" data-period="24H">24H</button>
+              <button class="period-button" role="tab" aria-selected="false" data-period="7D">7D</button>
+              <button class="period-button" role="tab" aria-selected="false" data-period="30D">30D</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="score-strip" aria-label="Ringkasan penggunaan demo">
+          <div class="score"><div class="score-label">Total requests</div><div class="score-value" id="mRequests">128</div><div class="score-note">DEMO DATA</div></div>
+          <div class="score"><div class="score-label">Input tokens</div><div class="score-value" id="mInput">184K</div><div class="score-note">DEMO DATA</div></div>
+          <div class="score"><div class="score-label">Output tokens</div><div class="score-value" id="mOutput">36K</div><div class="score-note">DEMO DATA</div></div>
+          <div class="score"><div class="score-label">Cached tokens</div><div class="score-value" id="mCached">71K</div><div class="score-note">DEMO DATA</div></div>
+          <div class="score"><div class="score-label">Est. cost</div><div class="score-value">$0.00</div><div class="score-note">NOT ACTUAL BILLING</div></div>
+        </div>
+
+        <div class="usage-grid">
+
+          <!-- ======== relay usage track ======== -->
+          <section class="panel" aria-labelledby="relay-title">
+            <div class="panel-head">
+              <div>
+                <h2 id="relay-title">Relay usage track</h2>
+                <div class="panel-meta" id="trackMeta">PROVIDER &#8594; BAYZ &#8594; MODEL / SIM &#183; LIVE</div>
+              </div>
+              <div class="head-actions">
+                <button id="drillBtn" class="button small" type="button">Failover drill</button>
+                <button id="pauseBtn" class="button small" type="button" aria-pressed="false">Pause</button>
+              </div>
+            </div>
+
+            <div class="stage-zone">
+              <div class="relay-wrap" id="relayWrap" role="img"
+                   aria-label="Bayz relay visualization. Live routing simulation.">
+                <canvas id="flux"></canvas>
+                <div class="flux-vignette" aria-hidden="true"></div>
+
+                <div class="core-copy" aria-hidden="true">
+                  <strong>BAYZ</strong>
+                  <span id="modeLine">COMBO ROUTING</span>
+                  <em></em>
+                  <small id="statLine">5 PROVIDERS / ROUTED 128</small>
+                </div>
+
+                <button class="provider p1" type="button" data-i="0" data-state="active" aria-pressed="true">
+                  <b>OPENROUTER</b><small><i class="pdot"></i><span class="pshare">31%</span>&nbsp;/&nbsp;<span class="pstate">ACTIVE</span></small>
+                </button>
+                <button class="provider p2" type="button" data-i="1" data-state="active" aria-pressed="true">
+                  <b>GEMINI</b><small><i class="pdot"></i><span class="pshare">18%</span>&nbsp;/&nbsp;<span class="pstate">ACTIVE</span></small>
+                </button>
+                <button class="provider p3" type="button" data-i="2" data-state="active" aria-pressed="true">
+                  <b>CODEX</b><small><i class="pdot"></i><span class="pshare">27%</span>&nbsp;/&nbsp;<span class="pstate">ACTIVE</span></small>
+                </button>
+                <button class="provider p4" type="button" data-i="3" data-state="active" aria-pressed="true">
+                  <b>TABITOKEN</b><small><i class="pdot"></i><span class="pshare">24%</span>&nbsp;/&nbsp;<span class="pstate">ACTIVE</span></small>
+                </button>
+                <button class="provider p5" type="button" data-i="4" data-state="active" aria-pressed="true">
+                  <b>CUSTOM</b><small><i class="pdot"></i><span class="pshare">16%</span>&nbsp;/&nbsp;<span class="pstate">ACTIVE</span></small>
+                </button>
+
+                <div class="stage-hud">
+                  <div class="hud-group" role="group" aria-label="Jumlah provider aktif">
+                    <span class="hud-label">Providers</span>
+                    <button class="hud-btn" type="button" data-count="1" aria-pressed="false">1</button>
+                    <button class="hud-btn" type="button" data-count="2" aria-pressed="false">2</button>
+                    <button class="hud-btn" type="button" data-count="3" aria-pressed="false">3</button>
+                    <button class="hud-btn" type="button" data-count="4" aria-pressed="false">4</button>
+                    <button class="hud-btn active" type="button" data-count="5" aria-pressed="true">5</button>
+                  </div>
+                  <div class="hud-group" role="group" aria-label="Tempo animasi">
+                    <span class="hud-label">Tempo</span>
+                    <button class="hud-btn" type="button" data-tempo="calm" aria-pressed="false">Calm</button>
+                    <button class="hud-btn active" type="button" data-tempo="live" aria-pressed="true">Live</button>
+                    <button class="hud-btn" type="button" data-tempo="surge" aria-pressed="false">Surge</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="legend">
+                <div><b>01 / SOURCE</b><span class="state-square"></span>Provider route</div>
+                <div><b>02 / HANDOFF</b><span class="state-square"></span>Braided traffic</div>
+                <div><b>03 / IMPACT</b><span class="state-square"></span>Packet into core</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ======== recent + live ======== -->
+          <section class="panel" aria-labelledby="recent-title">
+            <div class="panel-head">
+              <div><h2 id="recent-title">Recent requests</h2><div class="panel-meta">Preview rows / demo data</div></div>
+            </div>
+            <div class="table-wrap">
+              <table class="usage-table">
+                <thead><tr><th>Model</th><th>Route</th><th>In / Out</th><th>Status</th><th>When</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">gpt-5.6-sol</td><td class="mono">Gemini</td><td class="mono">18.4K / 326</td><td><span class="status">OK</span></td><td class="mono">18s</td></tr>
+                  <tr><td class="mono">claude-opus</td><td class="mono">OpenRouter</td><td class="mono">12.9K / 241</td><td><span class="status">OK</span></td><td class="mono">42s</td></tr>
+                  <tr><td class="mono">openai-codex</td><td class="mono">OAuth</td><td class="mono">14.2K / 302</td><td><span class="status">OK</span></td><td class="mono">1m</td></tr>
+                  <tr><td class="mono">custom-model</td><td class="mono">Tabitoken</td><td class="mono">8.1K / 188</td><td><span><span class="state-hatch"></span>RETRY</span></td><td class="mono">2m</td></tr>
+                  <tr><td class="mono">gpt-5.6-sol</td><td class="mono">Gemini</td><td class="mono">9.7K / 154</td><td><span class="status">OK</span></td><td class="mono">3m</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-head" style="border-top:1px solid #050505">
+              <div><h2 style="font-size:15px">Live activity</h2><div class="panel-meta">Simulation events</div></div>
+            </div>
+            <div class="live-activity" id="activity"></div>
+            <div class="load-meter">
+              <header><span>NETWORK LOAD</span><strong id="loadText">61%</strong></header>
+              <div class="load-track"><div class="load-fill" id="loadFill"></div></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel chart-panel" aria-labelledby="chart-title">
+          <div class="panel-head">
+            <div><h2 id="chart-title">Token pace</h2><div class="panel-meta" id="periodLabel">Selected period / Today</div></div>
+            <span class="tag">Input + output</span>
+          </div>
+          <div class="chart-body">
+            <svg class="chart-svg" viewBox="0 0 1200 240" preserveAspectRatio="none" aria-hidden="true">
+              <path class="chart-grid" d="M0 40H1200M0 100H1200M0 160H1200M0 220H1200"/>
+              <path class="chart-line" d="M0 198 L120 176 L240 184 L360 128 L480 148 L600 88 L720 106 L840 42 L960 74 L1080 34 L1200 56"/>
+              <rect class="chart-bar" x="90" y="183" width="18" height="37"/><rect class="chart-bar" x="330" y="151" width="18" height="69"/>
+              <rect class="chart-bar" x="570" y="122" width="18" height="98"/><rect class="chart-bar" x="810" y="82" width="18" height="138"/>
+              <rect class="chart-bar" x="1050" y="69" width="18" height="151"/>
+            </svg>
+          </div>
+        </section>
+
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================================================
+   BAYZ RELAY TRACK / FLUX CORE V2
+   Canvas 2D engine — monochrome, additive, zero-allocation loop
+   ============================================================ */
+
+/* ---------- utils ---------- */
+const TAU = Math.PI * 2;
+const clamp = (v,a,b)=> v<a?a:(v>b?b:v);
+const smooth = (c,t,dt,tau)=> c+(t-c)*(1-Math.exp(-dt/tau));
+const AC = []; // quantized alpha-string cache: no per-frame string garbage
+const al = a => {
+  a = a<0?0:(a>1?1:a);
+  const i = (a*80)|0;
+  return AC[i] || (AC[i] = 'rgba(255,255,255,'+(i/80).toFixed(3)+')');
+};
+
+/* ---------- dom ---------- */
+const $ = s => document.querySelector(s);
+const canvas = $('#flux');
+const ctx = canvas.getContext('2d',{alpha:false});
+const wrap = $('#relayWrap');
+const chips = [...document.querySelectorAll('.provider')];
+const countBtns = [...document.querySelectorAll('[data-count]')];
+const tempoBtns = [...document.querySelectorAll('[data-tempo]')];
+const drillBtn = $('#drillBtn'), pauseBtn = $('#pauseBtn');
+const modeLine = $('#modeLine'), statLine = $('#statLine'), trackMeta = $('#trackMeta');
+const loadFill = $('#loadFill'), loadText = $('#loadText');
+const feed = $('#activity');
+
+/* ---------- config ---------- */
+const NAMES  = ['OPENROUTER','GEMINI','CODEX','TABITOKEN','CUSTOM'];
+const SHARE  = [31,18,27,24,16];
+const TEMPO  = {
+  calm : { sp:0.50, en:0.36, den:0.55 },
+  live : { sp:1.00, en:0.74, den:0.95 },
+  surge: { sp:1.62, en:1.15, den:1.00 }
+};
+
+/* ---------- state ---------- */
+const S = {
+  tempo:'live',
+  reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  speed:1, energy:0.74, kick:0, surge:0,
+  act:[true,true,true,true,true],
+  tgt:[1,1,1,1,1],
+  tint:[1,1,1,1,1],
+  drill:null,
+  req:128,
+  beat:0
+};
+const CHIP_ST = ['active','active','active','active','active'];
+
+/* ---------- geometry ---------- */
+let W=0, H=0, dpr=1, mobile=false, cxr=0, cyr=0, RAD=100;
+
+/* point shells: typed arrays, allocated once */
+function shell(n){
+  const ux=new Float32Array(n), uy=new Float32Array(n),
+        uz=new Float32Array(n), sd=new Float32Array(n);
+  const ga = Math.PI*(3-Math.sqrt(5));
+  for(let i=0;i<n;i++){
+    const y = 1-(i/(n-1))*2, r = Math.sqrt(Math.max(0,1-y*y)), th = ga*i;
+    ux[i]=Math.cos(th)*r; uy[i]=y; uz[i]=Math.sin(th)*r;
+    sd[i]=(i*0.61803398875)%1;
+  }
+  return {ux,uy,uz,sd};
+}
+const SH_OUT = shell(720), SH_IN = shell(280);
+
+/* reactor heart: dense deterministic nucleus */
+const HN=110, HX=new Float32Array(HN), HY=new Float32Array(HN), HZ=new Float32Array(HN);
+{
+  let s=42;
+  const rnd=()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+  for(let i=0;i<HN;i++){
+    const z=rnd()*2-1, a=rnd()*TAU, r=Math.sqrt(Math.max(0,1-z*z)), rad=Math.cbrt(rnd());
+    HX[i]=r*Math.cos(a)*rad; HY[i]=z*rad; HZ[i]=r*Math.sin(a)*rad;
+  }
+}
+
+/* fx pools — bounded, reused forever */
+const WAVES = Array.from({length:8},()=>({on:false,q:9,amp:0,x:0,y:1,z:0}));
+const DENTS = Array.from({length:6},()=>({age:99,amp:0,x:0,y:1,z:0}));
+const FLASH = Array.from({length:6},()=>({on:false,age:0,x:0,y:0}));
+let wCur=0;
+function fireWave(x,y,z,amp){
+  const w=WAVES[wCur]; wCur=(wCur+1)%WAVES.length;
+  w.on=true; w.q=0; w.amp=amp; w.x=x; w.y=y; w.z=z;
+}
+function fireDent(x,y,z,amp){
+  let bi=0, ba=-1;
+  for(let k=0;k<DENTS.length;k++){ if(DENTS[k].age>ba){ba=DENTS[k].age;bi=k;} }
+  const d=DENTS[bi]; d.age=0; d.amp=amp; d.x=x; d.y=y; d.z=z;
+}
+
+/* per-provider filament record */
+const FIL = NAMES.map((_,i)=>({
+  i, ex:0,ey:0, ax:0,ay:0, dx:0,dy:1, wx:0,wy:0,wz:1,
+  bend:(i%2?-1:1), ph:i*1.7,
+  pk:[{u:0,w:1,on:false,delay:0},{u:0,w:1,on:false,delay:0},{u:0,w:1,on:false,delay:0}]
+}));
+
+function activeCount(){ let n=0; for(let i=0;i<5;i++) if(S.act[i]) n++; return n; }
+function shareOf(i){
+  let tot=0; for(let k=0;k<5;k++) if(S.act[k]) tot+=SHARE[k];
+  return tot? Math.round(SHARE[i]/tot*100) : 0;
+}
+
+function layout(){
+  const rc = wrap.getBoundingClientRect();
+  W=Math.max(1,rc.width); H=Math.max(1,rc.height);
+  mobile = W<640;
+  dpr = clamp(window.devicePixelRatio||1,1,2);
+  canvas.width=Math.round(W*dpr); canvas.height=Math.round(H*dpr);
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  cxr=W/2; cyr=H/2;
+  RAD=Math.min(W,H)*(mobile?0.235:0.245);
+  chips.forEach((el,i)=>{
+    const r=el.getBoundingClientRect(), f=FIL[i];
+    const ecx=r.left-rc.left+r.width/2, ecy=r.top-rc.top+r.height/2;
+    let vx=ecx-cxr, vy=ecy-cyr;
+    const vl=Math.hypot(vx,vy)||1; vx/=vl; vy/=vl;
+    const pull=mobile?36:48;
+    f.ex=ecx-vx*pull; f.ey=ecy-vy*pull;
+    f.ax=cxr+vx*RAD*0.985; f.ay=cyr+vy*RAD*0.985;
+    const dx=f.ax-f.ex, dy=f.ay-f.ey, dl=Math.hypot(dx,dy)||1;
+    f.dx=dx/dl; f.dy=dy/dl;
+    const nl=Math.sqrt(vx*vx+vy*vy+0.42*0.42);   // 3D impact direction (front-biased)
+    f.wx=vx/nl; f.wy=vy/nl; f.wz=0.42/nl;
+  });
+  poke();
+}
+let roQ=false;
+new ResizeObserver(()=>{ if(roQ)return; roQ=true; requestAnimationFrame(()=>{roQ=false;layout();}); }).observe(wrap);
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+
+/* ---------- bezier helpers ---------- */
+function bezP(a,c1,c2,b,u){ const v=1-u; return v*v*v*a+3*v*v*u*c1+3*v*u*u*c2+u*u*u*b; }
+const TK={nx:0,ny:0};
+function tanAt(ax,ay,c1x,c1y,c2x,c2y,bx,by,u){
+  const v=1-u;
+  const dx=3*v*v*(c1x-ax)+6*v*u*(c2x-c1x)+3*u*u*(bx-c2x);
+  const dy=3*v*v*(c1y-ay)+6*v*u*(c2y-c1y)+3*u*u*(by-c2y);
+  const dl=Math.hypot(dx,dy)||1;
+  TK.nx=-dy/dl; TK.ny=dx/dl;
+}
+
+/* ============================================================
+   SIMULATION STEP
+   ============================================================ */
+function step(dt){
+  const T=TEMPO[S.tempo];
+  S.surge=Math.max(0,S.surge-dt*0.45);
+  S.kick =Math.max(0,S.kick -dt*1.40);
+  S.speed=smooth(S.speed,T.sp,dt,0.5);
+  S.energy=smooth(S.energy,clamp(T.en+S.surge*0.4+S.kick,0.2,1.5),dt,0.6);
+
+  for(let i=0;i<5;i++) S.tint[i]=smooth(S.tint[i],S.act[i]?S.tgt[i]:0,dt,0.45);
+
+  for(let k=0;k<WAVES.length;k++){
+    const w=WAVES[k]; if(!w.on)continue;
+    w.q+=dt*S.speed*1.55;
+    if(w.q>2.35)w.on=false;
+  }
+  for(let k=0;k<DENTS.length;k++) DENTS[k].age+=dt;
+  for(let k=0;k<FLASH.length;k++){
+    const f=FLASH[k]; if(!f.on)continue;
+    f.age+=dt; if(f.age>0.5)f.on=false;
+  }
+
+  /* shared beat — combo coordination comes from this one clock */
+  S.beat+=dt*S.speed;
+  if(S.beat>=1.45){ S.beat-=1.45; onBeat(); }
+
+  /* packet physics: accelerate toward the core */
+  for(let i=0;i<5;i++){
+    const f=FIL[i], ti=S.tint[i];
+    for(let k=0;k<3;k++){
+      const p=f.pk[k]; if(!p.on)continue;
+      if(p.delay>0){ p.delay-=dt; continue; }
+      p.u+=dt*S.speed*(0.16+0.6*p.u*p.u)*(0.55+0.65*ti);
+      if(p.u>=1){ p.on=false; arrive(f,p); }
+    }
+  }
+}
+
+function onBeat(){
+  const den=TEMPO[S.tempo].den;
+  for(let i=0;i<5;i++){
+    if(!S.act[i]||S.tgt[i]<0.2)continue;
+    if(Math.random()<den*(0.55+0.5*S.tgt[i]))
+      spawn(FIL[i], i*0.04, 0.7+Math.random()*0.6);
+  }
+}
+function spawn(f,delay,w){
+  for(let k=0;k<3;k++){
+    const p=f.pk[k];
+    if(!p.on){ p.on=true; p.u=0; p.w=w; p.delay=delay; return; }
+  }
+}
+function arrive(f,p){
+  const combo=1+0.05*(activeCount()-1);
+  fireWave(f.wx,f.wy,f.wz,(0.35+p.w*0.55)*combo);
+  fireDent(f.wx,f.wy,f.wz,0.4+p.w*0.5);
+  for(let k=0;k<FLASH.length;k++){
+    const fl=FLASH[k];
+    if(!fl.on){ fl.on=true; fl.age=0; fl.x=f.ax; fl.y=f.ay; break; }
+  }
+  S.kick=Math.min(0.6,S.kick+0.07*p.w);
+  S.req++;
+}
+
+/* ============================================================
+   RENDER SUBSYSTEMS
+   ============================================================ */
+const P1={x:0,y:0}, P2={x:0,y:0};
+function ptOnRing(ph,rad,cS,sS,cT,sT,o){
+  const x=Math.cos(ph)*rad, z=Math.sin(ph)*rad;
+  o.x=cxr+(x*cS+z*sS);
+  o.y=cyr+(-( -x*sS+z*cS )*sT); /* rotY then rotX on (x,0,z) */
+}
+
+function ring(rad,tilt,spin,alpha,ticks){
+  const cT=Math.cos(tilt), sT=Math.sin(tilt), cS=Math.cos(spin), sS=Math.sin(spin);
+  ctx.strokeStyle=al(alpha); ctx.lineWidth=1;
+  ctx.beginPath();
+  const SEG=64;
+  for(let i=0;i<=SEG;i++){
+    ptOnRing(i/SEG*TAU,rad,cS,sS,cT,sT,P1);
+    i?ctx.lineTo(P1.x,P1.y):ctx.moveTo(P1.x,P1.y);
+  }
+  ctx.stroke();
+  if(ticks){
+    ctx.strokeStyle=al(alpha+0.05);
+    ctx.beginPath();
+    for(let k=0;k<48;k++){
+      const ph=k/48*TAU, len=(k%4===0)?rad*0.035:rad*0.016;
+      ptOnRing(ph,rad,cS,sS,cT,sT,P1);
+      ptOnRing(ph,rad+len,cS,sS,cT,sT,P2);
+      ctx.moveTo(P1.x,P1.y); ctx.lineTo(P2.x,P2.y);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawShell(sh,n,ry,tilt,rad,aMul,en,isMain){
+  const cR=Math.cos(ry), sR=Math.sin(ry), cT=Math.cos(tilt), sT=Math.sin(tilt);
+  const wobA=0.02+en*0.022, breath=0.010+en*0.008, bw=performance.now()*0.0011*S.speed;
+  for(let i=0;i<n;i++){
+    const x=sh.ux[i], y=sh.uy[i], z=sh.uz[i], sd=sh.sd[i];
+    const xr=x*cR+z*sR, zr=-x*sR+z*cR;         /* rotY */
+    const yr=y*cT-zr*sT, z2=y*sT+zr*cT;        /* rotX */
+    const wob=Math.sin(yr*8.5+bw*4.5+sd*6.283)*Math.cos(xr*6.4-bw*3.0)*wobA;
+    let rr=1+Math.sin(bw+sd*TAU)*breath+wob, glow=0, push=0;
+    if(isMain){
+      for(let k=0;k<8;k++){
+        const w=WAVES[k]; if(!w.on)continue;
+        const d=1-(xr*w.x+yr*w.y+z2*w.z);
+        const g=Math.exp(-(d-w.q)*(d-w.q)*38);
+        if(g>0.02){ push+=g*w.amp*0.10; glow+=g*w.amp*0.5; }
+      }
+      for(let k=0;k<6;k++){
+        const dn=DENTS[k]; if(dn.age>2)continue;
+        const dd=1-(xr*dn.x+yr*dn.y+z2*dn.z);
+        const g=Math.exp(-dd*dd*60)*Math.exp(-dn.age*2.2);
+        if(g>0.02){ push-=g*dn.amp*0.14; glow+=g*dn.amp*0.3; }
+      }
+    }
+    rr*=(1+push);
+    const z01=(z2+1)*0.5;
+    let rb=false;
+    if(isMain){
+      const rA=Math.abs(yr-0.22*Math.sin(xr*3.2+bw*4));
+      const rB=Math.abs(xr+0.34*Math.sin(yr*3.8-bw*2.9));
+      rb=rA<0.055||rB<0.045;
+    }
+    let a=(0.10+z01*0.64)*aMul*(rb?1.35:0.78)+glow*0.35+(rb?en*0.10:0);
+    const sz=(rb?1.6:0.85)+z01*1.1+en*0.25+glow*0.8;
+    ctx.fillStyle=al(a);
+    ctx.beginPath();
+    ctx.arc(cxr+xr*rr*rad, cyr+yr*rr*rad, sz, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawHeart(t,en){
+  const pul=1+0.05*Math.sin(t*0.003)+S.kick*0.08;
+  const rad=RAD*0.17*pul, ry=t*0.0005*S.speed;
+  const cR=Math.cos(ry), sR=Math.sin(ry);
+  for(let i=0;i<HN;i++){
+    const x=HX[i], z=HZ[i];
+    const xr=x*cR+z*sR, zr=-x*sR+z*cR;
+    const z01=(zr+1)*0.5;
+    ctx.fillStyle=al(0.08+z01*0.20+en*0.06);
+    ctx.beginPath();
+    ctx.arc(cxr+xr*rad, cyr+HY[i]*rad, 0.7+z01*0.9, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawBrush(t,en,combo){
+  ctx.save();
+  ctx.translate(cxr,cyr);
+  const rot=Math.sin(t*0.00035*S.speed)*0.18;
+  ctx.rotate(rot);
+  ctx.strokeStyle=al(0.14+en*0.20); ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let i=-28;i<=28;i++){
+    const x=(i/28)*RAD*0.88;
+    const y=Math.sin(i*0.56+t*0.0038*S.speed)*3.4*(1-Math.abs(i)/34);
+    i===-28?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  if(combo){
+    ctx.rotate(-rot*2);
+    ctx.strokeStyle=al(0.07+en*0.10);
+    ctx.beginPath();
+    for(let i=-24;i<=24;i++){
+      const x=(i/24)*RAD*0.80;
+      const y=Math.cos(i*0.63-t*0.0031*S.speed)*2.6*(1-Math.abs(i)/30);
+      i===-24?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCluster(f,c1x,c1y,c2x,c2y,head,w,t){
+  const inten=S.tint[f.i], en=S.energy;
+  for(let k=0;k<9;k++){
+    const uu=head-(0.05+0.05*w)*(k/8);
+    if(uu<=0)break;
+    const fade=1-k/8;
+    const bx=bezP(f.ex,c1x,c2x,f.ax,uu), by=bezP(f.ey,c1y,c2y,f.ay,uu);
+    tanAt(f.ex,f.ey,c1x,c1y,c2x,c2y,f.ax,f.ay,uu);
+    const wig=Math.sin(uu*22+t*0.006+f.ph)*1.6*inten;
+    const px=bx+TK.nx*wig, py=by+TK.ny*wig;
+    const sz=Math.max(0.4,(0.8+fade*1.5+w*0.5)*inten+en*0.3);
+    const a=Math.min(1,fade*(0.20+0.45*inten)*w);
+    if(k===0&&q<1){ /* soft halo — replaces shadowBlur */
+      ctx.fillStyle=al(a*0.22);
+      ctx.beginPath(); ctx.arc(px,py,sz*2.6,0,TAU); ctx.fill();
+    }
+    ctx.fillStyle=al(a);
+    ctx.beginPath(); ctx.arc(px,py,sz,0,TAU); ctx.fill();
+  }
+}
+
+function drawFilaments(t,still){
+  for(let i=0;i<5;i++){
+    const f=FIL[i], inten=S.tint[i], on=S.act[i];
+    const L=Math.hypot(f.ax-f.ex,f.ay-f.ey)||1;
+    const bend=f.bend*(12+i*3)*(1+0.18*Math.sin(t*0.0004+f.ph))*(0.6+inten*0.6);
+    const nx=-f.dy, ny=f.dx;
+    const c1x=f.ex+f.dx*L*0.40+nx*bend, c1y=f.ey+f.dy*L*0.40+ny*bend;
+    const c2x=f.ax-f.dx*L*0.34-nx*bend*0.55, c2y=f.ay-f.dy*L*0.34-ny*bend*0.55;
+
+    /* ghost route */
+    ctx.strokeStyle=al(on?0.045+inten*0.075:0.03);
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(f.ex,f.ey);
+    ctx.bezierCurveTo(c1x,c1y,c2x,c2y,f.ax,f.ay);
+    ctx.stroke();
+
+    if(on&&inten>0.02&&q<2){
+      /* braided residue strands */
+      const strands=q>=1?2:3, SEG=16;
+      for(let s=0;s<strands;s++){
+        const off=(s-(strands-1)/2)*2.5;
+        ctx.strokeStyle=al((s===1?0.10:0.055)*inten);
+        ctx.beginPath();
+        for(let k=0;k<=SEG;k++){
+          const u=k/SEG;
+          const bx=bezP(f.ex,c1x,c2x,f.ax,u), by=bezP(f.ey,c1y,c2y,f.ay,u);
+          tanAt(f.ex,f.ey,c1x,c1y,c2x,c2y,f.ax,f.ay,u);
+          const spr=off*(0.35+0.65*Math.sin(Math.PI*u));
+          const brd=Math.sin(u*16+t*0.004*S.speed+f.ph+s*2.1)*(2.6*inten+S.energy*1.5);
+          const px=bx+TK.nx*(spr+brd), py=by+TK.ny*(spr+brd);
+          k?ctx.lineTo(px,py):ctx.moveTo(px,py);
+        }
+        ctx.stroke();
+      }
+    }
+
+    if(still){
+      if(on&&S.tgt[i]>0.5){
+        drawCluster(f,c1x,c1y,c2x,c2y,0.34,1.0,t);
+        drawCluster(f,c1x,c1y,c2x,c2y,0.70,0.75,t);
+      }
+    }else{
+      for(let k=0;k<3;k++){
+        const p=f.pk[k];
+        if(p.on&&p.delay<=0) drawCluster(f,c1x,c1y,c2x,c2y,p.u,p.w,t);
+      }
+    }
+  }
+  /* rim flashes on impact */
+  for(let k=0;k<FLASH.length;k++){
+    const fl=FLASH[k]; if(!fl.on)continue;
+    ctx.strokeStyle=al(0.4*(1-fl.age*2));
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.arc(fl.x,fl.y,4+fl.age*90,0,TAU);
+    ctx.stroke();
+  }
+}
+
+function drawSparks(t,en){
+  let n=Math.min(8,Math.floor(4+en*4)); if(q>=2)n=3;
+  for(let s=0;s<n;s++){
+    const a=t*0.0005*(s%2?1:-1)+s*1.43;
+    const rr=RAD*(1.03+Math.sin(t*0.002+s)*0.02);
+    ctx.fillStyle=al(0.20+en*0.18);
+    ctx.beginPath();
+    ctx.arc(cxr+Math.cos(a)*rr, cyr+Math.sin(a)*rr*0.98, 1+(s%3)*0.3, 0, TAU);
+    ctx.fill();
+  }
+}
+
+/* ---------- adaptive quality ---------- */
+let q=0, heat=0, cold=0, ema=16;
+function adapt(dtMs){
+  ema=ema*0.95+dtMs*0.05;
+  if(ema>27){ heat++; cold=0; if(heat>45&&q<2){ q++; heat=0; } }
+  else if(ema<15){ cold++; heat=0; if(cold>600&&q>0){ q--; cold=0; } }
+  else { heat=0; cold=0; }
+}
+
+/* ---------- frame ---------- */
+function render(now,still){
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='#040404';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+
+  const t=now, en=S.energy, sp=S.speed, combo=activeCount()>=2;
+
+  ring(RAD*1.10, 0.42+0.10*Math.sin(t*0.00007),  t*0.00011*sp, 0.12+en*0.05, true);
+  ring(RAD*1.21,-0.30+0.08*Math.cos(t*0.00006), -t*0.00008*sp, 0.08+en*0.04, false);
+
+  let nIn=mobile?170:280; if(q>=2)nIn=0;
+  if(nIn) drawShell(SH_IN,nIn,-t*0.00021*sp,-0.16+0.05*Math.sin(t*0.00017),RAD*0.58,0.55,en,false);
+
+  drawHeart(t,en);
+
+  let nOut=mobile?430:720;
+  if(q===1)nOut=(nOut*0.65)|0;
+  if(q>=2)nOut=(nOut*0.45)|0;
+  drawShell(SH_OUT,nOut,t*0.00030*sp,0.22*Math.sin(t*0.00013),RAD,1,en,true);
+
+  drawBrush(t,en,combo);
+  drawFilaments(t,!!still);
+  drawSparks(t,en);
+}
+
+let rafId=0, lastT=performance.now(), lastDom=0, effPaused=false;
+function loop(now){
+  rafId=requestAnimationFrame(loop);
+  let dt=(now-lastT)/1000; lastT=now;
+  if(dt>0.1)dt=0.1;
+  adapt(dt*1000);
+  step(clamp(dt,0.001,0.1));
+  render(now,false);
+  if(now-lastDom>320){ lastDom=now; domSync(); }
+}
+function halt(){ if(rafId){ cancelAnimationFrame(rafId); rafId=0; } }
+function run(){ if(S.reduced||effPaused)return; halt(); lastT=performance.now(); rafId=requestAnimationFrame(loop); }
+function renderStill(){ if(W) render(21000,true); }
+function poke(){ if(S.reduced){ renderStill(); domSync(); } }
+
+/* ============================================================
+   DOM SYNC (throttled — never per frame)
+   ============================================================ */
+function stateWord(st){
+  return st==='degraded'?'DEGRADED':st==='off'?'OFF':st==='wake'?'ONLINE':'ACTIVE';
+}
+function refreshChips(){
+  chips.forEach((el,i)=>{
+    el.querySelector('.pshare').textContent=shareOf(i)+'%';
+    el.querySelector('.pstate').textContent=stateWord(CHIP_ST[i]);
+    el.setAttribute('aria-pressed',String(S.act[i]));
+  });
+}
+function setChip(i,st){
+  CHIP_ST[i]=st;
+  chips[i].dataset.state=st;
+  refreshChips();
+  poke();
+}
+function syncMeta(){
+  const n=activeCount();
+  const mode=S.drill?'FAILOVER SEQUENCE':(n>=2?'COMBO ROUTING':'DIRECT ROUTE');
+  modeLine.textContent=mode;
+  statLine.textContent=n+' PROVIDER'+(n>1?'S':'')+' / ROUTED '+S.req;
+  trackMeta.textContent='PROVIDER \u2192 BAYZ \u2192 MODEL / SIM \u00b7 '
+    +(S.drill?'FAILOVER':(n>=2?'COMBO':'DIRECT'))+' \u00b7 '+S.tempo.toUpperCase();
+  const names=[];
+  for(let i=0;i<5;i++) if(S.act[i]) names.push(NAMES[i]);
+  wrap.setAttribute('aria-label','Bayz relay visualization. '+mode
+    +'. Active providers: '+(names.join(', ')||'none')
+    +'. Tempo: '+S.tempo+'. Routed requests: '+S.req+'.');
+}
+function domSync(){
+  const n=activeCount();
+  const load=Math.round(clamp(16+S.energy*55+n*4+S.surge*10,8,97));
+  loadFill.style.width=load+'%';
+  loadText.textContent=load+'%';
+  syncMeta();
+}
+
+/* ---------- activity feed ---------- */
+function pushFeed(name,msg){
+  const row=document.createElement('div');
+  row.className='live-row';
+  row.innerHTML='<i class="live-dot"></i><b>'+name+' / '+msg+'</b><span>NOW</span>';
+  feed.prepend(row);
+  while(feed.children.length>6) feed.lastElementChild.remove();
+  poke();
+}
+const AMBIENT=[
+  ['OPENROUTER','stream accepted'],['GEMINI','route selected'],
+  ['CODEX','request completed'],['TABITOKEN','latency nominal'],
+  ['CUSTOM','combo branch active'],['CORE','checkpoint synced']
+];
+setInterval(()=>{
+  if(effPaused||document.hidden)return;
+  const a=AMBIENT[(Math.random()*AMBIENT.length)|0];
+  pushFeed(a[0],a[1]);
+},S.reduced?6500:3400);
+
+/* ============================================================
+   CONTROLS
+   ============================================================ */
+function syncCounts(){
+  let prefix=-1;
+  for(let n=1;n<=5;n++){
+    let ok=true;
+    for(let i=0;i<5;i++) if((i<n)!==S.act[i]){ ok=false; break; }
+    if(ok){ prefix=n; break; }
+  }
+  countBtns.forEach(b=>{
+    const on=+b.dataset.count===prefix;
+    b.classList.toggle('active',on);
+    b.setAttribute('aria-pressed',String(on));
+  });
+}
+countBtns.forEach(b=>b.addEventListener('click',()=>{
+  const n=+b.dataset.count;
+  for(let i=0;i<5;i++){
+    const on=i<n;
+    if(S.act[i]!==on){
+      S.act[i]=on; S.tgt[i]=on?1:0;
+      setChip(i,on?'active':'off');
+      if(!on)pushFeed(NAMES[i],'provider disabled');
+    }
+  }
+  syncCounts(); syncMeta(); poke();
+}));
+
+tempoBtns.forEach(b=>b.addEventListener('click',()=>{
+  S.tempo=b.dataset.tempo;
+  tempoBtns.forEach(x=>{
+    const on=x===b;
+    x.classList.toggle('active',on);
+    x.setAttribute('aria-pressed',String(on));
+  });
+  if(S.tempo==='surge')S.surge=Math.max(S.surge,0.8);
+  syncMeta(); poke();
+}));
+
+chips.forEach((el,i)=>el.addEventListener('click',()=>{
+  if(!S.act[i]){
+    if(S.drill&&S.drill.alt===i){ /* managed by drill */ }
+    S.act[i]=true; S.tgt[i]=1; setChip(i,'wake');
+    pushFeed(NAMES[i],'provider enabled');
+  }else{
+    if(activeCount()<=1){
+      el.classList.remove('deny'); void el.offsetWidth; el.classList.add('deny');
+      return;
+    }
+    S.act[i]=false; S.tgt[i]=0; setChip(i,'off');
+    pushFeed(NAMES[i],'provider disabled / route draining');
+  }
+  syncCounts(); syncMeta();
+}));
+
+/* ---------- failover drill ---------- */
+function firstActive(){ for(let i=0;i<5;i++) if(S.act[i]&&S.tgt[i]>0.5) return i; return -1; }
+function pickAlt(prim){
+  for(let k=1;k<=4;k++){ const j=(prim+k)%5; if(S.act[j]&&S.tgt[j]>0.5) return j; }
+  for(let k=1;k<=4;k++){ const j=(prim+k)%5; if(j!==prim) return j; }
+  return -1;
+}
+function startDrill(){
+  if(S.drill)return;
+  const prim=firstActive(); if(prim<0)return;
+  S.drill={prim,alt:-1,altWasOff:false};
+  S.tgt[prim]=0.12; setChip(prim,'degraded');
+  S.surge=Math.max(S.surge,0.7);
+  drillBtn.disabled=true; drillBtn.textContent='DRILL ACTIVE';
+  pushFeed(NAMES[prim],'route degraded / failover armed');
+  setTimeout(()=>{
+    if(!S.drill)return;
+    const alt=pickAlt(prim);
+    S.drill.alt=alt; S.drill.altWasOff=!S.act[alt];
+    S.act[alt]=true; S.tgt[alt]=1; setChip(alt,'wake');
+    pushFeed(NAMES[alt],'traffic rerouted / route active');
+    syncMeta();
+  },900);
+  setTimeout(()=>{
+    if(!S.drill)return;
+    S.tgt[S.drill.prim]=1; setChip(S.drill.prim,'active');
+    pushFeed(NAMES[S.drill.prim],'recovered / restored to rotation');
+    S.surge=Math.max(S.surge,0.5);
+    syncMeta();
+  },4300);
+  setTimeout(()=>{
+    if(!S.drill)return;
+    const alt=S.drill.alt, wasOff=S.drill.altWasOff;
+    if(wasOff&&alt>=0){
+      S.act[alt]=false; S.tgt[alt]=0; setChip(alt,'off');
+      pushFeed(NAMES[alt],'standby / reserve released');
+    }
+    S.drill=null;
+    drillBtn.disabled=false; drillBtn.textContent='FAILOVER DRILL';
+    syncCounts(); syncMeta(); poke();
+  },7600);
+}
+drillBtn.addEventListener('click',startDrill);
+
+/* ---------- pause ---------- */
+function setPaused(v){
+  effPaused=v;
+  pauseBtn.textContent=v?'RESUME':'PAUSE';
+  pauseBtn.setAttribute('aria-pressed',String(v));
+  v?halt():run();
+}
+pauseBtn.addEventListener('click',()=>{ if(!S.reduced) setPaused(!effPaused); });
+document.addEventListener('visibilitychange',()=>{ document.hidden?halt():run(); });
+
+/* ---------- reduced motion ---------- */
+function applyReduced(){
+  if(S.reduced){
+    halt();
+    pauseBtn.disabled=true;
+    pauseBtn.title='Gerakan sudah diminimalkan (reduced motion)';
+    renderStill();
+  }else{
+    pauseBtn.disabled=false; pauseBtn.title='';
+    run();
+  }
+}
+try{
+  matchMedia('(prefers-reduced-motion: reduce)')
+    .addEventListener('change',e=>{ S.reduced=e.matches; applyReduced(); });
+}catch(_){ /* older engines */ }
+
+/* ---------- period metrics (demo) ---------- */
+const DEMO={
+  Today:['128','184K','36K','71K'],
+  '24H':['412','552K','119K','208K'],
+  '7D':['2.8K','3.9M','804K','1.7M'],
+  '30D':['11.4K','15.8M','3.1M','6.9M']
+};
+document.querySelectorAll('.period-button').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('.period-button').forEach(x=>{
+    const on=x===btn;
+    x.classList.toggle('active',on);
+    x.setAttribute('aria-selected',String(on));
+  });
+  const v=DEMO[btn.dataset.period];
+  $('#mRequests').textContent=v[0];
+  $('#mInput').textContent=v[1];
+  $('#mOutput').textContent=v[2];
+  $('#mCached').textContent=v[3];
+  $('#periodLabel').textContent='Selected period / '+btn.dataset.period;
+}));
+
+/* ---------- boot ---------- */
+layout();
+syncCounts();
+refreshChips();
+syncMeta();
+for(let i=0;i<4;i++){
+  const a=AMBIENT[(Math.random()*AMBIENT.length)|0];
+  pushFeed(a[0],a[1]);
+}
+applyReduced();
+})();
+</script>
+</body>
+</html>

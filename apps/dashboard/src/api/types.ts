@@ -305,6 +305,81 @@ export type UpdateRouteBody = {
   config?: Partial<RouteConfig>;
 };
 
+/**
+ * The four periods `/api/usage/*` accepts.
+ *
+ * Mirrors the server's `PERIODS` table. An unrecognised value is a 400 there, so the
+ * UI offers exactly these and nothing else.
+ */
+export const USAGE_PERIODS = ["today", "24h", "7d", "30d"] as const;
+
+export type UsagePeriod = (typeof USAGE_PERIODS)[number];
+
+/**
+ * `/api/usage/summary`.
+ *
+ * `null` is meaningful throughout: it means **no provider reported the count**, which
+ * is not the same as zero. The screen must keep the two distinguishable, so the field
+ * types say so rather than defaulting.
+ */
+export type UsageSummaryView = {
+  period: string;
+  totalRequests: number;
+  okRequests: number;
+  failedRequests: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+  /** How many requests actually reported token counts. */
+  tokenReports: number;
+  averageLatencyMs: number | null;
+  /**
+   * Always `false`: Bayz has no pricing table and no billing API, so a cost figure
+   * would be fabricated. `costReason` says why instead.
+   */
+  costAvailable: boolean;
+  costReason: string;
+  retention: { requests: number; attempts: number };
+};
+
+/** One row of `/api/usage/providers`: metadata and attempt history, never a credential. */
+export type UsageProviderView = {
+  providerId: string;
+  displayName: string;
+  kind: string;
+  enabled: boolean;
+  /** Presence only. There is no read path for the value anywhere in Bayz. */
+  credentialPresent: boolean;
+  attempts: number;
+  failures: number;
+  lastOutcome: "ok" | "failed" | null;
+  lastFailureCategory: string | null;
+  averageLatencyMs: number | null;
+};
+
+/**
+ * One row of `/api/usage/requests`.
+ *
+ * Metadata only: there is no prompt, no completion, and no header here, because the
+ * router never persists them. Token counts are `null` when the provider reported none.
+ */
+export type UsageRequestView = {
+  requestId: string;
+  occurredAt: string;
+  routeId: string | null;
+  providerId: string | null;
+  proxyId: string | null;
+  model: string;
+  routingMode: string;
+  outcome: string;
+  failureCategory: string | null;
+  latencyMs: number;
+  attempts: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+};
+
 export type RuntimeStatus = {
   schemaVersion: number;
   journalMode: string;

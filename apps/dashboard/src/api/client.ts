@@ -22,6 +22,10 @@ import type {
   UpdateProviderBody,
   UpdateProxyBody,
   UpdateRouteBody,
+  UsagePeriod,
+  UsageProviderView,
+  UsageRequestView,
+  UsageSummaryView,
 } from "./types";
 
 /** Client-side ceiling on any single request. */
@@ -256,6 +260,44 @@ export function createApiClient(options: CreateApiClientOptions) {
         .map((entry) => entry.id)
         .filter((id): id is string => typeof id === "string");
     },
+
+    /**
+     * Usage telemetry for one period.
+     *
+     * The period reaches a query string, so it is encoded rather than interpolated —
+     * even though the caller can only pass one of the four literals the server accepts.
+     */
+    getUsageSummary: (period: UsagePeriod): Promise<UsageSummaryView> =>
+      send("GET", `/api/usage/summary?period=${encodeURIComponent(period)}`),
+
+    /**
+     * Per-provider attempt history for one period.
+     *
+     * Registered providers are the spine of the server's list, so a provider carrying
+     * no traffic still appears — which is what makes "standby" distinguishable from
+     * "not configured".
+     */
+    listUsageProviders: async (period: UsagePeriod): Promise<UsageProviderView[]> =>
+      (
+        await send<{ providers: UsageProviderView[] }>(
+          "GET",
+          `/api/usage/providers?period=${encodeURIComponent(period)}`,
+        )
+      ).providers ?? [],
+
+    /**
+     * The most recent requests, newest first.
+     *
+     * Metadata only: the server stores no prompt and no completion, so there is
+     * nothing here that could render message content.
+     */
+    listUsageRequests: async (limit: number): Promise<UsageRequestView[]> =>
+      (
+        await send<{ requests: UsageRequestView[] }>(
+          "GET",
+          `/api/usage/requests?limit=${encodeURIComponent(String(limit))}`,
+        )
+      ).requests ?? [],
 
     /**
      * Send one chat request.
