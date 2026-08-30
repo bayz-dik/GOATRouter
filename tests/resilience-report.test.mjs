@@ -12,6 +12,9 @@ const REPORT = join(root, "docs/superpowers/2026-08-27-bayz-resilience-report.md
 const GATE = join(root, "scripts/resilience-gate.mjs");
 
 const lib = await import(join(root, "scripts/resilience-gate-lib.mjs"));
+// 9L Task 1: the evidence grammar is one definition now; `lib` re-exports it from here.
+const evidence = await import(join(root, "scripts/evidence.mjs"));
+
 
 /**
  * Resilience report and gate — 9I Task 7.
@@ -162,15 +165,30 @@ test("an evidence reference may span a range but not list unrelated checks", () 
   assert.ok(!lib.EVIDENCE_RE.test("smoke:load#4 and #9"), "prose should be rejected");
 });
 
-test("every cited evidence path resolves on disk", () => {
+test("every cited evidence path resolves on disk", async () => {
+  /*
+   * Resolution moved to `scripts/evidence.mjs` in 9L Task 1, and the move immediately paid for
+   * itself: the shared resolver opens the cited script, and the fifteen `smoke:fuzz#…` rows here had
+   * been citing a script name (`fuzz`) that a pure-regex check never looked for on disk. The resolver
+   * finds `scripts/fuzz-run.mjs`, and would now report the miss if the name were wrong.
+   *
+   * A row with an **empty** evidence cell is skipped rather than failed, and that is not a loophole:
+   * the three such rows are `UNVERIFIED` (two chaos injections needing mount privileges this host
+   * lacks, and the 2-hour soak long mode), and `UNVERIFIED` means nothing was measured, so there is
+   * nothing to cite. What must not happen is a `PASS` with an empty cell, and that is asserted
+   * separately by the `PASS`-shape test above — checked here too, so the skip cannot widen.
+   */
   const parsed = lib.readReport(REPORT);
-  const missing = [];
+  const failures = [];
   for (const row of parsed.rows) {
-    const match = /^(?:test|transcript):(.+)$/.exec(row.evidence);
-    if (match === null) continue;
-    if (!existsSync(join(root, match[1]))) missing.push(`${row.section}/${row.item} → ${match[1]}`);
+    if (row.evidence.trim().length === 0) {
+      assert.notEqual(row.status, "PASS", `${row.section}/${row.item} is PASS with an empty evidence cell`);
+      continue;
+    }
+    const result = await evidence.resolveEvidence(row.evidence);
+    if (!result.ok) failures.push(`${row.section}/${row.item} → ${row.evidence} — ${result.reason}`);
   }
-  assert.deepEqual(missing, [], `evidence paths that do not exist: ${missing.join(", ")}`);
+  assert.deepEqual(failures, [], `evidence that does not resolve:\n${failures.join("\n")}`);
 });
 
 test("every UNVERIFIED row states a reason", () => {

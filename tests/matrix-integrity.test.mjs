@@ -58,14 +58,14 @@ const EVIDENCE_REQUIRED = new Set(["VERIFIED", "PARTIAL"]);
 const REASON_REQUIRED = new Set(["BLOCKED", "UNVERIFIED", "N/A"]);
 
 /**
- * The evidence grammar.
+ * The evidence grammar — now imported, not restated.
  *
- * Written inline here deliberately. 9I, 9J, and 9K each specify this same shape for their
- * own matrices, and 9L Task 1 builds `scripts/evidence.mjs` as the single source and
- * refactors all four to import it. Keeping it literal means this subprogram stands alone
- * today and is *replaced* rather than copied a fourth time.
+ * 9L Task 1 built `scripts/evidence.mjs` as the single source and this is one of the four consumers
+ * it replaced. The copy that used to live here was `^(smoke:[a-z-]+#\d+|…)$`, which rejected the
+ * contiguous range 9I's report legitimately uses — the drift this consolidation existed to stop had
+ * already happened.
  */
-const EVIDENCE_RE = /^(smoke:[a-z-]+#\d+|test:[\w./-]+|transcript:[\w./-]+)$/;
+const { EVIDENCE_RE, resolveEvidence } = await import(new URL("../scripts/evidence.mjs", import.meta.url));
 
 /** Placeholders that would let an unfilled cell pass a naive status check. */
 const PLACEHOLDERS = new Set(["", "-", "—", "?", "??", "TODO", "TBD", "N-A", "NA", "PASS", "FAIL"]);
@@ -296,6 +296,7 @@ test("a blocked, unverified, or not-applicable cell must give a reason", async (
 test("every cited evidence reference resolves to something that exists", async () => {
   const { clients } = await parseMatrix();
   let citationsChecked = 0;
+  const failures = [];
 
   for (const [client, rows] of clients) {
     for (const [capability, { status, note }] of rows) {
@@ -304,63 +305,21 @@ test("every cited evidence reference resolves to something that exists", async (
       }
       for (const citation of splitNote(note).citations.split(",").map((entry) => entry.trim())) {
         citationsChecked += 1;
-        const [kind, value] = citation.split(":");
-
-        if (kind === "test" || kind === "transcript") {
-          assert.ok(
-            existsSync(new URL(value, `file://${REPO_ROOT}`)),
-            `${client}/${capability} cites ${citation} but ${value} does not exist`,
-          );
-          continue;
-        }
-
-        // `smoke:<name>#<n>` — the script must exist, and when the script publishes an
-        // evidence manifest the cited check number must be the one that actually covers
-        // this capability.
-        //
-        // The script-exists check alone was a real hole: it accepted
-        // `smoke:client-conformance#99` in a cell for a capability that harness never
-        // exercises, because the number was never validated against anything. A harness
-        // writes `docs/evidence/<script>.json` on a fully passing run, mapping capability
-        // to check number, and that manifest is the authority here. A script without a
-        // manifest still only gets the existence check — Task 4/5's transcript-based
-        // harnesses cite `transcript:` paths instead.
-        const [scriptName, citedNumber] = value.split("#");
-        const candidates = [
-          `scripts/${scriptName}.mjs`,
-          `scripts/${scriptName}-smoke.mjs`,
-        ];
-        assert.ok(
-          candidates.some((path) => existsSync(new URL(path, `file://${REPO_ROOT}`))),
-          `${client}/${capability} cites ${citation} but no script matches ${candidates.join(" or ")}`,
-        );
-
-        const manifestUrl = new URL(
-          `docs/evidence/${scriptName}.json`,
-          `file://${REPO_ROOT}`,
-        );
-        if (existsSync(manifestUrl)) {
-          const manifest = JSON.parse(readFileSync(manifestUrl, "utf8"));
-          const expected = manifest.capabilities?.[capability];
-          assert.notEqual(
-            expected,
-            undefined,
-            `${client}/${capability} cites ${citation} but ${scriptName} publishes no check for that capability`,
-          );
-          assert.equal(
-            Number(citedNumber),
-            expected,
-            `${client}/${capability} cites check #${citedNumber} but ${scriptName} reports #${expected} for it`,
-          );
-          assert.ok(
-            Number(citedNumber) <= manifest.totalChecks,
-            `${client}/${capability} cites check #${citedNumber} but ${scriptName} only ran ${manifest.totalChecks} checks`,
-          );
-        }
+        /*
+         * Resolution is `scripts/evidence.mjs`'s job now, including the manifest check this test used
+         * to implement inline: a harness writes `docs/evidence/<script>.json` on a fully passing run,
+         * mapping capability to check number, and the citation is resolved against it. That mapping is
+         * what closed a real hole — `smoke:client-conformance#99` was accepted in a cell for a
+         * capability the harness never exercises, because the number was never validated against
+         * anything.
+         */
+        const result = await resolveEvidence(citation, { capability });
+        if (!result.ok) failures.push(`${client}/${capability} cites ${citation} — ${result.reason}`);
       }
     }
   }
 
+  assert.deepEqual(failures, [], `citations that do not resolve:\n${failures.join("\n")}`);
   // A zero-citation run would pass every assertion above by doing nothing, which is
   // exactly the state this file starts in — so the count is reported rather than
   // required, and the assertion is that the loop ran at all.

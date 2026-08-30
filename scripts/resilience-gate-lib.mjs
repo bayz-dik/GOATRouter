@@ -19,6 +19,11 @@ export const STATUSES = new Set(["PASS", "FAIL", "UNVERIFIED", "N/A"]);
  * Evidence reference shapes, from the plan verbatim:
  *   `smoke:<name>#<n>` · `test:<path>` · `transcript:<path>`
  *
+ * **Re-exported from `scripts/evidence.mjs` since 9L Task 1**, which consolidated the four inline
+ * copies (9H, 9I, 9J, 9K) into one definition. Re-exported rather than replaced at the call sites
+ * because `tests/resilience-report.test.mjs` asserts against `lib.EVIDENCE_RE` and the gate's own
+ * policy reads more clearly with the name in scope.
+ *
  * A `PASS` without one of these is a claim with nothing behind it, which is the failure mode this
  * whole phase exists to prevent.
  *
@@ -28,7 +33,12 @@ export const STATUSES = new Set(["PASS", "FAIL", "UNVERIFIED", "N/A"]);
  * numbers makes the citation unfalsifiable, since no single check can be looked up to confirm or
  * refute it. The row now cites the first check and states the pattern in its notes.
  */
-export const EVIDENCE_RE = /^(smoke:[a-z-]+#\d+(?:-\d+)?|test:[\w./-]+|transcript:[\w./-]+)$/;
+export { EVIDENCE_RE, resolveEvidence } from "./evidence.mjs";
+
+// Imported separately as well: a `export { X } from` re-export does not bind `X` in this module's
+// scope, and `assess` below tests against it.
+import { EVIDENCE_RE } from "./evidence.mjs";
+
 
 /**
  * What counts as a **capacity figure** — a measured quantity, needing a transcript.

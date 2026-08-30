@@ -69,7 +69,7 @@ one hand-waved sentence fails the test.
 | --- | --- | --- |
 | `smoke:<script>#<n>` | numbered check in a smoke script | `smoke:client-conformance#7` |
 | `test:<path>` | a test file in this repository | `test:apps/server/test/tools-api.test.ts` |
-| `transcript:<path>` | a captured real-client session | `transcript:docs/transcripts/opencode/chat.log` |
+| `transcript:<path>` | a captured real-client session | `transcript:docs/transcripts/opencode/chat-stream.md` |
 
 Grammar, as enforced:
 

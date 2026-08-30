@@ -46,7 +46,16 @@ const COLUMNS = [
 ];
 
 const STATUSES = new Set(["PASS", "FAIL", "UNVERIFIED", "N/A"]);
-const EVIDENCE_RE = /^(smoke:[a-z-]+#\d+(?:-\d+)?|test:[\w./-]+|transcript:[\w./-]+)$/;
+
+/**
+ * The evidence grammar — imported, not restated.
+ *
+ * 9L Task 1 consolidated the four inline copies into `scripts/evidence.mjs`. The copy that used to
+ * live here differed from 9H's (it accepted a contiguous range) and from 9K's (it rejected
+ * `::name`), which is the drift the consolidation existed to stop.
+ */
+const { EVIDENCE_RE, resolveEvidence } = await import(new URL("../scripts/evidence.mjs", import.meta.url));
+
 
 /**
  * The primary platform: the only one this repository can produce first-hand evidence for.
@@ -167,13 +176,16 @@ test("every PASS carries an evidence reference of the required shape", () => {
   }
 });
 
-test("a PASS on a platform with no transcript for that platform fails", () => {
+test("a PASS on a platform with no transcript for that platform fails", async () => {
   /*
    * **The assertion this task exists for.**
    *
    * Cited evidence must come from *that platform's* own transcript directory. Without this rule the
    * Termux run's transcripts would silently justify a Windows `PASS`, which is precisely the
    * "source looks portable, therefore it works" claim the plan's Locks forbid.
+   *
+   * Existence and non-emptiness are `resolveEvidence`'s job (9L Task 1); what stays here is the
+   * platform rule, which is this matrix's own policy and belongs nowhere else.
    */
   const { cells } = parseCells(matrix());
   const slug = (platform) => platform.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -183,9 +195,11 @@ test("a PASS on a platform with no transcript for that platform fails", () => {
     const match = /^(?:test|transcript|smoke):(.+)$/.exec(cell.evidence ?? "");
     assert.ok(match !== null, `${cell.platform}/${cell.column}: unparseable evidence`);
 
+    const resolved = await resolveEvidence(cell.evidence);
+    assert.equal(resolved.ok, true, `${cell.platform}/${cell.column}: ${cell.evidence} — ${resolved.reason}`);
+
     if (cell.evidence.startsWith("transcript:")) {
       const path = match[1];
-      assert.ok(existsSync(join(root, path)), `${cell.platform}/${cell.column}: transcript ${path} does not exist`);
       assert.ok(
         path.includes(platformSlug),
         `${cell.platform}/${cell.column}: transcript ${path} is not from this platform (expected the path to contain ${platformSlug})`,
@@ -203,10 +217,6 @@ test("a PASS on a platform with no transcript for that platform fails", () => {
       PRIMARY,
       `${cell.platform}/${cell.column}: PASS cites ${cell.evidence}, but a smoke/test citation only proves the platform it ran on (${PRIMARY})`,
     );
-
-    if (cell.evidence.startsWith("test:")) {
-      assert.ok(existsSync(join(root, match[1])), `${cell.platform}/${cell.column}: test path ${match[1]} does not exist`);
-    }
   }
 });
 

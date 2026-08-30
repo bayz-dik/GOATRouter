@@ -86,13 +86,16 @@ export const ADVISORY_UNVERIFIED_ROWS = new Set(["signature", "audit", "determin
  * Evidence reference shapes, from the plan verbatim:
  *   `smoke:<name>#<n>` · `test:<path>` · `test:<path>::<name>` · `transcript:<path>`
  *
- * **This is the fourth copy of this regex in the repository** (9H, 9I, 9J and now here), because each
- * subprogram was specified to stand alone. 9L Task 1 consolidates all four into
- * `scripts/evidence.mjs` and deletes the copies; the duplication is recorded here rather than left
- * for someone to discover, since four copies of one rule will drift and the drifting copy will be the
- * one guarding the claim that matters.
+ * **Consolidated into `scripts/evidence.mjs` by 9L Task 1.** This was the fourth inline copy (9H, 9I,
+ * 9J and here); they had already drifted — 9H's rejected the contiguous range 9I's report uses, and
+ * only this one accepted `::name` — which is exactly the failure the consolidation removes. Kept as a
+ * re-export because `tests/supply-chain-report.test.mjs` asserts against `gate.EVIDENCE_RE`.
  */
-export const EVIDENCE_RE = /^(smoke:[a-z-]+#\d+(?:-\d+)?|test:[\w./-]+(?:::[^|]+)?|transcript:[\w./-]+)$/;
+export { EVIDENCE_RE, resolveEvidence } from "./evidence.mjs";
+
+// Also imported into scope: a re-export does not bind the name locally, and `assess` tests against it.
+import { EVIDENCE_RE } from "./evidence.mjs";
+
 
 /**
  * Parse the report's verdict table into rows.

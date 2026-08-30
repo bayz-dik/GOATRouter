@@ -11,6 +11,9 @@ const REPORT = join(root, "docs/superpowers/2026-08-27-bayz-supply-chain-report.
 const GATE = join(root, "scripts/supply-chain-gate.mjs");
 
 const gate = await import(join(root, "scripts/supply-chain-gate.mjs"));
+// 9L Task 1: `gate.EVIDENCE_RE` re-exports from here, and resolution lives here too.
+const evidence = await import(join(root, "scripts/evidence.mjs"));
+
 const { computeClosure } = await import(join(root, "scripts/dependency-closure.mjs"));
 
 /**
@@ -105,11 +108,14 @@ test("every row is exactly one of PASS, FAIL, UNVERIFIED, N/A", () => {
   }
 });
 
-test("every PASS carries an evidence reference that resolves to a file with real assertions", () => {
+test("every PASS carries an evidence reference that resolves to a file with real assertions", async () => {
   /*
    * The load-bearing test. A `PASS` citing a file that does not exist, or an empty one, is a claim
    * with nothing behind it — and pointing at an empty test file is the cheapest way to launder a
    * verdict, which is why the assertion count is checked rather than only the path.
+   *
+   * Both halves are `scripts/evidence.mjs`'s job since 9L Task 1; this test asserts the policy (every
+   * `PASS` must resolve) rather than reimplementing the mechanics.
    */
   const parsed = gate.readReport(REPORT);
   const passes = parsed.rows.filter((row) => row.status === "PASS");
@@ -117,18 +123,10 @@ test("every PASS carries an evidence reference that resolves to a file with real
 
   for (const row of passes) {
     assert.match(row.evidence, gate.EVIDENCE_RE, `${row.item}: evidence ${JSON.stringify(row.evidence)} is not a valid reference shape`);
-
-    const [kind, target] = row.evidence.split(":");
-    if (kind === "test" || kind === "transcript") {
-      const path = target.split("::")[0];
-      const absolute = join(root, path);
-      assert.ok(existsSync(absolute), `${row.item}: evidence path ${path} does not exist`);
-      const body = readFileSync(absolute, "utf8");
-      assert.ok(body.trim().length > 0, `${row.item}: evidence ${path} is empty`);
-      if (kind === "test") {
-        const assertions = (body.match(/\bassert\b/g) ?? []).length;
-        assert.ok(assertions >= 5, `${row.item}: evidence ${path} contains only ${assertions} assertion(s)`);
-      }
+    const result = await evidence.resolveEvidence(row.evidence);
+    assert.equal(result.ok, true, `${row.item}: ${row.evidence} — ${result.reason}`);
+    if (row.evidence.startsWith("test:")) {
+      assert.ok(result.assertions >= 5, `${row.item}: evidence ${row.evidence} contains only ${result.assertions} assertion(s)`);
     }
   }
 });
