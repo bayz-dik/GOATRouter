@@ -134,6 +134,8 @@ runs of the raw metric produced second-half slopes of **−338** and **+295** Ki
 opposite verdicts either side of the tolerance — because `heapUsed` is a sawtooth and a fixed
 cadence samples whichever tooth it lands on. Forcing a double GC before each sample gives **+2.1**
 and **+8.4** KiB/sample across two runs. The tolerance was not widened; the measurement was fixed.
+Both runs are in `transcript:docs/transcripts/soak/soak.md`, and the floor is computed by
+`scripts/soak-lib.mjs`.
 
 ## Mutation proofs
 

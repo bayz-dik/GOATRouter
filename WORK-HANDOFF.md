@@ -3175,7 +3175,8 @@ Non-streaming (run 3, the committed transcript is run 3's):
 Streaming reports TTFB separately, and at these levels TTFB ≈ total because the origin's first
 frame is its whole answer: c=1 25.0 ms, c=8 192.2 ms, c=32 765.5 ms, c=128 3,082.5 ms,
 c=256 4,455.4 ms (p50). Throughput stays ~40 req/s across every level — the device saturates, and
-latency grows linearly with concurrency rather than anything collapsing.
+latency grows linearly with concurrency rather than anything collapsing. Every figure in this
+paragraph and the table above comes from `transcript:docs/transcripts/load/load.md`.
 
 Resource observation after 3,288 requests: RSS 353.2 MiB, heap 29.5/206.2 MiB, external 6.4 MiB,
 40 open fds, host free 2,650 MiB, load average 0.12. **No latency threshold is asserted** — the plan

@@ -233,6 +233,22 @@ shorter), then `priority`, then id. The id tiebreak matters: without it, routing
 would depend on insertion order, and nobody could explain after the fact why a
 request went where it did.
 
+### Free-first is the default, and the claim is narrow
+
+Model discovery classifies each model from the provider's own catalogue metadata,
+and a free-only route uses only models that classification says are free. Free-only
+is a per-route decision, defaulting on. A model the catalogue has no row for is
+**not** treated as free — "we never checked" is precisely the reading that produces
+a bill — and the classification is re-checked on every failover attempt rather than
+once up front, so a model reclassified mid-request cannot be spent on. There is no
+branch that widens a free-only candidate set when an attempt fails.
+
+The honest boundary, and it is deliberately narrower than it could be written:
+BAYZ never selected a paid model on your behalf without metadata saying it was
+free. That is not the same promise as "you will never be charged". BAYZ classifies
+from what the provider reports, so a provider that misreports its own pricing is
+misclassified, and BAYZ has no way to detect that.
+
 ### Prompts are never stored and never logged
 
 No table can hold a prompt or a completion, and the router's log records only
