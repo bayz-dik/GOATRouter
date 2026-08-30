@@ -169,15 +169,59 @@ Its security shape is asserted structurally, since it **has never executed** —
 
 ### Task 7 — Offline test proof
 
-**Create:** `scripts/offline-check.mjs`
-**Test:** `tests/offline.test.mjs`
+**Create:** `scripts/offline-check.mjs`, `scripts/offline-guard.mjs`, `scripts/offline-loopback.mjs`, `scripts/offline-nesting.mjs`
+**Test:** `tests/offline.test.mjs` (16/16), `tests/offline-recursion.test.mjs` (10/10)
+**Helpers:** `tests/helpers/block-spawning-hook.mjs`, `tests/helpers/blocked-child-process.mjs`
 
-- [ ] RED `tests/offline.test.mjs`: with outbound network denied — a `NODE_OPTIONS` preload that throws on any `net.connect`, `tls.connect`, `dns.lookup`, or `fetch` to a non-loopback address — the **entire** unit test suite still passes, proving no test secretly depends on the internet; a test that does reach out is reported by name and file so it can be fixed rather than tolerated; loopback is permitted, since real-origin tests are the whole point of the smoke suite.
-- [ ] RED same file: the preload's own coverage is asserted — a deliberate `fetch("https://example.invalid")` inside the harness is caught, so a passing offline run means the guard worked rather than that the guard silently did nothing.
-- [ ] Verify RED.
-- [ ] GREEN.
-- [ ] Verify: `node scripts/offline-check.mjs` exits 0.
+- [x] RED `tests/offline.test.mjs`: with outbound network denied — a `NODE_OPTIONS` preload that throws on any `net.connect`, `tls.connect`, `dns.lookup`, or `fetch` to a non-loopback address — the **entire** unit test suite still passes, proving no test secretly depends on the internet; a test that does reach out is reported by name and file so it can be fixed rather than tolerated; loopback is permitted, since real-origin tests are the whole point of the smoke suite. — *The check reports violations by suite and destination (`guardViolations`), which is how the two real network dependencies below were found rather than guessed at.*
+- [x] RED same file: the preload's own coverage is asserted — a deliberate `fetch("https://example.invalid")` inside the harness is caught, so a passing offline run means the guard worked rather than that the guard silently did nothing. — *`guardIsActive` runs that probe in a child before any suite, and `--simulate-no-guard` exercises the refusal path; the check exits 1 printing `offline check: FAIL` rather than reporting a suite it cannot vouch for.*
+- [x] Verify RED.
+- [x] GREEN.
+- [x] Verify: `node scripts/offline-check.mjs` exits 0. — *Exit 0 in 108.8s, 12/12 suites, **1,927 tests passing with off-host egress blocked** (`/tmp/9k-diag/run-t7-offline-check.log`).*
 - [ ] Commit — `test: prove the Bayz suite needs no network`
+
+**Two real network dependencies found, and fixed in the code rather than exempted in the guard.** The first run reported `router: dns.lookup -> 192.168.100.53` and `server: dns.lookup -> 192.168.100.53` — genuine, not guard false positives.
+
+- `packages/providers/src/manager.ts` accepted `fetcher` but not `resolve`, so three manager tests that injected a fetcher and performed no HTTP still resolved the provider's real hostname through `defaultEgressResolver`. Every layer below the manager — `detectCapabilities`, `testConnection`, both discovery functions, both catalogue variants — already took the resolver; the manager was the one place a caller could not reach it. The seam now goes all the way through, and `packages/providers/test/manager.test.ts` injects a resolver answering a **public** address, not `127.0.0.1`, so the `private`/`loopback` policy branches still behave as they do in production.
+- `packages/providers/src/capabilities.ts` resolved a hostname *before* refusing `codex-oauth`, a kind that can never discover (it needs an OAuth device flow). Under the guard the resolution failed first and the probe reported `unreachable` — a materially different and less useful answer than `unsupported_operation`. "This provider cannot do this" and "the network is down" must not be interchangeable in a capability report an operator reads. Ordering fix only: the dispatch below already refused the same kind.
+
+**The guard's second exemption — this machine's own addresses — is a deliberate relaxation, stated rather than smuggled.** 21 tests across `@bayz/router` and `@bayz/server` bind a test origin to this host's private LAN address and drive real HTTP at it. They cannot use `127.0.0.1`, and the reason is load-bearing: `allowLoopback` is exactly what makes the egress classifier return `LOCAL`, so a loopback origin can never exercise the `private` path the free-only routing evidence rests on. Traffic to a locally-assigned address never leaves the host — the kernel routes it internally, as it does for loopback — so this is loopback in every sense that matters to the claim being made. It is bounded by `os.networkInterfaces()`: exactly the addresses the kernel says are ours, nothing else. `scripts/offline-loopback.mjs` carries that rationale in the file, and a test asserts the file declares it, so the exemption cannot become undocumented.
+
+**`dns.resolve*` is deliberately *not* exempted, and the asymmetry was measured, not assumed.** With the resolver pointed at a black hole, `dns.lookup("192.168.100.53")` answers with no query — `getaddrinfo` short-circuits literals — while `dns.resolve4` of the same string times out, because `resolve*` genuinely queries. Resolving our own address therefore still needs a name server, and needing one is the thing being ruled out. K25c is the mutation that proves the tests notice if this is widened.
+
+**The fork bomb, and why the regression is spawn-free.** This script runs the root suite, the root suite contains `tests/offline.test.mjs`, and that file runs this script — two children per level, unbounded 2ⁿ growth. It is a real fork bomb: it took down two sessions on this Termux/proot device, and abort thresholds did not save the third. The break is a presence-keyed depth marker propagated onto **every** child, guarded and unguarded alike, because the `--simulate-no-guard` path exists precisely to run without the guard marker. The predicates moved out of `main()` and out of a hand-copied duplicate in the test file into `scripts/offline-nesting.mjs`, as pure functions of an environment object — two copies of a fork-bomb break is one copy too many, and neither copy could be exercised without creating the tree it prevents. `tests/offline-recursion.test.mjs` substitutes a counting spawn stub and a synthetic child, drives the real control flow, and measures descendants **attempted**: 10/10 with a `peak_group_size` of 1. Live reproduction is not an acceptable verification method for this property.
+
+**Two vacuous-green defects found and fixed, both of which had been reporting success.**
+
+- Importing `offline-guard.mjs` to unit-test its predicate *armed the guard inside the test process*, because it is a preload and importing it patches `net`/`tls`/`dns`/`fetch` and sets the marker. Three tests in `tests/offline.test.mjs` then skipped themselves on every ordinary run while the suite stayed green. Splitting the classification rules into `scripts/offline-loopback.mjs` — no side effects, nothing armed — is what makes them testable at all.
+- The nested `node --test` inherited `NODE_TEST_CONTEXT` and `NODE_TEST_WORKER_ID` and saw itself as an already-running worker: it reported success in 0s having executed nothing, with no pass/fail counts. The suite "passed offline" without a single test running. Those variables are now scrubbed, and `counts()` returning real numbers is asserted, so the vacuum cannot come back silently.
+
+**Nine mutations, all caught** (`/tmp/9k-diag/mutation-results.jsonl`, `log-K24*.txt`, `log-K25*.txt`), each run under an `RLIMIT_NPROC` cap with process-group containment, since the thing under test is an unbounded fork:
+
+| id | mutation | red |
+|---|---|---|
+| K24a | the nested-invocation refusal disabled (`if (false)`) | 2 |
+| K24b | `nestedInvocationRefusal` never refuses | 3 |
+| K24c | the refusal becomes a depth budget a forced marker walks past | 3 |
+| K24d | the depth marker not propagated, so no child can refuse | 3 |
+| K24e | the test-side skip ignores the marker (the pre-fix guard-only break) | 1 |
+| K24f | a suite spawned outside the seam, bypassing the counter | 5 |
+| K25a | the own-address exemption widened to any private-looking address | 1 |
+| K25b | `isSameHostDestination` returns `true`, disabling the guard | 8 |
+| K25c | `dns.resolve*` given the own-address exemption | 1 |
+
+Every mutation run recorded `survivors_after_cleanup: 0` and a `peak_group_size` of 1–2, and the tree was verified byte-identical to `/tmp/9k-diag/baseline-digests.json` afterwards — the mutation harness restored every file it touched.
+
+**Final verification, all four gates contained and recorded** (`/tmp/9k-diag/verification-runs.jsonl`):
+
+| gate | command | exit | seconds | peak group | survivors |
+|---|---|---|---|---|---|
+| `t7-recursion` | `node --test tests/offline-recursion.test.mjs` | 0 | 0.7 | 1 | 0 |
+| `t7-offline` | `node --test tests/offline.test.mjs` | 0 | 21.3 | 17 | 0 |
+| `t7-root` | `node --test tests/*.test.mjs` (320/320) | 0 | 27.9 | 18 | 0 |
+| `t7-offline-check` | `node scripts/offline-check.mjs` (12 suites, 1,927 tests) | 0 | 108.8 | 17 | 0 |
+
+**The first `t7-offline-check` attempt died on a host defect, and the honest record is that it was re-run rather than salvaged.** It aborted at `uv__io_poll: Assertion 'errno == EINTR' failed` immediately after printing `guard active: yes`, and the session was `SIGKILL`ed at the same moment — a libuv/proot interaction on this device, not a repository defect. The truncated log is kept at `/tmp/9k-diag/run-t7-offline-check.CRASHED-SIGKILL.log`. A crashed run is not a result, so the gate was re-run in full; the table above is the completed run. The three gates that had already recorded `exit: 0` were **not** re-run, and neither was the mutation sweep — the working tree was confirmed byte-identical to the recorded baseline both before and after the re-run, so the surviving evidence still describes the file state it was collected against.
 
 ### Task 8 — Supply-chain report and gate
 

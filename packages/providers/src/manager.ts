@@ -8,6 +8,7 @@ import {
   type ProviderCapabilities,
 } from "./capabilities.js";
 import type { ProviderConfig } from "./config.js";
+import type { EgressResolver } from "./egress.js";
 import {
   createCatalogueRepository,
   type CatalogueRepository,
@@ -78,6 +79,21 @@ export type ProviderLogger = (payload: Record<string, unknown>) => void;
 export type CreateProviderManagerOptions = {
   storage: SecretStorage;
   fetcher?: Fetcher;
+  /**
+   * Injectable resolver for the pre-connect egress check.
+   *
+   * Every layer below this one already takes it — `detectCapabilities`, `testConnection`,
+   * `discoverOpenAiModels`, `discoverGeminiModels`, and both catalogue variants — and the
+   * manager was the one place a caller could not reach it. That gap had a measured cost:
+   * a test that injected a `fetcher` performed no HTTP but still resolved the provider's
+   * real hostname through `defaultEgressResolver`, so three manager tests genuinely needed
+   * DNS and `scripts/offline-check.mjs` reported them, correctly, as network-dependent.
+   *
+   * Threading it through here rather than widening the offline guard is the right fix: the
+   * dependency was real, and a seam that exists at four levels and stops at the fifth is a
+   * seam with a hole in it.
+   */
+  resolve?: EgressResolver;
   logger?: ProviderLogger;
   now?: () => string;
 };
@@ -158,7 +174,7 @@ export interface ProviderManager {
 export function createProviderManager(
   options: CreateProviderManagerOptions,
 ): ProviderManager {
-  const { storage, fetcher, now } = options;
+  const { storage, fetcher, resolve, now } = options;
   const log: ProviderLogger = options.logger ?? (() => {});
   const repository: ProviderRepository = createProviderRepository(storage.sql, {
     ...(now === undefined ? {} : { now }),
@@ -223,6 +239,7 @@ export function createProviderManager(
       target,
       ...(credential === undefined ? {} : { credential }),
       ...(fetcher === undefined ? {} : { fetcher }),
+      ...(resolve === undefined ? {} : { resolve }),
     };
   };
 
@@ -237,6 +254,7 @@ export function createProviderManager(
       },
       ...(credential === undefined ? {} : { credential }),
       ...(fetcher === undefined ? {} : { fetcher }),
+      ...(resolve === undefined ? {} : { resolve }),
     };
   };
 

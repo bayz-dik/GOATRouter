@@ -148,6 +148,24 @@ async function probeModels(options: ProbeOptions): Promise<Probe> {
     throw new ProviderError("unsupported_operation", "probe-provider-disabled");
   }
 
+  /*
+   * Refuse a kind that can never discover **before** the egress check, not after.
+   *
+   * `codex-oauth` needs an OAuth device flow against an external account, so discovery is
+   * deferred honestly rather than faked. Resolving its hostname first was wasted work for an
+   * operation already known to be impossible, and it had a real consequence: under
+   * `scripts/offline-guard.mjs` the resolution failed and the probe reported `unreachable`,
+   * which is a different and less useful answer than `unsupported_operation`. "This provider
+   * cannot do this" and "the network is down" must not be interchangeable in a capability
+   * report the operator reads.
+   *
+   * The dispatch below still refuses the same kind, so this is an ordering fix rather than a
+   * new rule.
+   */
+  if (target.kind === "codex-oauth") {
+    throw new ProviderError("unsupported_operation", "probe-codex-discovery");
+  }
+
   await assertRequestEgressAllowed(
     hostnameOfBaseUrl(target.baseUrl),
     egressPolicyOf(target.config),

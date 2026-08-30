@@ -35,6 +35,21 @@ function jsonFetcher(payload: unknown, status = 200) {
   return { fetcher, calls };
 }
 
+/**
+ * A resolver that answers with a fixed public address instead of querying DNS.
+ *
+ * Injected into every manager built here, because a `fetcher` alone does not make a test
+ * offline: the pre-connect egress check resolves the provider's hostname before any HTTP
+ * happens, so three tests in this file genuinely needed working DNS and
+ * `scripts/offline-check.mjs` reported them as network-dependent. The address is a public
+ * one so the `private`/`loopback` policy branches behave as they do in production —
+ * answering `127.0.0.1` would quietly exercise a different path.
+ *
+ * The real resolver keeps its own coverage in `test/egress.test.ts` and
+ * `test/egress-enforcement.test.ts`, which is where the resolution behaviour belongs.
+ */
+const RESOLVES_PUBLIC = async () => ["93.184.216.34"];
+
 function context(fetcher?: Fetcher): Ctx {
   const dir = join(mkdtempSync(join(tmpdir(), "bayz-provider-mgr-")), ".bayz");
   const logs: Array<Record<string, unknown>> = [];
@@ -45,6 +60,7 @@ function context(fetcher?: Fetcher): Ctx {
   const manager = createProviderManager({
     storage,
     fetcher,
+    resolve: RESOLVES_PUBLIC,
     logger: (payload) => logs.push(payload),
   });
   return {
