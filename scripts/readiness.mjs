@@ -151,6 +151,67 @@ export async function unverifiedInventory() {
 }
 
 /**
+ * The Task 7 live-execution transcript: the aggregate gate's own raw output.
+ *
+ * Task 7's results are **parsed from the run**, not retyped into this generator. A retyped verdict
+ * table would be a second copy of 32 rows, and the day it drifted from the transcript the copy a
+ * reader trusts would be the wrong one. This is the same reasoning that makes the whole statement
+ * generated rather than written.
+ */
+export const TASK7_TRANSCRIPT = "docs/transcripts/release-gate/final-gate.md";
+
+/**
+ * Parse the Task 7 run.
+ *
+ * Total, like every other reader here: an absent transcript returns `{ missing: true }` with empty
+ * results rather than throwing or — far worse — rendering nothing and leaving a statement that reads
+ * complete. The absence of a live run is exactly the fact this document must never hide, so it is
+ * reported in the section itself.
+ *
+ * @param {string} [relativePath] the transcript to parse; overridable so a test can drive the
+ *   missing-file path without moving the real one.
+ */
+export function task7Execution(relativePath = TASK7_TRANSCRIPT) {
+  const text = read(relativePath);
+  if (text === undefined) {
+    return { missing: true, path: relativePath, steps: [], pass: 0, fail: 0, blocking: [], commit: "", exit: undefined };
+  }
+
+  const lines = text.split("\n");
+  const steps = [];
+  const blocking = [];
+  for (const line of lines) {
+    const step = /^\s{2}(PASS|FAIL)\s+(\S+)\s+(.*)$/.exec(line);
+    if (step !== null && !line.trimStart().startsWith("- ")) {
+      steps.push({ status: step[1], id: step[2], detail: step[3].trim() });
+      continue;
+    }
+    const block = /^\s+-\s+(gate:\S+|\S+):\s+(FAIL|BLOCKED)\s+—\s+(.*)$/.exec(line);
+    if (block !== null) blocking.push({ id: block[1], detail: block[3].trim() });
+  }
+
+  const commit = /^-\s+Commit:\s+([0-9a-f]{7,40})/m.exec(text)?.[1] ?? "";
+  const started = /^-\s+Started:\s+(\S+)/m.exec(text)?.[1] ?? "";
+  const ended = /^-\s+Ended:\s+(\S+)/m.exec(text)?.[1] ?? "";
+  const exitMatch = /^RELEASE_GATE_EXIT=(\d+)/m.exec(text);
+  const unverified = /^currently UNVERIFIED \((\d+)\)/m.exec(text);
+
+  return {
+    missing: false,
+    path: relativePath,
+    steps,
+    pass: steps.filter((step) => step.status === "PASS").length,
+    fail: steps.filter((step) => step.status === "FAIL").length,
+    blocking,
+    commit,
+    started,
+    ended,
+    exit: exitMatch === null ? undefined : Number(exitMatch[1]),
+    unverified: unverified === null ? undefined : Number(unverified[1]),
+  };
+}
+
+/**
  * One verdict line per gate: the label, whether its own policy blocks, why, and the evidence the
  * verdict rests on.
  *
@@ -376,12 +437,62 @@ export async function renderStatement() {
     "",
   );
 
-  return { lines, verdicts, unverified, risks, conditions };
+  return { lines, verdicts, unverified, risks, conditions, execution: task7Execution() };
 }
 
 /** The remaining sections, appended by the same deterministic renderer. */
-function renderTail({ lines, verdicts, unverified, risks, conditions }) {
+function renderTail({ lines, verdicts, unverified, risks, conditions, execution }) {
   const push = (...text) => lines.push(...text);
+
+  push(
+    "## Task 7 — live execution",
+    "",
+    "The section the disclaimer above points at. **Parsed from the run's own transcript**",
+    `— \`transcript:${TASK7_TRANSCRIPT}\` — rather than retyped, so these rows cannot`,
+    "drift from the invocation that produced them.",
+    "",
+  );
+  if (execution.missing) {
+    push(
+      `**No live run is recorded.** \`${execution.path}\` does not exist, so every verdict in this`,
+      "document is a *document* verdict and nothing here has been measured today. This is stated rather",
+      "than omitted: a statement that quietly dropped this section would read complete.",
+      "",
+    );
+  } else {
+    push(
+      `- Command: \`node scripts/release-gate.mjs --enforce --full --no-audit\``,
+      `- Commit measured: \`${execution.commit}\``,
+      `- Started: ${execution.started} — ended: ${execution.ended}`,
+      `- Result: **${execution.pass} of ${execution.steps.length} steps PASS, ${execution.fail} FAIL**, exit ${execution.exit}`,
+      "",
+      "One uninterrupted invocation over all 32 steps including the long class. `--no-audit` is passed",
+      "because no registry is reachable from this host; every other step ran unmodified. A non-zero exit",
+      "is the gate working: the failing rows are the remaining work, and no status was adjusted to clear",
+      "them.",
+      "",
+      "| step | verdict | evidence |",
+      "|---|---|---|",
+    );
+    for (const step of execution.steps) {
+      // The citation is repeated per row rather than stated once above the table: the sweep in
+      // `tests/no-fabrication.test.mjs` reads a verdict row on its own, and correctly so — a `PASS`
+      // is a claim wherever it sits, and a citation a reader has to go hunting for upwards is one
+      // that stops applying the moment a row is copied out of the table.
+      push(`| ${cell(step.id)} | ${step.status} | transcript:${TASK7_TRANSCRIPT} |`);
+    }
+    push("", `Blocking (${execution.blocking.length}):`, "");
+    for (const entry of execution.blocking) {
+      push(`- \`${cell(entry.id)}\` — ${cell(entry.detail)}`);
+    }
+    push(
+      "",
+      "The three blocking gates are the three whose documents withhold something: 9H's absent clients,",
+      "9I's two chaos scenarios this device cannot stage, and 9L's two features that depend on them.",
+      "Each is listed with its reason in the inventory below.",
+      "",
+    );
+  }
 
   push(
     "## Everything currently `UNVERIFIED`",

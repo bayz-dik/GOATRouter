@@ -114,6 +114,52 @@ test("every gate verdict row cites resolvable evidence, so a PASS row is not a b
   }
 });
 
+test("the Task 7 section is parsed from the run transcript, never retyped", async () => {
+  /*
+   * The section the statement's own disclaimer promises: "until that section exists, no line in this
+   * file is a claim about a run that happened today". It is built by parsing the aggregate gate's raw
+   * output, so the live results cannot drift from the run that produced them — retyping 32 verdicts
+   * would create a second copy, and the copy that drifted would be the one a reader trusts.
+   */
+  const execution = readiness.task7Execution();
+  assert.equal(execution.missing, false, `the Task 7 transcript is missing: ${readiness.TASK7_TRANSCRIPT}`);
+  assert.equal(execution.steps.length, 32, `expected 32 gate steps, parsed ${execution.steps.length}`);
+  assert.equal(
+    execution.pass + execution.fail,
+    execution.steps.length,
+    "a step was parsed with neither a PASS nor a FAIL verdict",
+  );
+  assert.ok(execution.fail > 0, "the transcript records no failing step — verify it against the real run");
+  assert.ok(execution.commit.length >= 7, "the transcript records no commit");
+  assert.equal(execution.exit, 1, `the run exited ${execution.exit}; a passing aggregate gate needs its own review`);
+
+  // The citation is resolved, not merely rendered: a transcript path nobody opened is the defect
+  // 9L Task 1 found fifteen times over.
+  const resolved = await evidence.resolveEvidence(`transcript:${readiness.TASK7_TRANSCRIPT}`);
+  assert.ok(resolved.ok, `the Task 7 transcript does not resolve — ${resolved.reason}`);
+
+  const text = statement();
+  assert.ok(text.includes("## Task 7 — live execution"), "the statement has no Task 7 section");
+  assert.ok(text.includes(`transcript:${readiness.TASK7_TRANSCRIPT}`), "the Task 7 section cites no transcript");
+  assert.ok(text.includes(execution.commit), "the Task 7 section does not record the commit the run measured");
+  for (const step of execution.steps) {
+    assert.ok(text.includes(step.id), `the Task 7 section omits the ${step.id} step`);
+  }
+});
+
+test("a missing Task 7 transcript is reported as absent, never rendered as a pass", () => {
+  /*
+   * The refusal that makes the section trustworthy. A generator that quietly omitted the section when
+   * the transcript was gone would leave a statement that reads complete, and the absence of a live run
+   * is exactly the thing this document must never hide. Driven through the parser with a path that
+   * does not exist, because the real transcript is present and must stay that way.
+   */
+  const absent = readiness.task7Execution("docs/transcripts/release-gate/does-not-exist.md");
+  assert.equal(absent.missing, true, "a missing transcript was not reported missing");
+  assert.deepEqual(absent.steps, [], "a missing transcript produced steps out of nothing");
+  assert.equal(absent.pass, 0, "a missing transcript produced passes out of nothing");
+});
+
 test("the UNVERIFIED inventory is non-empty and every entry carries a reason", async () => {
   /*
    * Non-empty is asserted, not hoped for. Two features, one soak mode, two chaos scenarios, six

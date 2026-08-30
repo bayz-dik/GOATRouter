@@ -47,6 +47,67 @@ above is `BLOCKED`. That is the gate working. A status is never adjusted to make
 27 `PASS`, 0 `FAIL`, 2 `UNVERIFIED` across 29 features.
 Authoritative record: `docs/superpowers/2026-08-27-bayz-feature-completeness-gate.md`.
 
+## Task 7 — live execution
+
+The section the disclaimer above points at. **Parsed from the run's own transcript**
+— `transcript:docs/transcripts/release-gate/final-gate.md` — rather than retyped, so these rows cannot
+drift from the invocation that produced them.
+
+- Command: `node scripts/release-gate.mjs --enforce --full --no-audit`
+- Commit measured: `647126a092c79459b599f2ab8dcd2e19b48f1f7c`
+- Started: 2026-08-30T23:36:13+07:00 — ended: 2026-08-30T23:59:55+07:00
+- Result: **29 of 32 steps PASS, 3 FAIL**, exit 1
+
+One uninterrupted invocation over all 32 steps including the long class. `--no-audit` is passed
+because no registry is reachable from this host; every other step ran unmodified. A non-zero exit
+is the gate working: the failing rows are the remaining work, and no status was adjusted to clear
+them.
+
+| step | verdict | evidence |
+|---|---|---|
+| runtime:verify | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:api | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:chaos | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:custom-provider | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:dashboard | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:identity | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:injection | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:install | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:provider | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:proxy | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:proxy-ux | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:router | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:security | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:storage | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:stream | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:upgrade | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:usage | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| suite | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| fuzz | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| dependency-closure | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| lockfile-check | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| offline-check | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| diff-check | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| clean-tree | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:client | FAIL | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:resilience | FAIL | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:platform | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:supply-chain | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:feature | FAIL | transcript:docs/transcripts/release-gate/final-gate.md |
+| gate:security | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:load | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+| smoke:soak | PASS | transcript:docs/transcripts/release-gate/final-gate.md |
+
+Blocking (3):
+
+- `gate:client` — exit 1 — tests/matrix-integrity.test.mjs, which resolves every citation on disk.
+- `gate:resilience` — exit 1 — resilience-gate: BLOCKED — 2 blocking row(s), 0 integrity violation(s)
+- `gate:feature` — exit 1 — feature gate: FAIL — 2 blocking item(s)
+
+The three blocking gates are the three whose documents withhold something: 9H's absent clients,
+9I's two chaos scenarios this device cannot stage, and 9L's two features that depend on them.
+Each is listed with its reason in the inventory below.
+
 ## Everything currently `UNVERIFIED`
 
 Read through each subprogram's own parser by `scripts/release-gate.mjs`'s `collectUnverified()`,

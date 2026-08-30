@@ -3962,28 +3962,44 @@ docs/superpowers/flux-core-v2-manifest.json                     12 files pinned
 
 ### 9L resume point
 
-**Phase 9L Tasks 1–6 are COMPLETE. Task 7 — final gate execution — is the only remaining work in
-Phase 9.** It runs the live set: `npm run runtime:verify`, the sixteen fast-class smoke scripts, the
-root suite, `fuzz-run`, `chaos-smoke`, `offline-check`, then the long class (`load-smoke`,
-`soak-smoke`), then `release-gate.mjs --report` and `--enforce --full`. Results are appended to the
-readiness statement by regenerating it.
+**Phase 9L is COMPLETE, and with it Phase 9.** Tasks 1–6 were complete before this session; Task 7 —
+final gate execution — ran on 2026-08-30 and is recorded in
+`docs/transcripts/release-gate/final-gate.md`, cited from the readiness statement's
+`## Task 7 — live execution` section, which is parsed from that transcript rather than retyped.
 
-`--enforce` is **expected to exit non-zero** on the two `UNVERIFIED` feature rows, the 9H client
-blockers, and the two 9I chaos scenarios. That is the correct outcome. **Do not adjust a status to make
-the gate pass** — the failing rows are the remaining work, and they are environmental.
+One uninterrupted `node scripts/release-gate.mjs --enforce --full --no-audit` over all 32 steps at
+commit `647126a`: **29 PASS, 3 FAIL, exit 1**, 23m42s. `--no-audit` because no registry is reachable
+from this host; every other step ran unmodified. `runtime:verify`, all 16 fast smoke scripts, the root
+suite, `fuzz-run`, `dependency-closure`, `lockfile-check`, `offline-check`, `git diff --check`, the
+clean-tree check, the 9J/9K gates, the derived 9F posture row, and both long-class smokes
+(`load-smoke` 64/64, `soak-smoke` 13/13) all passed.
+
+The three failures are 9H's client gate, 9I's resilience gate, and 9L's feature gate — the three whose
+documents withhold something, on 67 honestly `UNVERIFIED` items. **Every one is environmental**: absent
+client binaries, two chaos scenarios this device cannot stage (`chmod 0444` does not stop root under
+proot; `mount -t tmpfs` exits 0 while mounting nothing), and the two features that depend on them. No
+status was adjusted to clear them, and a non-zero exit here is the gate working.
+
+**One real defect was found and fixed rather than documented around.** The generated readiness
+statement rendered its gate rows with a verdict and nothing else, so 9J, 9K and the derived 9F were
+`PASS` rows carrying no evidence — and `tests/no-fabrication.test.mjs`'s repo-wide sweep failed on
+them, which failed `offline-check`, which failed the aggregate gate. Fixed in `scripts/readiness.mjs`
+(`VERDICT_EVIDENCE`, a per-row citation, resolved through `scripts/evidence.mjs` by a new test), never
+in the generated markdown — the statement is byte-identity-locked, so a hand edit could only have
+moved the failure. Root suite 467/467.
 
 ## Next steps
 
-1. **Run Phase 9L Task 7.** Bounded: the fast class alone is roughly six minutes of `tsc` plus sixteen
-   smoke scripts plus the root suite. `soak-smoke` defaults to 10 minutes and `--long` to two hours;
-   the two-hour mode has never been run here and the host is documented to stall for up to 184 s at
-   load average 0.12, which would make an unattended two-hour result unreadable.
-2. **Do not push to GitHub.** A push requires implementation complete, this gate green, the security
-   gate green, a clean tree, a verified release candidate, and an explicit user instruction. Three of
-   those are currently unmet, and `tests/phase9-locks.test.mjs` asserts no remote exists.
-3. **Verify Flux Core in a real browser.** Motion and typography equivalence with the approved
+1. **Do not push to GitHub.** A push requires implementation complete, this gate green, the security
+   gate green, a clean tree, a verified release candidate, and an explicit user instruction. Three
+   remain unmet, and `tests/phase9-locks.test.mjs` asserts no remote exists.
+2. **Verify Flux Core in a real browser.** Motion and typography equivalence with the approved
    standalone file is *unverified* — this environment has no browser. The 9L visual lock pins the
    bytes, which is a different guarantee. Compare side by side before treating the port as final.
-4. **To close the two `UNVERIFIED` features**, either install `antigravity` on a host that can run it
+3. **To close the two `UNVERIFIED` features**, either install `antigravity` on a host that can run it
    and capture transcripts, or run the committed `.github/workflows/platform-matrix.yml` on real
    runners. Both need resources this device does not have; neither is a code defect.
+4. **To close the two 9I chaos rows**, run them on a host with a real read-only mount and a bounded
+   filesystem. Both refusals are recorded with the reason the technique fails here, not deferred.
+5. **The 2-hour soak long mode has never been run here.** The host is documented to stall for up to
+   184 s at load average 0.12, which would make an unattended two-hour result unreadable.
