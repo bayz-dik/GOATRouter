@@ -389,8 +389,52 @@ patterns — `gpt-4*` is route configuration, not a model a client could request
 Phase 7 wires the existing dashboard shell to the Phase 6 API. It serves from the
 same origin as the Core, so no CORS relaxation is involved.
 
-- Panels: runtime status, providers, proxies, routes, and a one-shot test chat.
+- Screens: Home, Usage, Providers, Routes, Proxies, Identities, and a one-shot test
+  chat, reached from the navigation rail.
 - Verify the built artifact: `node scripts/dashboard-smoke.mjs`
+
+### The approved shell, and where it differs from the reference
+
+`reference/Web-Ui.html` is the approved visual source for the shell and the Usage
+screen; it is tracked so the port can be reviewed against it rather than against a
+description of it. `apps/dashboard/src/Shell.tsx` carries the approved brand mark,
+type scale, rail breakpoints, and mobile header unchanged.
+
+Two differences are deliberate, and both are recorded in the source:
+
+- **Every navigation entry is live.** The reference is a Usage-only preview whose
+  other buttons are `disabled` shell elements. Here each one reaches a working
+  screen and `aria-current="page"` moves with the selection, because a nav button
+  that looks live and does nothing is the most misleading thing a shell can ship.
+- **`Settings` is not offered.** Bayz has no settings screen, so the slot holds the
+  screens it does have — Proxies, Identities, Chat — rather than a label for a
+  screen that does not exist.
+
+Only the unauthenticated liveness check renders before the token gate. Every screen
+that reads operator data stays behind `TokenGate`, so navigating to one shows the
+screen and then asks for the token; it does not render unlocked.
+
+### The Usage screen shows telemetry or says it has none
+
+Every figure comes from the authenticated `/api/usage/*` endpoints described under
+[Usage telemetry](#usage-telemetry). There is no demo data path and no simulated
+fallback:
+
+- The reference's `DEMO DATA` captions and its hardcoded demo tables are **not**
+  carried over.
+- A token count the provider did not report renders as `—`, never as `0`. That is
+  the same "unknown is not zero" rule the storage boundary and the API keep, held
+  one layer further out.
+- Cost prints the server's own `costReason` instead of a number. Bayz has no
+  pricing table and no billing API, so a plausible dollar figure here would be a
+  fabricated measurement wearing a real label.
+- An empty period says so rather than drawing a chart of nothing: the chart path
+  builders return nothing to draw instead of a flat line at zero, which would read
+  as recorded silence.
+
+The screen adds no backend surface. It calls three existing read-only endpoints
+through `createApiClient`, and no router, provider, proxy, or storage file changed
+to support it.
 
 ### The token is not remembered
 
@@ -716,17 +760,20 @@ the gates into `docs/superpowers/2026-08-27-bayz-release-readiness.md`.
 
 ## Deferred verification
 
-The existing private BAYZ Sites/UI review surface is not present in this
-workspace. `BAYZ-responsive-master.html`, the Sites build, and its root
-`package.json` scripts have not been merged here yet.
+Part of the private BAYZ UI surface has now been merged: `reference/Web-Ui.html` is
+tracked and ported into `apps/dashboard` as the navigation shell and the Usage
+screen (see [Operator dashboard](#operator-dashboard)). The **Sites** surface has
+not. The Sites build and its root `package.json` scripts are still absent, and
+`BAYZ-responsive-master.html` is present in the working tree only — untracked, not
+committed, and not built by anything here.
 
 Therefore the following Foundation Plan checks are **DEFERRED**, not passing:
 
 - Root Sites build (`npm run build`) — no Sites source exists to build.
 - "The existing root Sites build still passes" phase-completion item.
 
-`apps/dashboard` is the runtime foundation shell only. It is not a replacement
-for the locked BAYZ visual direction, and it does not supersede
-`BAYZ-responsive-master.html` as the visual source of truth. These deferred
-checks must be run after the original UI/Sites source is added to this
+`apps/dashboard` now carries the approved shell and Usage screen rather than a
+generic foundation layout, but it is still not the Sites surface and does not
+supersede `BAYZ-responsive-master.html` as the visual source of truth for it. These
+deferred checks must be run after the original Sites source is added to this
 workspace.

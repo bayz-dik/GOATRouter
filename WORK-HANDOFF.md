@@ -181,7 +181,11 @@
   - `docs/superpowers/specs/2026-08-26-bayz-router-usage-telemetry-design.md`
   - `docs/superpowers/specs/2026-08-27-bayz-phase9-goat-release-design.md`
 - Every task followed RED → verify RED → GREEN → verify GREEN.
-- No push to GitHub. All work is local commits on `master`.
+- Approved shell + Usage screen merged from `reference/Web-Ui.html`; see
+  "Approved shell and Usage screen — as built" below.
+- **Pushed to GitHub** at the owner's explicit instruction: `origin` is
+  `https://github.com/bayz-dik/GOATRouter.git` and `master` fast-forwarded
+  `4b4739b..8f106d8`. Everything before that push was local commits on `master`.
 
 ## Verified totals
 
@@ -200,7 +204,10 @@ script per command.
 - `@bayz/proxy`: 121 tests pass.
 - `@bayz/router`: 289 tests pass.
 - `@bayz/server`: 336 tests pass (includes the `/api/health` Phase 1 contract guard).
-- `@bayz/dashboard`: 340 tests pass across 23 files.
+- `@bayz/dashboard`: 340 tests pass across 23 files. (Now **378 across 25 files** —
+  the approved shell and Usage screen added three test files and widened
+  `adversarial.test.tsx`. Left at the 9G figure here because this whole section is a
+  snapshot; the current count is in "Approved shell and Usage screen — as built".)
 
 ### Builds — all twelve `runtime:build` targets exit 0
 
@@ -880,11 +887,12 @@ the Bayz process, compromised dependency or build, hardware/OS compromise while
 unlocked, database rollback, and guaranteed memory zeroization (buffers are
 zeroed, but the GC may have copied them and immutable strings cannot be wiped).
 
-## DEFERRED — blocked until the original UI/Sites source is added here
+## DEFERRED — blocked until the original Sites source is added here
 
-The private BAYZ Sites/UI review surface is **still not present** in this
-workspace. `BAYZ-responsive-master.html`, the Sites build, and the Next.js root
-`package.json` scripts have not been merged in.
+The **Sites** half of the private BAYZ surface is still not present in this
+workspace. The Sites build and the Next.js root `package.json` scripts have not been
+merged in. `BAYZ-responsive-master.html` sits in the working tree **untracked** — it
+is not committed, not built, and nothing reads it.
 
 These checks are DEFERRED and have **not** been verified. They are not passing:
 
@@ -894,19 +902,27 @@ These checks are DEFERRED and have **not** been verified. They are not passing:
 - Merging the approved workspace fields into the real Next.js root
   `package.json` without discarding its existing scripts/dependencies.
 
-`apps/dashboard` is the runtime foundation shell plus the Phase 7 operator panels.
-It is **not** a redesign and does **not** replace `BAYZ-responsive-master.html` as
-the locked visual source of truth.
+The **dashboard UI half is no longer deferred.** `reference/Web-Ui.html` (47,833
+bytes, `<title>BAYZ — Relay Track / Flux Core v2</title>`) is tracked and ported into
+`apps/dashboard` as the navigation shell and the Usage screen — see "Approved shell
+and Usage screen — as built" below. `apps/dashboard` therefore carries the approved
+shell rather than a generic foundation layout, but it is still not the Sites surface
+and does not replace `BAYZ-responsive-master.html` as the visual source of truth for
+it.
 
-The **BAYZ Flux Core V2 motion system is now integrated** from the approved
+The **BAYZ Flux Core V2 motion system is integrated** from the same approved
 47,833-byte source. `apps/dashboard/src/flux/` holds the port and
 `apps/dashboard/src/FluxCoreSlot.tsx` mounts it; `data-bayz-flux-core-slot` remains
-the anchor. See the Flux Core V2 integration section above for what was preserved,
-what was changed for production, and the known discrepancies.
+the anchor. The Usage screen is now where that slot is mounted, fed by the live
+adapter rather than by the reference's ambient simulation. See the Flux Core V2
+integration section above for what was preserved, what was changed for production,
+and the known discrepancies.
 
-## Resume steps once the real BAYZ repo/UI is available
+## Resume steps once the real BAYZ Sites source is available
 
-1. Copy the Sites/UI source and the real root `package.json` into this workspace.
+1. Copy the Sites source and the real root `package.json` into this workspace. The
+   dashboard UI does not need copying: `reference/Web-Ui.html` is already tracked and
+   ported.
 2. Merge the workspace fields (`workspaces`, `runtime:*` scripts) into the real
    root `package.json` instead of overwriting it.
 3. Move the README runtime, storage, provider, proxy, router, API, and dashboard
@@ -3988,14 +4004,137 @@ them, which failed `offline-check`, which failed the aggregate gate. Fixed in `s
 in the generated markdown — the statement is byte-identity-locked, so a hand edit could only have
 moved the failure. Root suite 467/467.
 
+## Approved shell and Usage screen — as built
+
+**Source of truth:** `reference/Web-Ui.html`, 47,833 bytes,
+`<title>BAYZ — Relay Track / Flux Core v2</title>` — the same approved file the Flux
+Core V2 port came from. It is now **tracked**, so the port can be reviewed against the
+bytes rather than against a description of them. Nothing was recreated from memory.
+
+### Architecture as built
+
+```text
+apps/dashboard/src/Shell.tsx ............ approved rail, brand, breakpoints, mobile head
+apps/dashboard/src/App.tsx .............. screen switching over the existing panels
+apps/dashboard/src/usage/UsageScreen.tsx  the Usage screen, live telemetry only
+apps/dashboard/src/usage/format.ts ...... pure display formatting + chart geometry
+apps/dashboard/src/api/client.ts ........ +3 read-only /api/usage/* calls
+apps/dashboard/src/api/types.ts ......... +4 usage view types, nullable by design
+apps/dashboard/src/styles.css ........... ported shell + Usage styles, no remote font
+
+apps/dashboard/test/App.test.tsx ........ shell nav, aria-current, gating
+apps/dashboard/test/usage-screen.test.tsx  Usage screen against a stub API
+apps/dashboard/test/usage-format.test.ts   formatting + bucketing edge cases
+apps/dashboard/test/adversarial.test.tsx   widened source scans over the new files
+tests/pack.test.mjs .................... asset name re-pin (hash move only)
+```
+
+`App` renders `Shell` and selects one screen. The unauthenticated `CoreStatus`
+liveness check is the only thing outside `TokenGate`; every screen that reads operator
+data sits inside it, so navigating to Providers shows the screen and then asks for the
+token rather than rendering it unlocked.
+
+### Deliberate differences from the reference, and why
+
+1. **Every nav entry is live.** The reference is a Usage-only preview: Home, Routes,
+   Providers and Settings are `disabled` shell elements. Here each entry reaches a
+   real screen and `aria-current="page"` moves with the selection. A nav button that
+   looks live and does nothing is the most misleading thing a shell can ship, so
+   `App.test.tsx` asserts every entry is enabled and that exactly one carries
+   `aria-current`.
+2. **`Settings` is not offered.** Bayz has no settings screen. The slot holds Proxies,
+   Identities and Chat — screens that exist — and a test asserts no `Settings` button
+   is rendered, so the label cannot come back as an inert promise.
+3. **No demo data, anywhere.** The reference hardcodes four demo tables and captions
+   them `DEMO DATA`. None of it is carried over: the screen reads
+   `/api/usage/summary`, `/api/usage/providers` and `/api/usage/requests`, and
+   `usage-screen.test.tsx` asserts the reference's own demo constants never reach the
+   DOM.
+4. **Unknown renders as unknown.** `null` from the API — meaning no provider reported
+   the count — prints `—`, never `0`. This is the Phase 8 "unknown is not zero" rule
+   held one layer further out than the API, and `formatCount` returns `UNKNOWN_VALUE`
+   for `null`, `undefined`, `NaN` and negatives alike.
+5. **Cost stays unavailable.** The panel prints the server's own `costReason` rather
+   than a figure. Bayz has no pricing table and no billing API, so a dollar amount
+   here would be a fabricated measurement wearing a real label.
+6. **An empty period says so.** `paceLinePath` returns `undefined` and `paceBars`
+   returns `[]` when nothing was counted, so the screen renders an explicit empty
+   state instead of a flat line at zero that would read as measured silence.
+7. **The endpoint in the rail foot is read from `location.host`.** The dashboard is
+   served by the Core it talks to, so the browser already knows the answer; a baked-in
+   `localhost:20128` would be wrong for an operator who moved the port.
+8. **The Flux Core slot moved onto the Usage screen** and is fed by
+   `flux/adapter.ts` from real request rows, not by the reference's ambient simulation
+   strings. `FluxCoreSlot.tsx` itself is unchanged, so the 9L visual lock still holds
+   its pinned SHA-256.
+
+### What was NOT touched
+
+No backend, router, provider, proxy, storage, or gateway file changed. The three
+endpoints already existed in `apps/server/src/routes/usage.ts` with the exact shape the
+screen needs, so the frontend contract needed no negotiation — the view types mirror
+the route's response fields, including their nullability.
+
+### One repo-level lock was re-pinned, and only a hash
+
+`tests/pack.test.mjs` pins the tarball's file list exactly. Two entries carry vite's
+content hash, so changing dashboard source moves them:
+`index-B6wiUNeX.js` / `index-VNKm-hop.css` became
+`index-DNsUQghD.js` / `index-CG1SpnTD.css`. The entry **count** and every other path
+are unchanged, which is what distinguishes a legitimate hash move from a file
+appearing or vanishing. The names are still written out literally rather than globbed
+from `apps/dashboard/dist`, because deriving them would make those two entries assert
+nothing.
+
+### Verification actually run for this merge
+
+```text
+@bayz/dashboard tests ............. 378/378 across 25 files
+@bayz/server tests ................ 351/351
+scripts/dashboard-smoke.mjs ....... 48/48 against the REBUILT bundle
+tests/pack.test.mjs ............... 20/20  (after the asset re-pin)
+tests/build-determinism.test.mjs ..  9/9
+tests/portability.test.mjs ........ 14/14
+tests/no-fabrication.test.mjs ..... 20/20
+tests/evidence.test.mjs ........... 18/18
+tests/sbom.test.mjs ............... 14/14
+tests/license-inventory.test.mjs .. 15/15
+tests/lockfile-integrity.test.mjs . 17/17
+tests/dependency-closure.test.mjs . 12/12
+npm run runtime:build ............. all twelve targets exit 0
+```
+
+`tests/phase9-locks.test.mjs` is **19/22**: its three "no git remote" assertions fail.
+That is the Phase 9 no-remote lock, not a regression from this merge — the same three
+fail on a clean detached worktree of the parent commit with none of this work in it,
+which is how they were classified rather than assumed. They are now expected to fail
+permanently, because the owner instructed the push and `origin` exists.
+
+### Residual risk
+
+- **Not verified in a real browser.** The suites run under jsdom, which has no layout
+  engine: the 84px / 224px rail breakpoints, the `clamp()` type scale, and the chart
+  geometry are asserted as emitted attributes and CSS text, not as rendered pixels.
+  Visual equivalence with the approved reference remains **UNVERIFIED** on this host,
+  same as the Flux Core port.
+- **The refresh cadence is a chosen bound, not a measurement.** 15 s with a 50-row
+  request pull; the loader is keyed on a nonce so a refresh cannot start a second
+  in-flight load that resolves out of order, and a stale view is dropped rather than
+  shown under a failed reload.
+
 ## Next steps
 
-1. **Do not push to GitHub.** A push requires implementation complete, this gate green, the security
-   gate green, a clean tree, a verified release candidate, and an explicit user instruction. Three
-   remain unmet, and `tests/phase9-locks.test.mjs` asserts no remote exists.
-2. **Verify Flux Core in a real browser.** Motion and typography equivalence with the approved
-   standalone file is *unverified* — this environment has no browser. The 9L visual lock pins the
-   bytes, which is a different guarantee. Compare side by side before treating the port as final.
+1. **The push happened, at the owner's explicit instruction.** `origin` is
+   `https://github.com/bayz-dik/GOATRouter.git`; `master` fast-forwarded
+   `4b4739b..8f106d8` with the UI integration. Consequently the three "no git remote"
+   assertions in `tests/phase9-locks.test.mjs` now fail by design. They were **not**
+   weakened to force green — deleting them would erase the record that the
+   prohibition existed and was lifted deliberately. Decide explicitly whether to
+   retire them or convert them into "the only remote is the owner-approved one".
+2. **Verify Flux Core and the ported shell in a real browser.** Motion, typography and
+   layout equivalence with the approved standalone file is *unverified* — this
+   environment has no browser. The 9L visual lock pins the bytes, which is a different
+   guarantee. Compare side by side before treating either port as final.
 3. **To close the two `UNVERIFIED` features**, either install `antigravity` on a host that can run it
    and capture transcripts, or run the committed `.github/workflows/platform-matrix.yml` on real
    runners. Both need resources this device does not have; neither is a code defect.
@@ -4003,3 +4142,6 @@ moved the failure. Root suite 467/467.
    filesystem. Both refusals are recorded with the reason the technique fails here, not deferred.
 5. **The 2-hour soak long mode has never been run here.** The host is documented to stall for up to
    184 s at load average 0.12, which would make an unattended two-hour result unreadable.
+6. **`BAYZ-responsive-master.html` is still untracked** in the working tree. It is the
+   Sites visual source, not the dashboard's, and nothing here builds it. Commit it only
+   alongside the Sites surface it belongs to.
