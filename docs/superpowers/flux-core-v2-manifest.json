@@ -1,0 +1,19 @@
+{
+  "lock": "Flux Core V2 visual lock (Phase 9 spec §18)",
+  "note": "Re-pin ONLY alongside a documented bug fix, never for polish. See scripts/pin-flux-core.mjs.",
+  "algorithm": "sha256",
+  "files": {
+    "apps/dashboard/src/FluxCoreSlot.tsx": "a88909f91cde39c304d8bba1d882ed8e585a57f78b91e0f7063a070538267227",
+    "apps/dashboard/src/flux/FluxCore.tsx": "167ef603a3502efb5e4fdaa2563a7ad2bc397fcf136935d7f9fc5f095dff3b81",
+    "apps/dashboard/src/flux/ProviderMark.tsx": "d192664f702cf92346c3fe3854489c8117cc32811a774d0da72ce6fb7770b816",
+    "apps/dashboard/src/flux/adapter.ts": "9f532cbd1c2d75d8e96be08a039bcefd0a94180669d5467da20e9ef52040f502",
+    "apps/dashboard/src/flux/constellation.ts": "eb4cd79cbbe1ebdb57a2de71bafd34efecfdd8202582fc7e09977da9e8a4e95e",
+    "apps/dashboard/src/flux/engine.ts": "b989e6b8a80ca498a4fb9ed74ef56a4838935e4c89ebfa922be5dc41aa166e83",
+    "apps/dashboard/src/flux/failure-categories.ts": "d2dce9af036980bc2dca8a74716b0384d0ca72d6c762d98ff25c9bb708e0d8bb",
+    "apps/dashboard/src/flux/flux.css": "ee0d4b71d526f948b0a801d9aed4240d221d643d3072dc6a6c0bb52c22de1a72",
+    "apps/dashboard/src/flux/identity.ts": "5d562e0a1a1912b7567d39c55c304c0ef28da4b8182531349909c0667a6c05a5",
+    "apps/dashboard/src/flux/lod.ts": "17ba0bf38b049e2d205d069202de64d36c5448a0987450e2ddeb8e149f40706b",
+    "apps/dashboard/src/flux/types.ts": "57d64db0ac46e9ea9b21562bd72f831bd21286710efaf05fb2cc7ba25e5426e7",
+    "apps/dashboard/src/flux/viewport.ts": "d2e65a5bd37fece5fd30c9432694073e73488ff0475295b4e3d0c182e62dd3b0"
+  }
+}
