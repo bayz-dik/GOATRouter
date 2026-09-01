@@ -32,7 +32,7 @@ import type {
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * A failure from the Bayz API, carrying the server's own envelope fields.
+ * A failure from the GOAT ROUTER API, carrying the server's own envelope fields.
  *
  * The server guarantees its messages never contain a secret or an upstream body,
  * so surfacing `code` and `message` verbatim is both safe and far more useful to
@@ -97,7 +97,7 @@ export function createApiClient(options: CreateApiClientOptions) {
     } catch {
       // Network failures, aborts, and DNS errors are indistinguishable here and
       // equally not actionable in detail.
-      throw new ApiError(0, "network_error", "The Bayz Core could not be reached");
+      throw new ApiError(0, "network_error", "The GOAT ROUTER Core could not be reached");
     }
 
     if (response.status === 401) {
@@ -137,7 +137,7 @@ export function createApiClient(options: CreateApiClientOptions) {
       throw new ApiError(
         response.status,
         "invalid_response",
-        "The Bayz Core returned an unreadable response",
+        "The GOAT ROUTER Core returned an unreadable response",
       );
     }
   }
@@ -319,7 +319,7 @@ export function createApiClient(options: CreateApiClientOptions) {
         throw new ApiError(
           200,
           "invalid_response",
-          "The Bayz Core returned a completion without content",
+          "The GOAT ROUTER Core returned a completion without content",
         );
       }
       const finish = value.choices?.[0]?.finish_reason;

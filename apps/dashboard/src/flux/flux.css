@@ -1,18 +1,21 @@
 /*
- * BAYZ Relay Usage Track / Flux Core V2 — styles.
+ * Routing visualization (Flux Core V2) — styles.
  *
- * Ported from the approved standalone source. Two production changes, both
- * required by BAYZ constraints and neither altering the approved appearance
- * beyond the substituted font stack:
+ * Ported from the approved standalone source. Three production changes, all required by
+ * GOAT ROUTER constraints and none altering the approved geometry:
  *
- *   1. The remote Google Fonts @import is REMOVED. BAYZ is local-first and a
- *      strict CSP must not need a font-src exception. Archivo / Archivo Black /
- *      IBM Plex Mono are replaced with local stacks that preserve the intended
- *      character: a grotesque sans for body, a heavy grotesque for display, and a
- *      monospace for data. See --flux-font-* below.
+ *   1. The remote Google Fonts @import is REMOVED. GOAT ROUTER is local-first and a
+ *      strict CSP must not need a font-src exception. Archivo / IBM Plex Mono are
+ *      replaced with local stacks that preserve the intended character: a grotesque
+ *      sans for body and a monospace for data. See --flux-font-* below.
  *   2. Selectors are scoped to the Flux Core panel rather than styling `html`,
  *      `body`, or bare `button`, so mounting the visualization cannot restyle the
  *      rest of the dashboard.
+ *   3. The display face is retired and the rules it styled now carry their weight in the
+ *      UI sans; `.legend`, `.state-square`, `.core-copy span`, `.core-copy em` and the
+ *      `.live-row` time column are deleted along with the copy they styled. See the
+ *      zero-gimmick copy pass — a rule for an element nothing renders is dead weight that
+ *      invites the element back.
  *
  * Everything else — geometry, spacing, provider positions, breakpoints, keyframes,
  * timings, and the monochrome palette — is unchanged from the approved file.
@@ -23,10 +26,13 @@
    * Local font stacks. `Archivo` and `IBM Plex Mono` are still named first so an
    * operator who has them installed sees the exact approved faces; the fallbacks
    * are the closest widely available grotesques and monospaces.
+   *
+   * **`--flux-font-display` is gone.** The `Archivo Black` / `Impact` /
+   * `Haettenschweiler` poster face was retired across the dashboard, and it was declared
+   * here for the panel headings and the core word — both of which now carry their weight
+   * in the UI sans. A token nothing spends is dead, and it invites the face back.
    */
   --flux-font-body: Archivo, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --flux-font-display: "Archivo Black", Archivo, "Helvetica Neue", Impact, Haettenschweiler,
-    "Arial Narrow Bold", sans-serif;
   --flux-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
 
@@ -70,16 +76,21 @@
 }
 .flux-panel .panel-head h2 {
   margin: 0;
-  font-family: var(--flux-font-display);
+  /*
+   * The shell retired the display face, so the panel heading inside it does too — a
+   * single Archivo Black heading floating in a dashboard that has none reads as a
+   * leftover. Weight carries the hierarchy, as it does everywhere else now.
+   */
   font-size: 18px;
-  letter-spacing: -0.04em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .flux-panel .panel-head h3 {
   margin: 0;
-  font-family: var(--flux-font-display);
   font-size: 15px;
-  letter-spacing: -0.04em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .flux-panel .flux-subhead {
@@ -167,32 +178,27 @@
 }
 .flux-panel .core-copy strong {
   display: block;
-  font-family: var(--flux-font-display);
+  /*
+   * The core word is the routing mode. It was set in the display face at -0.06em, which
+   * was the poster setting the rest of the dashboard has now dropped; weight carries it
+   * instead. The size is unchanged, because the size is the approved composition.
+   */
   font-size: clamp(30px, 8vw, 54px);
-  letter-spacing: -0.06em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   line-height: 0.88;
 }
-.flux-panel .core-copy span {
-  display: block;
-  margin-top: 7px;
-  font-family: var(--flux-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  color: #d9d9d9;
-}
-.flux-panel .core-copy em {
-  display: block;
-  width: 76px;
-  height: 2px;
-  background: #fff;
-  margin: 10px auto 0;
-}
+/*
+ * `.core-copy span` and `.core-copy em` are gone with the elements they styled: the caption
+ * beneath the wordmark and the decorative rule under it. `FluxCore.tsx` renders `strong`
+ * and `small` only, so a rule for either would be styling nothing.
+ */
 .flux-panel .core-copy small {
   display: block;
   margin-top: 8px;
   font-family: var(--flux-font-mono);
   font-size: 7.5px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.08em;
   color: #8f8f8f;
 }
 
@@ -335,7 +341,7 @@
   padding: 0 10px;
   font-family: var(--flux-font-mono);
   font-size: 8px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #8f8f8f;
 }
@@ -364,32 +370,12 @@
   cursor: default;
 }
 
-.flux-panel .legend {
-  border-top: 1px solid var(--black);
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-.flux-panel .legend div {
-  padding: 10px;
-  border-right: 1px solid var(--black);
-  font-size: 10px;
-}
-.flux-panel .legend div:last-child {
-  border-right: 0;
-}
-.flux-panel .legend b {
-  display: block;
-  font-family: var(--flux-font-mono);
-  font-size: 9px;
-  margin-bottom: 3px;
-}
-.flux-panel .state-square {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  background: var(--black);
-  margin-right: 6px;
-}
+/*
+ * `.legend` and `.state-square` are gone with the numbered captions they styled —
+ * `01 / SOURCE`, `02 / HANDOFF`, `03 / IMPACT` over "Provider route", "Braided traffic",
+ * "Packet into core". Decoration explaining decoration; `FluxCore.tsx` renders neither
+ * element now, so both rules would style nothing.
+ */
 
 .flux-panel .live-activity {
   display: grid;
@@ -397,7 +383,13 @@
 .flux-panel .live-row {
   min-height: 46px;
   display: grid;
-  grid-template-columns: 10px 1fr auto;
+  /*
+   * Two columns, not three. The third held a `NOW` badge on every row — a decorative
+   * liveness cue, since the feed carries no per-event time to show. `FluxCore.tsx` renders
+   * no `span` here now, and an `auto` track for an element that never arrives leaves the
+   * message column short of the panel edge.
+   */
+  grid-template-columns: 10px 1fr;
   gap: 9px;
   align-items: center;
   border-bottom: 1px solid var(--line);
@@ -415,11 +407,6 @@
 .flux-panel .live-row b {
   font-weight: 600;
   overflow-wrap: anywhere;
-}
-.flux-panel .live-row span {
-  font-family: var(--flux-font-mono);
-  font-size: 9px;
-  color: var(--mid);
 }
 .flux-panel .load-meter {
   padding: 14px 12px;

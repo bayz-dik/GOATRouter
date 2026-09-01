@@ -3,15 +3,24 @@ import type { TokenStore } from "./token";
 
 export type TokenGateProps = {
   store: TokenStore;
-  children: ReactNode;
+  children?: ReactNode;
 };
 
 /**
- * Gate the operator surface behind an in-memory token.
+ * The login surface, and the gate around the operator surface.
  *
- * The entry field is write-only in the same sense as the credential fields: the
- * value is moved into the store and immediately cleared from component state, so
- * it is never re-rendered and never present in the DOM afterwards.
+ * While locked this renders **only** what completes the login action: the approved
+ * GOAT ROUTER lockup, the token label, the input, the Unlock button, and a validation
+ * message when one actually applies. No status line, no version, no navigation, no
+ * explanation of how the token is stored — none of it helps an operator log in, and a
+ * sentence that does not help is noise on the one screen that must be unambiguous.
+ *
+ * `App` does not mount the dashboard shell until this reports unlocked, so the rail,
+ * the screen headings and the liveness check cannot appear before authentication.
+ *
+ * The entry field stays write-only in the same sense as the credential fields: the
+ * value is moved into the store and immediately cleared from component state, so it is
+ * never re-rendered and never present in the DOM afterwards.
  */
 export function TokenGate({ store, children }: TokenGateProps) {
   const [unlocked, setUnlocked] = useState(store.isSet());
@@ -26,6 +35,7 @@ export function TokenGate({ store, children }: TokenGateProps) {
         if (!next) {
           // A 401 cleared the token: drop any residual input as well.
           setDraft("");
+          setError(undefined);
         }
       }),
     [store],
@@ -35,7 +45,11 @@ export function TokenGate({ store, children }: TokenGateProps) {
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       if (!store.set(draft)) {
-        setError("Enter the API token printed by the Bayz Core on first start.");
+        // A real validation failure, stated as the fact it is. The store refuses an
+        // empty or whitespace-only value, which is the only thing knowable here — the
+        // Core decides whether a well-formed token is *correct*, and a 401 from it
+        // clears the store and returns to this screen.
+        setError("Invalid token");
         return;
       }
       setError(undefined);
@@ -63,27 +77,46 @@ export function TokenGate({ store, children }: TokenGateProps) {
   }
 
   return (
-    <form className="bayz-token-gate" onSubmit={submit}>
-      <label htmlFor="bayz-api-token">API token</label>
-      <input
-        id="bayz-api-token"
-        name="bayz-api-token"
-        type="password"
-        autoComplete="off"
-        spellCheck={false}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      <p className="bayz-token-note">
-        The token is held in memory only and is not stored by the browser, so it
-        must be entered again after a reload.
-      </p>
-      {error !== undefined && (
-        <p role="alert" className="bayz-error">
-          {error}
-        </p>
-      )}
-      <button type="submit">Unlock</button>
-    </form>
+    <main className="goat-login">
+      <div className="goat-login-inner">
+        {/*
+          The complete approved lockup as one unit — character, halo, separator and
+          wordmark in their delivered relationship. `object-fit: contain` and a width
+          clamp only; nothing crops it, nothing scales either half independently, and no
+          breakpoint recomposes it.
+
+          `alt` carries the product name because this is the only element on the screen
+          that names it, and `App` has not mounted the shell heading yet.
+        */}
+        <img
+          className="goat-login-lockup"
+          src="/brand/goat-router-lockup.png"
+          alt="GOAT ROUTER"
+          width={1672}
+          height={941}
+          decoding="async"
+          fetchPriority="high"
+        />
+
+        <form className="goat-login-form" onSubmit={submit}>
+          <label htmlFor="bayz-api-token">API token</label>
+          <input
+            id="bayz-api-token"
+            name="bayz-api-token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          {error !== undefined && (
+            <p role="alert" className="goat-login-error">
+              {error}
+            </p>
+          )}
+          <button type="submit">Unlock</button>
+        </form>
+      </div>
+    </main>
   );
 }

@@ -432,33 +432,67 @@ describe("dashboard runtime guarantees", () => {
     expect(screen.queryByRole("heading", { name: "Runtime" })).toBeNull();
 
     /*
-     * Navigation must not be a way around the gate. Each screen is visited locked, and
-     * each must still present the token field and none of its panel headings — a screen
-     * reachable without a token would make the gate decorative.
+     * Navigation cannot be a way around the gate, because while locked there IS no
+     * navigation: `App` returns the login surface without mounting the shell. This used
+     * to walk each screen and assert the token field was still shown — a weaker property,
+     * since it accepted a rail rendering around the gate. Asserting the absence of every
+     * nav control is the stronger form, and it fails if the shell ever comes back.
      */
-    for (const [label, heading] of [
-      ["Providers", "Providers"],
-      ["Proxies", "Proxies"],
-      ["Routes", "Routes"],
-      ["Identities", "Client identities"],
-      ["Chat", "Test chat"],
-      ["Usage", "Recent requests"],
+    for (const label of [
+      "Home",
+      "Providers",
+      "Proxies",
+      "Routes",
+      "Identities",
+      "Chat",
+      "Usage",
     ] as const) {
-      goTo(label);
-      expect(screen.getByLabelText(/api token/i), `${label} is not gated`).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: label }),
+        `${label} navigation is reachable while locked`,
+      ).toBeNull();
+    }
+
+    // And none of the panel headings those screens would render.
+    for (const heading of [
+      "Providers",
+      "Proxies",
+      "Routes",
+      "Client identities",
+      "Test chat",
+      "Recent requests",
+    ] as const) {
       expect(
         screen.queryByRole("heading", { name: heading, level: 2 }),
-        `${label} rendered its panel while locked`,
+        `${heading} rendered while locked`,
       ).toBeNull();
     }
   });
 
-  it("still reports Core liveness before unlocking", async () => {
-    const store = createTokenStore();
+  it("reports Core liveness once unlocked, and not before", async () => {
+    /*
+     * Liveness is a real reading from `/api/health`, which needs no token — but it is
+     * still not shown on the login surface. Pre-authentication the only question is
+     * "what do I type here", and a status line answers a question nobody asked yet.
+     */
+    const locked = createTokenStore();
+    const { unmount } = render(
+      <App
+        healthClient={async () => ({ status: "ok", version: "0.1.0", uptimeSeconds: 1 })}
+        tokenStore={locked}
+        apiClient={stubClient()}
+      />,
+    );
+    await screen.findByLabelText(/api token/i);
+    expect(screen.queryByText("Core online")).toBeNull();
+    unmount();
+
+    const unlocked = createTokenStore();
+    unlocked.set(TOKEN);
     render(
       <App
         healthClient={async () => ({ status: "ok", version: "0.1.0", uptimeSeconds: 1 })}
-        tokenStore={store}
+        tokenStore={unlocked}
         apiClient={stubClient()}
       />,
     );
@@ -524,7 +558,29 @@ describe("dashboard runtime guarantees", () => {
       goTo(label);
       await screen.findAllByText(new RegExp("<img", "i"));
     }
-    expect(container.querySelector("img")).toBeNull();
+
+    /*
+     * The payload is `<img src=x onerror=…>`, so "no element was created from it" used
+     * to be assertable as "there is no `img` in the tree at all". The shell now renders
+     * the approved GOAT ROUTER brand artwork, so that shortcut would fail on a legitimate
+     * image — and deleting the assertion would drop the XSS guarantee with it.
+     *
+     * Stated as the property it was always standing in for instead: every `img` in the
+     * document is one of the two approved brand files loaded from our own origin. An
+     * injected one carries `src="x"` and fails this, and so would any *new* image
+     * sourced from API data — which the old form could not have caught either.
+     */
+    const images = Array.from(container.querySelectorAll("img"));
+    // Not vacuous: the shell mounts brand artwork, so there is something to check.
+    expect(images.length).toBeGreaterThan(0);
+    for (const image of images) {
+      expect(image.getAttribute("src")).toMatch(
+        /^\/brand\/goat-router-(lockup\.png|character\.webp)$/,
+      );
+      // An onerror/onload handler is how the payload would execute even with a safe src.
+      expect(image.getAttribute("onerror")).toBeNull();
+      expect(image.getAttribute("onload")).toBeNull();
+    }
     expect((window as unknown as Record<string, unknown>).__xssApp).toBeUndefined();
   });
 

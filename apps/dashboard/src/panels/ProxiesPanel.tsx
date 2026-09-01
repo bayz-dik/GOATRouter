@@ -8,7 +8,7 @@ import type {
   ProxyView,
   UpdateProxyBody,
 } from "../api/types";
-import { PanelError, useAsync } from "./shared";
+import { PanelError, useAsync, type PanelHeadingProps } from "./shared";
 
 export type ProxiesApi = {
   listProxies(): Promise<ProxyView[]>;
@@ -83,7 +83,7 @@ function patchFor(proxy: ProxyView, draft: EditDraft): UpdateProxyBody {
   return patch;
 }
 
-export function ProxiesPanel({ api }: { api: ProxiesApi }) {
+export function ProxiesPanel({ api, headingId }: { api: ProxiesApi } & PanelHeadingProps) {
   const { value, error, loading, reload } = useAsync(() => api.listProxies());
   const [actionError, setActionError] = useState<unknown>(undefined);
   const [checks, setChecks] = useState<Record<string, CheckState>>({});
@@ -231,8 +231,9 @@ export function ProxiesPanel({ api }: { api: ProxiesApi }) {
   };
 
   return (
-    <section className="bayz-panel" aria-labelledby="proxies-heading">
-      <h2 id="proxies-heading">Proxies</h2>
+    <section className="bayz-panel" aria-labelledby={headingId ?? "proxies-heading"}>
+      {/* Printed only when the screen has not already titled this panel. */}
+      {headingId === undefined && <h2 id="proxies-heading">Proxies</h2>}
 
       {actionError !== undefined && <PanelError error={actionError} />}
       {error !== undefined && <PanelError error={error} />}

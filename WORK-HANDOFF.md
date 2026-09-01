@@ -4122,6 +4122,293 @@ permanently, because the owner instructed the push and `origin` exists.
   in-flight load that resolves out of order, and a stale view is dropped rather than
   shown under a failed reload.
 
+## GOAT ROUTER brand integration — as built
+
+**Approved assets, used as delivered:**
+
+```text
+apps/dashboard/public/brand/goat-router-character.webp  1206x2144  119,726 B  monochrome
+apps/dashboard/public/brand/goat-router-lockup.png      1672x941   657,862 B  wordmark lockup
+```
+
+Measured before wiring anything, because every layout decision below follows from the
+numbers rather than from eyeballing:
+
+- **Both are letterboxed on pure black.** The full 3px border ring of each file has a
+  maximum luma of **1** out of 255 — so they drop onto the black rail and the black
+  login panel with no visible box, and no `mix-blend-mode: screen` knock-out is needed.
+  A knock-out would have haloed the anti-aliased edges anyway.
+- **File ratio ≠ content ratio.** The lockup's content occupies rows 168-726 of 941
+  (ratio 2.67, not the file's 1.777); the character's occupies rows 504-1680 of 2144
+  (0.915, not 0.562). Every box uses the **content** ratio, so the artwork is not
+  letterboxed a second time inside its own element.
+- **`object-position` is solved, not guessed.** `cover` crops the *file*, so the crop
+  window is placed against the measured subject extent. `center 52%` on the character
+  leaves 71px of clearance above the head and below the feet; the first attempt at 42%
+  clipped **15px off the feet**, which is precisely the defect that would have shipped
+  unnoticed.
+- **The lockup is greyscale-ish but not literally grey** (max channel delta 10), so
+  nothing forces it monochrome with a filter — the instruction was to use the approved
+  artwork, and a `grayscale()` filter would be modifying it.
+
+### Where the identity appears
+
+```text
+Login / token gate   character = main visual, lockup = wordmark   (the primary placement)
+Navigation rail      lockup at 224px  /  character alone at 84px
+Mobile header        lockup, 30px tall
+Usage / Flux Core    NOTHING — the relay scene is untouched
+```
+
+The gate is one column on a phone with the artwork above the form, two columns from
+900px with the artwork beside it. No splash, no transition, no decorative effect: the
+gate is the first paint, and an animated intro in front of a token field is a delay
+pretending to be a feature.
+
+### Accessibility, and the mistake that was caught by testing
+
+The product name reaches assistive technology from **exactly one place** — a visually
+hidden text node in the rail's `<h1>` — and every brand image is
+`alt="" aria-hidden="true"`.
+
+The first implementation put `alt="GOAT ROUTER"` on the images instead. That fails, and
+the test caught it: two artworks are in the DOM at all times with CSS choosing between
+them per breakpoint, so `alt` on each announces the product **twice** wherever the
+stylesheet has not applied — which is the situation in jsdom and in the moment before
+CSS loads. `App.test.tsx` now asserts one accessible name and `alt=""` on every
+`/brand/` image, so a future placement cannot quietly reintroduce the duplicate.
+
+### An existing XSS assertion had to be restated rather than deleted
+
+`adversarial.test.tsx` fed `<img src=x onerror=…>` through every panel and asserted
+`container.querySelector("img")` was `null` — "no element was created from the payload",
+expressed as "there are no images at all". The shell now legitimately renders images, so
+that form would fail on real artwork.
+
+Deleting it would have dropped the XSS guarantee. It is restated as the property it was
+always standing in for: **every `img` in the document is one of the two approved brand
+files, with no `onerror`/`onload` handler.** An injected image carries `src="x"` and
+fails; so would any *new* image sourced from API data, which the old form could not have
+caught either.
+
+### What was NOT touched
+
+No backend, router, provider, proxy, storage, or gateway file. No `@bayz/*` package
+rename, no environment-variable rename, no database identifier, no migration. Flux Core
+V2 is untouched and still matches its pinned SHA-256 manifest — `FluxCoreSlot.tsx` was
+not edited, and the character is deliberately absent from the Usage scene.
+
+The CSP needed no change: `img-src 'self'` already covers same-origin artwork, and the
+files are served from the dashboard's own origin. Verified against a running Core rather
+than assumed — both assets returned **200** with correct MIME types and byte-identical
+MD5s to the source files, under the unchanged strict policy.
+
+### Verification actually run
+
+```text
+@bayz/dashboard tests ......... 382/382 across 25 files  (3 runs, no flake)
+scripts/dashboard-smoke.mjs ... 48/48 against the rebuilt bundle
+tests/pack.test.mjs ........... 20/20 after re-pinning the file list
+tests/no-fabrication.test.mjs . 20/20
+npm run build --workspace @bayz/dashboard ... tsc --noEmit + vite, exit 0
+live Core (BAYZ_PORT=20155):
+  GET /                                    200  <title>GOAT ROUTER</title>
+  GET /brand/goat-router-character.webp    200  image/webp  119,726 B  md5 matches source
+  GET /brand/goat-router-lockup.png        200  image/png   657,862 B  md5 matches source
+  CSP unchanged, x-content-type-options: nosniff present on the artwork
+```
+
+`tests/pack.test.mjs` gained two entries: `dist/dashboard/brand/*`. vite copies
+`public/` into the bundle verbatim and `scripts/pack.mjs` ships whatever is in `dist`,
+so the artwork now travels in the release tarball — **966,937 bytes** against the 2 MiB
+bound, up from 201,057. The files are pinned by name for the same reason as every other
+entry: a *third* brand file appearing (a stray export, a colour variant) must fail
+rather than ride along to every user forever. The artwork is also the only binary
+content in the artifact, and the tarball secret scan reads it as bytes like everything
+else — it was checked for credential-shaped strings before being wired in, and is clean.
+
+### Residual risk
+
+- **No browser verification.** `browser-harness` reports `chrome-not-running` on this
+  host, so nothing was rendered visually. What was verified instead: the shipped CSS was
+  resolved against the shipped markup per breakpoint, and the crop geometry was computed
+  from the measured pixel extents. Layout correctness at 84px / 640px / 900px / 1024px is
+  **UNVERIFIED** in the sense that matters to a human eye — check it on the phone.
+- **The lockup is 658 KB, and it is the single largest file in the release artifact.** A
+  lossless WebP re-encode measured 392 KB (60%) with pixel-identical output, and a
+  greyscale PNG 229 KB (35%) — but the greyscale conversion is *not* lossless here (max
+  channel deviation 8), so it would be altering the approved artwork. Nothing was
+  re-encoded: the assets ship exactly as delivered. Worth revisiting only if the owner
+  approves a container change.
+
+## Authenticated mobile navigation — as built
+
+**The report:** on a phone the dashboard had no way to change screen. Below 640px
+`.side-nav` was `display: none`, no menu trigger existed anywhere, and the only thing in
+the mobile header was a caption reading `<screen> / FLUX CORE V2` — which looks like a
+two-item menu and is not interactive.
+
+**The cause was inherited, not introduced.** The approved `reference/Web-Ui.html` is a
+desktop-only Usage preview: `mobile-nav` appears **zero times** in it and it ships no
+trigger. The shell port carried that faithfully, including the caption. So this is the
+one part of the shell with no approved reference to port — it had to be designed, and the
+deviation is recorded rather than presented as approved.
+
+### One nav, not two
+
+`.side-nav` **is** the drawer below 640px (a fixed overlay panel) and the static rail from
+640px up. Same element, one `SCREENS` map, mapped exactly once.
+
+A second mobile list was rejected for two concrete reasons, not on taste: it could drift
+from the rail, and duplicate labels would make every
+`getByRole("button", { name })` in a 400-test suite ambiguous. `test/shell-responsive.test.ts`
+asserts no `.mobile-nav` rule exists, and `dashboard-smoke.mjs` re-asserts it on the
+emitted CSS, so the second list cannot come back quietly.
+
+```text
+apps/dashboard/src/Shell.tsx ..... drawer state, trigger, Escape, close-on-select
+apps/dashboard/src/styles.css .... `.side-nav` as drawer, `[data-open]`, backdrop,
+                                   scroll lock, and the unwind at 640px
+apps/dashboard/test/shell-responsive.test.ts ... NEW — the breakpoint itself
+scripts/dashboard-smoke.mjs ...... +23 checks (49-71) on the emitted artifact
+scripts/drawer-breakpoint-report.mjs ... NEW — cascade resolution per viewport
+scripts/drawer-mutations.mjs ..... NEW — the 14-mutation drill
+```
+
+### What it does
+
+- **Trigger** in the mobile header: `Open navigation` / `Close navigation` as a real
+  accessible name rather than an unlabelled glyph, with `aria-expanded` and an
+  `aria-controls` that resolves to the panel's `useId()`.
+- **Every canonical screen**, generated from `SCREENS`: Home, Usage, Providers, Routes,
+  Proxies, Identities, Chat.
+- **Selecting navigates and closes.** `aria-current="page"` moves with the selection, so
+  the active screen is indicated in both forms of the nav. On desktop the close is a
+  no-op rather than a branch, because the drawer is never open there.
+- **Escape and a backdrop tap dismiss without navigating.** The Escape listener is bound
+  only while open, so the shell installs no listener for the majority of its lifetime.
+- **Closed means out of the tab order:** `translateX(-100%)` plus `visibility: hidden`,
+  not `display: none` — a display-hidden element cannot transition, and `visibility` is
+  what keeps a keyboard user from tabbing into an invisible menu.
+- **Scroll lock** on `.app[data-menu-open]`, not on `body`, so nothing outside the
+  component is touched.
+- **`prefers-reduced-motion`** disables the slide; `visibility` still switches instantly,
+  or a closed drawer would stay tabbable.
+
+**Login remains navigation-free.** `App` returns `TokenGate` without mounting `Shell` at
+all, so pre-authentication there is no drawer, no trigger and no rail — absent, not
+hidden. `App.test.tsx` asserts every nav label is `null` while locked, and
+`adversarial.test.tsx` asserts the same for the panel headings.
+
+**Desktop navigation is unchanged.** The 84px rail at 640px and 224px at 1024px resolve
+exactly as before, verified by resolving the *served* stylesheet rather than by reading
+the diff.
+
+### One canonical-list defect was found and fixed
+
+The surviving working tree had an eighth `SCREENS` entry, `{ id: "status", label: "Status" }`,
+with **no corresponding branch in `App.tsx`** — so selecting it moved `aria-current` and
+rendered an empty `<main>`. That is precisely the inert nav entry the shell port exists to
+avoid, and `App.test.tsx`'s `expect(labels).not.toContain("Status")` was already failing
+on it. Removed: Status is a *panel inside Home*, fed by `/api/status`, not a screen.
+
+### Mutation drill: 14/14
+
+`scripts/drawer-mutations.mjs` reintroduces the bug and thirteen near-misses, runs the
+suite, restores each file and verifies the restore by SHA-256. Every mutation is caught.
+
+```text
+M1  mobile rail is display:none again (the original bug)   CAUGHT
+M2  drawer never comes on-canvas                           CAUGHT
+M3  closed drawer stays in the tab order                   CAUGHT
+M4  backdrop covers the panel it should sit behind         CAUGHT
+M5  page behind the open drawer scrolls                    CAUGHT
+M6  desktop keeps the hamburger beside the full rail       CAUGHT
+M7  desktop rail stays off-canvas                          CAUGHT
+M8  the 84px rail column is lost                           CAUGHT
+M9  drawer stays open over the screen it just opened       CAUGHT
+M10 trigger stops reporting its state                      CAUGHT
+M11 trigger loses its accessible name                      CAUGHT
+M12 an invented nav entry joins the canonical list         CAUGHT
+M13 Escape no longer dismisses                             CAUGHT
+M14 aria-controls points at nothing                        CAUGHT
+```
+
+**M9 survived its first form and that was the drill working.** The mutation inserted a
+dead `if (false) setMenuOpen(false);` *above* the real close, so the drawer still closed —
+a mutation that changes no behaviour proves nothing about the assertion aimed at it. It
+was rewritten to delete the close outright; now caught, 2 failing.
+
+**Two defects in the new verification itself were found by running it**, which is the
+reason both are scripts rather than claims:
+
+1. `dashboard-smoke.mjs` checks 63-69 asserted `"Home"` and failed on a *correct* build —
+   this bundler emits string literals in **backticks**. Now matched as
+   `` label:["'`]Name["'`] ``.
+2. `drawer-breakpoint-report.mjs` accepted only `translateX(0)` and reported a correct
+   build as broken — vite minifies it to `translate(0)`. Now accepts both.
+
+### Verification actually run
+
+```text
+@bayz/dashboard tests ............ 400/400 across 26 files   (exit 0)
+  focused subset .................  93/93  across  7 files
+  new shell-responsive.test.ts ...   8/8
+scripts/drawer-mutations.mjs ..... 14/14 mutations caught, files restored by hash
+npm run build --workspace @bayz/dashboard ... tsc --noEmit + vite, exit 0
+scripts/dashboard-smoke.mjs ...... 71/71 against the rebuilt bundle (was 48/48)
+tests/pack.test.mjs .............. 20/20 after the asset re-pin
+live Core (BAYZ_PORT=21055, BAYZ_DATA_DIR=/tmp/goat-preview-data):
+  GET /                                  200  <title>GOAT ROUTER</title>
+  GET /api/health                        200  {"status":"ok","version":"0.1.0"}
+  GET /api/status  (unauthenticated)     401
+  GET /assets/index-DmTs9FlI.css         200  29,531 B  text/css
+  GET /brand/goat-router-lockup.png      200  657,862 B  image/png
+  GET /brand/goat-router-character.webp  200  119,726 B  image/webp
+scripts/drawer-breakpoint-report.mjs http://127.0.0.1:21055 ... exit 0
+```
+
+The breakpoint report against the **served** stylesheet, which is the closest this host
+gets to a browser:
+
+```text
+360px   .side-nav        position:fixed  transform:translate(-100%)  visibility:hidden
+        [data-open]      transform:translate(0)  visibility:visible
+        .nav-toggle      grid        .mobile-head  flex     .app  1fr
+        => drawer reachable: YES; opens on [data-open]: YES
+640px   .side-nav        position:sticky  transform:none  visibility:visible
+        .nav-toggle      none        .nav-backdrop none    .mobile-head none
+        .app             84px 1fr
+        => static rail: YES; mobile chrome hidden: YES
+1024px  .nav-label       block       .app  224px 1fr
+        => static rail: YES; mobile chrome hidden: YES
+```
+
+`tests/pack.test.mjs` was re-pinned by `scripts/repin-dashboard-assets.mjs`:
+`index-CF5t5Cqr.js` / `index-qClTjGnW.css` became `index-CrO7BK7j.js` /
+`index-DmTs9FlI.css`. Entry **count and every other path unchanged**, which is what
+separates a legitimate hash move from a file appearing or vanishing.
+
+### Residual risk
+
+- **Never rendered.** There is no browser on this host: `chromium-browser` is a snap stub
+  (`requires the chromium snap to be installed`) and the browser harness reports
+  `chrome-not-running`. Tap-target size, the drawer's width against a real phone, motion,
+  and how the lockup reads in the drawer head are **UNVERIFIED** in the sense that matters
+  to an eye. The cascade resolution above is a mechanism check, not a look.
+- **No real touch input.** Backdrop dismissal is a `click` handler, which is correct for
+  touch, but no swipe-to-close gesture exists — dismissal is the trigger, the backdrop, or
+  Escape. That is a deliberate scope decision, not an oversight.
+- **`.shell-tag` was deleted from the stylesheet** along with the caption it styled.
+  Nothing else referenced it; `App.test.tsx` asserts `.mobile-head` contains no
+  `.shell-tag`, and the smoke asserts the class is absent from the shipped CSS and bundle.
+
+### What was NOT touched
+
+No backend, router, provider, proxy, storage, gateway, or identity file. No `@bayz/*`
+rename, no environment variable, no database identifier, no migration. Flux Core V2 is
+untouched. Nothing was committed and nothing was pushed.
+
 ## Next steps
 
 1. **The push happened, at the owner's explicit instruction.** `origin` is
@@ -4145,3 +4432,34 @@ permanently, because the owner instructed the push and `origin` exists.
 6. **`BAYZ-responsive-master.html` is still untracked** in the working tree. It is the
    Sites visual source, not the dashboard's, and nothing here builds it. Commit it only
    alongside the Sites surface it belongs to.
+7. **Check the GOAT ROUTER login screen on a real phone.** The brand integration is
+   committed but has never been rendered by a browser — see the residual risk in
+   "GOAT ROUTER brand integration — as built". Serve it with
+   `BAYZ_DATA_DIR=… npm run start --workspace @bayz/server` after
+   `npm run build --workspace @bayz/dashboard`, then open the Core's URL. What to look
+   at: the character is not clipped at the feet, the lockup reads cleanly in the 224px
+   rail, and the 84px rail shows the character rather than a squashed wordmark.
+8. **Decide what happens to the three "no git remote" assertions.** Still failing by
+   design since the push; they were left in place deliberately rather than deleted.
+9. **Look at the mobile drawer on a real phone — this is the open gate.** The work is
+   complete and verified by every non-visual means available on this host, but it has
+   never been rendered. Serve it and open the Core's URL on the device:
+
+   ```bash
+   npm run build --workspace @bayz/dashboard
+   BAYZ_PORT=21055 BAYZ_DATA_DIR=/tmp/goat-preview-data \
+     npm run start --workspace @bayz/server
+   ```
+
+   What to check, in order of how likely it is to be wrong:
+   - the hamburger is visible in the mobile header and large enough to hit (44px square);
+   - opening it shows all seven entries — Home, Usage, Providers, Routes, Proxies,
+     Identities, Chat — and the drawer scrolls if they do not fit;
+   - tapping one navigates *and* the drawer closes, with the chosen entry highlighted;
+   - the backdrop dims the page and a tap outside dismisses without changing screen;
+   - the page behind the open drawer does not scroll;
+   - rotating to landscape and widening past 640px shows the static rail with **no**
+     hamburger beside it;
+   - the login screen shows no navigation at all.
+
+   Nothing is committed. Review the diff before deciding.

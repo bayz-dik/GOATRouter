@@ -70,13 +70,19 @@ describe("custom provider creation", () => {
     render(<ProvidersPanel api={api()} />);
     await ready();
 
-    const select = screen.getByLabelText(/^kind$/i) as HTMLSelectElement;
+    /*
+     * Read from the Advanced `Kind override`, which is always present, rather than from the
+     * primary flow's selector — that one appears only when the base URL is not a host the
+     * form recognises, because the primary flow does not ask a question the endpoint has
+     * already answered. Every kind the server accepts is offered in both.
+     */
+    const select = screen.getByLabelText(/^kind override$/i) as HTMLSelectElement;
     const values = Array.from(select.options).map((option) => option.value);
     expect(values).toContain("custom-openai");
-    expect(values).toContain("openai-compatible");
     expect(values).toContain("openrouter");
     expect(values).toContain("gemini");
     expect(values).toContain("codex-oauth");
+    expect(values).toContain("openai-compatible");
   });
 
   it("sends a configured header with the create body", async () => {

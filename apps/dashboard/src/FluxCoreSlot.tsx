@@ -11,7 +11,7 @@ export type FluxCoreSlotProps = {
 };
 
 /**
- * Mount point for the approved BAYZ Flux Core V2 motion system.
+ * Mount point for the approved motion system.
  *
  * The wrapper is kept as the integration boundary — `data-bayz-flux-core-slot`
  * remains the anchor the rest of the dashboard and its tests rely on — while the

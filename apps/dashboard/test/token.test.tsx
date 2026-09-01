@@ -158,14 +158,34 @@ describe("TokenGate", () => {
     expect(screen.queryByText("Operator surface")).not.toBeInTheDocument();
   });
 
-  it("explains that the token is not remembered across reloads", () => {
+  it("carries no copy on the login surface beyond the login action", () => {
+    /*
+     * Replaces an assertion that the gate *explains* the token is not remembered. That
+     * explanation was removed on purpose: it is true, it is documented in the README, and
+     * it does not help anyone complete a login. This asserts the absence instead, so the
+     * copy cannot drift back in one well-meant commit at a time.
+     */
     const store = createTokenStore();
-    render(
+    const { container } = render(
       <TokenGate store={store}>
         <p>Operator surface</p>
       </TokenGate>,
     );
-    expect(screen.getByText(/not stored/i)).toBeInTheDocument();
+
+    expect((container.textContent ?? "").replace(/\s+/g, " ").trim()).toBe("API tokenUnlock");
+
+    for (const banned of [
+      /not stored/i,
+      /memory only/i,
+      /local router/i,
+      /operator access/i,
+      /core online/i,
+      /secure/i,
+      /welcome/i,
+      /powered by/i,
+    ]) {
+      expect(screen.queryByText(banned), `login copy matched ${banned}`).toBeNull();
+    }
   });
 
   it("clears the input value from component state after submitting", async () => {
@@ -203,5 +223,64 @@ describe("TokenGate", () => {
     fireEvent.click(screen.getByRole("button", { name: /lock/i }));
     expect(store.isSet()).toBe(false);
     expect(await screen.findByLabelText(/api token/i)).toBeInTheDocument();
+  });
+
+  /*
+   * The GOAT ROUTER identity on the gate.
+   *
+   * Pinned because this is the screen the brand integration exists for, and because a
+   * refactor that dropped an `src` would still leave a perfectly working login form —
+   * the failure would be invisible to every other test in this file.
+   */
+  it("shows the complete approved lockup as the single login brand asset", () => {
+    const store = createTokenStore();
+    const { container } = render(
+      <TokenGate store={store}>
+        <p>Operator surface</p>
+      </TokenGate>,
+    );
+
+    const images = Array.from(container.querySelectorAll("img"));
+    /*
+     * Exactly one image. The lockup is one brand unit — character, halo, separator and
+     * wordmark in their delivered relationship — so a second `<img>` here would mean
+     * someone had split it back into a hero and a wordmark.
+     */
+    expect(images).toHaveLength(1);
+    expect(images[0]).toHaveAttribute("src", "/brand/goat-router-lockup.png");
+    // It names the product: no shell heading exists on this surface to do it.
+    expect(images[0]).toHaveAttribute("alt", "GOAT ROUTER");
+  });
+
+  it("uses the lockup as delivered — original ratio, contained, never cropped", () => {
+    const store = createTokenStore();
+    const { container } = render(
+      <TokenGate store={store}>
+        <p>Operator surface</p>
+      </TokenGate>,
+    );
+
+    const image = container.querySelector("img")!;
+    // The file's own intrinsic size, so the ratio a browser reserves is the real one.
+    expect(image.getAttribute("width")).toBe("1672");
+    expect(image.getAttribute("height")).toBe("941");
+    // No inline filter/blend/opacity/transform: "as delivered" means unmodified.
+    expect(image.getAttribute("style")).toBeNull();
+  });
+
+  it("does not render the artwork once unlocked, so it cannot reach the Usage screen", async () => {
+    const store = createTokenStore();
+    const { container } = render(
+      <TokenGate store={store}>
+        <p>Operator surface</p>
+      </TokenGate>,
+    );
+
+    fireEvent.change(screen.getByLabelText(/api token/i), { target: { value: TOKEN } });
+    fireEvent.click(screen.getByRole("button", { name: /unlock/i }));
+    await screen.findByText("Operator surface");
+
+    // The gate is the only place the character appears. Flux Core owns the Usage scene.
+    expect(container.querySelector("img")).toBeNull();
   });
 });

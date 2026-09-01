@@ -26,7 +26,7 @@ import {
 } from "./format";
 
 /**
- * The BAYZ Usage screen.
+ * The GOAT ROUTER Usage screen.
  *
  * Every figure on this screen comes from the authenticated `/api/usage/*` endpoints —
  * the same Phase 8 telemetry the router writes. There is no demo data path and no
@@ -34,7 +34,7 @@ import {
  * whole point of the rule the adapter documents, and it is why the reference preview's
  * `DEMO DATA` captions and its `128 / 184K / 36K / 71K` constants are not carried over.
  *
- * Cost stays unavailable by design. Bayz has no pricing table and no billing API, so
+ * Cost stays unavailable by design. GOAT ROUTER has no pricing table and no billing API, so
  * the panel prints the server's own `costReason` instead of an estimate. A plausible
  * dollar figure here would be a fabricated measurement, which is worse than a blank.
  */
@@ -170,14 +170,17 @@ export function UsageScreen({ api }: { api: UsageApi }) {
   const tokensKnown = (summary?.tokenReports ?? 0) > 0;
   /**
    * A token total is shown only when at least one provider reported counts. Otherwise
-   * the cell reads `—` with `NOT REPORTED` underneath, because "no provider told us" and
+   * the cell reads `—` with `Not reported` underneath, because "no provider told us" and
    * "genuinely zero" are different facts and the screen must not merge them.
+   *
+   * Sentence case throughout this screen: the facts are unchanged, the shouting is not a
+   * fact. `NOT REPORTED` in caps read as an error when it is a normal, expected state.
    */
   const tokenValue = (value: number | null | undefined): string =>
     tokensKnown ? formatCount(value) : UNKNOWN_VALUE;
   const tokenNote = tokensKnown
-    ? `${formatCount(summary?.tokenReports)} REPORTS`
-    : "NOT REPORTED";
+    ? `${formatCount(summary?.tokenReports)} reported`
+    : "Not reported";
 
   const linePath = pace === undefined ? undefined : paceLinePath(pace);
   const bars = pace === undefined ? [] : paceBars(pace);
@@ -186,12 +189,20 @@ export function UsageScreen({ api }: { api: UsageApi }) {
     <section className="screen" aria-labelledby="usage-title">
       <div className="screen-header">
         <div>
-          <p className="kicker">Request performance</p>
+          {/*
+            "Usage" — the screen's name, nothing more. The trailing period was an affectation
+            carried from the reference preview, and the "Request performance" kicker above it
+            was a caption that said less than the one-word title it captioned.
+          */}
           <h1 className="screen-title" id="usage-title">
-            Usage.
+            Usage
           </h1>
         </div>
         <div className="header-actions">
+          {/*
+            The source badge stays: whether these figures are real telemetry is a fact worth
+            stating, and it is the honest counterpart to the Flux panel's simulated mode.
+          */}
           <span className="tag" data-testid="usage-source">
             Live telemetry
           </span>
@@ -225,8 +236,8 @@ export function UsageScreen({ api }: { api: UsageApi }) {
           </div>
           <div className="score-note">
             {summary === undefined
-              ? "AWAITING CORE"
-              : `${formatCount(summary.okRequests)} OK / ${formatCount(summary.failedRequests)} FAILED`}
+              ? "\u2014"
+              : `${formatCount(summary.okRequests)} ok / ${formatCount(summary.failedRequests)} failed`}
           </div>
         </div>
         <div className="score">
@@ -261,8 +272,8 @@ export function UsageScreen({ api }: { api: UsageApi }) {
           */}
           <div className="score-note" data-testid="score-cost">
             {summary === undefined
-              ? "AWAITING CORE"
-              : `COST ${summary.costAvailable ? "" : "UNAVAILABLE / "}${summary.costReason}`}
+              ? "\u2014"
+              : `Cost ${summary.costAvailable ? "" : "unavailable / "}${summary.costReason}`}
           </div>
         </div>
       </div>
@@ -376,11 +387,11 @@ export function UsageScreen({ api }: { api: UsageApi }) {
               </svg>
             </div>
             <div className="chart-axis">
-              <span>{`${formatCount(pace?.counted)} REQUESTS PLOTTED`}</span>
+              <span>{`${formatCount(pace?.counted)} requests plotted`}</span>
               <span>
                 {pace?.tokensKnown === true
-                  ? `PEAK ${formatCount(pace.maxTokens)} TOKENS / BUCKET`
-                  : "TOKEN COUNTS NOT REPORTED"}
+                  ? `Peak ${formatCount(pace.maxTokens)} tokens per bucket`
+                  : "Token counts not reported"}
               </span>
             </div>
           </>

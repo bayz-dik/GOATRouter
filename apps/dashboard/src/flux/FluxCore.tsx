@@ -67,13 +67,19 @@ const ROUTE_WORD: Record<FluxRouteParticipation, string> = {
   none: "no active traffic",
 };
 
+/**
+ * Provider state as a word.
+ *
+ * Sentence case, not upper: these were `ACTIVE` / `DEGRADED` / `FAILED`, which shouted a
+ * routine fact. The state is real data and stays; only the volume changes.
+ */
 const STATE_WORD: Record<FluxProviderState, string> = {
-  active: "ACTIVE",
-  degraded: "DEGRADED",
-  failed: "FAILED",
-  recovering: "RECOVERING",
-  standby: "STANDBY",
-  off: "OFF",
+  active: "Active",
+  degraded: "Degraded",
+  failed: "Failed",
+  recovering: "Recovering",
+  standby: "Standby",
+  off: "Off",
 };
 
 /** Clamp a share for display without trusting the supplied number. */
@@ -489,24 +495,30 @@ export function FluxCore({ model }: FluxCoreProps) {
     (provider) => provider.state === "failed" || provider.state === "degraded",
   ).length;
 
+  /**
+   * The routing mode, as a plain phrase.
+   *
+   * The mode itself is real data from `routingMode`, so it stays. The shouting was the
+   * gimmick: `DIRECT ROUTE` / `COMBO ROUTING` / `FAILOVER SEQUENCE` announced a routine
+   * fact in the register of an alarm. `Failover` is the only one that is genuinely an
+   * exception, and it reads as one without being capitalised at.
+   */
   const mode = useMemo(() => {
     if (model?.routingMode === "failover" || (!live && drilling) || failedCount > 0) {
-      return "FAILOVER SEQUENCE";
+      return "Failover";
     }
     if (model?.routingMode === "direct") {
-      return "DIRECT ROUTE";
+      return "Direct";
     }
     if (model?.routingMode === "combo") {
-      return "COMBO ROUTING";
+      return "Combo";
     }
-    return activeCount >= 2 ? "COMBO ROUTING" : "DIRECT ROUTE";
+    return activeCount >= 2 ? "Combo" : "Direct";
   }, [activeCount, drilling, failedCount, live, model?.routingMode]);
 
   const routed = model?.routedRequests ?? snapshot.routedRequests;
   const load = model?.loadPercent ?? snapshot.loadPercent;
   const feed = model?.activity ?? simFeed;
-  const metaState = failedCount > 0 || drilling ? "FAILOVER" : activeCount >= 2 ? "COMBO" : "DIRECT";
-  const sourceWord = live ? "LIVE" : "SIM";
 
   /**
    * Incidents that could not be labelled in place, plus any provider carrying a
@@ -529,9 +541,18 @@ export function FluxCore({ model }: FluxCoreProps) {
       );
   }, [identities, labels.overflowIncidents, nodes]);
 
-  const ariaLabel = `Bayz relay visualization. ${mode}. ${providers.length} provider${
+  /*
+   * The accessible name for the stage.
+   *
+   * States what the picture shows and nothing more. It used to open with the stale product
+   * name and repeat the shouted mode; a screen reader user needs the counts, not branding.
+   *
+   * `Routing mode: Combo` rather than `Combo routing` — the latter reads as the banned
+   * `COMBO ROUTING` jargon with the shouting removed, which is renaming rather than fixing.
+   */
+  const ariaLabel = `Routing visualization. Routing mode: ${mode}. ${providers.length} provider${
     providers.length === 1 ? "" : "s"
-  }, ${activeCount} active, ${failedCount} in incident. Tempo: ${tempo}. Routed requests: ${routed}.`;
+  }, ${activeCount} active, ${failedCount} in incident. Routed requests: ${routed}.`;
 
   const stageSize = 1.35;
   /**
@@ -545,9 +566,25 @@ export function FluxCore({ model }: FluxCoreProps) {
     <section className="panel flux-panel" aria-labelledby="relay-title">
       <div className="panel-head">
         <div>
-          <h2 id="relay-title">Relay usage track</h2>
+          {/*
+            "Routing" — what the picture is of. It was "Relay usage track", which named a
+            product feature rather than describing the visualization, and the meta line
+            beneath it spelled out `PROVIDER → BAYZ → MODEL / SIM · COMBO · LIVE · 5 NODES`:
+            stale branding, a fake liveness badge, a jargon word for providers, and the
+            mode already shown on the stage.
+          */}
+          <h2 id="relay-title">Routing</h2>
+          {/*
+            What is left of that line, and only what is left: whether these figures are
+            measured or simulated, and which period they cover.
+
+            Both are load-bearing rather than decorative. A simulation presented without
+            saying so is the one dishonesty this panel could commit, and `period` is a
+            declared field of the display boundary — dropping the line entirely would have
+            left it unconsumed, which is a hollow contract.
+          */}
           <div className="panel-meta">
-            {`PROVIDER \u2192 BAYZ \u2192 MODEL / ${sourceWord} \u00b7 ${metaState} \u00b7 ${tempo.toUpperCase()} \u00b7 ${providers.length} NODES${
+            {`${live ? "Live" : "Simulated"}${
               model?.period === undefined ? "" : ` \u00b7 ${model.period}`
             }`}
           </div>
@@ -562,7 +599,8 @@ export function FluxCore({ model }: FluxCoreProps) {
             onClick={onDrill}
             disabled={drilling || live}
           >
-            {drilling ? "DRILL ACTIVE" : "Failover drill"}
+            {/* Sentence case in both states; the disabled attribute already says it is running. */}
+            {drilling ? "Drill running" : "Failover drill"}
           </button>
           <button
             className="button small"
@@ -572,7 +610,7 @@ export function FluxCore({ model }: FluxCoreProps) {
             disabled={reduced}
             title={reduced ? "Motion is already minimized (reduced motion)" : ""}
           >
-            {paused ? "RESUME" : "Pause"}
+            {paused ? "Resume" : "Pause"}
           </button>
         </div>
       </div>
@@ -582,12 +620,15 @@ export function FluxCore({ model }: FluxCoreProps) {
           <canvas ref={canvasRef} className="flux-canvas" />
           <div className="flux-vignette" aria-hidden="true" />
 
+          {/*
+            The core caption. It was the stale product wordmark plus the shouted mode; the
+            mode is real state and stays, and the counts beneath it are real. The wordmark
+            was branding painted onto a data visualization, so it is gone.
+          */}
           <div className="core-copy" aria-hidden="true">
-            <strong>BAYZ</strong>
-            <span>{mode}</span>
-            <em />
+            <strong>{mode}</strong>
             <small>
-              {`${activeCount} PROVIDER${activeCount === 1 ? "" : "S"} / ROUTED ${routed}`}
+              {`${activeCount} of ${providers.length} routing / ${routed} requests`}
             </small>
           </div>
 
@@ -718,23 +759,15 @@ export function FluxCore({ model }: FluxCoreProps) {
           </div>
         </div>
 
-        <div className="legend">
-          <div>
-            <b>01 / SOURCE</b>
-            <span className="state-square" />
-            Provider route
-          </div>
-          <div>
-            <b>02 / HANDOFF</b>
-            <span className="state-square" />
-            Braided traffic
-          </div>
-          <div>
-            <b>03 / IMPACT</b>
-            <span className="state-square" />
-            Packet into core
-          </div>
-        </div>
+        {/*
+          The legend is gone entirely.
+        
+          It read `01 / SOURCE`, `02 / HANDOFF`, `03 / IMPACT` over "Provider route",
+          "Braided traffic", "Packet into core" — numbered captions naming parts of an
+          animation, which is decoration explaining decoration. Nothing in it was a fact
+          about the router, and the provider chips are already labelled with their own
+          names and states. No purpose, no text.
+        */}
       </div>
 
       {incidents.length > 0 && (
@@ -743,7 +776,8 @@ export function FluxCore({ model }: FluxCoreProps) {
             <div>
               <h3>Incidents</h3>
               <div className="panel-meta">
-                {`${incidents.length} PROVIDER${incidents.length === 1 ? "" : "S"} NEED ATTENTION`}
+                {/* A count and what it means, in sentence case. Was shouted. */}
+                {`${incidents.length} provider${incidents.length === 1 ? "" : "s"} need attention`}
               </div>
             </div>
           </div>
@@ -773,8 +807,12 @@ export function FluxCore({ model }: FluxCoreProps) {
 
       <div className="panel-head flux-subhead">
         <div>
-          <h3>Live activity</h3>
-          <div className="panel-meta">{live ? "Router events" : "Simulation events"}</div>
+          {/*
+            "Activity", not "Live activity": the events are already the live feed, and the
+            meta line below states whether they are router events or simulated ones.
+          */}
+          <h3>Activity</h3>
+          <div className="panel-meta">{live ? "Router events" : "Simulated events"}</div>
         </div>
       </div>
       <div className="live-activity">
@@ -785,13 +823,18 @@ export function FluxCore({ model }: FluxCoreProps) {
             <b>
               {event.label} / {event.message}
             </b>
-            <span>NOW</span>
+            {/*
+              The trailing `NOW` is gone. Every row claimed to have happened "now", which is
+              a decorative liveness cue rather than a timestamp — and the feed has no per-event
+              time to show, so the honest presentation is no time column at all.
+            */}
           </div>
         ))}
       </div>
       <div className="load-meter">
         <header>
-          <span>NETWORK LOAD</span>
+          {/* "Load", not "NETWORK LOAD": the figure is a percentage of routing capacity. */}
+          <span>Load</span>
           <strong>{load}%</strong>
         </header>
         <div className="load-track">

@@ -1,8 +1,15 @@
-# BAYZ Router
+# GOAT ROUTER
 
-Private development repository for the BAYZ All-in-One runtime.
+Private development repository for the GOAT ROUTER All-in-One runtime.
 
-## Bayz All-in-One Runtime
+The product name is **GOAT ROUTER**. Internally the workspaces are still `@bayz/*`,
+the environment variables are still `BAYZ_*`, and the database, its identifiers and
+its migration history are unchanged — see
+[The GOAT ROUTER identity](#the-goat-router-identity). Renaming those would rewrite a
+schema and a release history in order to change a label, so this document uses the
+product name in prose and the real identifier wherever one is being named.
+
+## GOAT ROUTER All-in-One Runtime
 
 The private foundation runtime lives in `apps/server`, `apps/dashboard`, and
 `packages/*`. It currently provides only the verified Core health surface and
@@ -390,29 +397,122 @@ Phase 7 wires the existing dashboard shell to the Phase 6 API. It serves from th
 same origin as the Core, so no CORS relaxation is involved.
 
 - Screens: Home, Usage, Providers, Routes, Proxies, Identities, and a one-shot test
-  chat, reached from the navigation rail.
+  chat, reached from the navigation rail — or from the mobile drawer below 640px, see
+  [Mobile navigation](#mobile-navigation).
 - Verify the built artifact: `node scripts/dashboard-smoke.mjs`
+
+### The GOAT ROUTER identity
+
+The product's user-facing name is **GOAT ROUTER**. The internal `@bayz/*` package
+names, the `BAYZ_*` environment variables, the database identifiers, and the migration
+history are deliberately unchanged — renaming those would rewrite a schema and a
+release history to change a label.
+
+Two approved artwork files carry the identity, served from the dashboard's own origin
+under `/brand/`:
+
+```text
+apps/dashboard/public/brand/goat-router-character.webp   1206x2144, monochrome
+apps/dashboard/public/brand/goat-router-lockup.png       1672x941,  wordmark lockup
+```
+
+Both are used **as delivered** — no recolour, no filter, no blend mode, no generated
+variant. They are letterboxed on pure black in the source files, so they sit on the
+black rail and the black login panel with no visible edge; the dead bands are cropped
+by `object-fit: cover` against each file's measured content ratio rather than its file
+ratio, and `object-position` is set from the measured subject extent so no part of the
+artwork is clipped.
+
+Where each appears:
+
+- **Login / token gate** — the character is the main visual, with the lockup as the
+  wordmark beside the token field. One column on a phone, two from 900px.
+- **Navigation rail** — the lockup at the 224px width, the character alone at 84px
+  where a 2.67-ratio wordmark would be unreadable.
+- **Mobile header** — the lockup at 30px tall.
+
+The character is **not** placed inside the Usage screen. That scene belongs to the
+approved Flux Core V2 relay track, which is under its own visual lock and untouched by
+the brand work.
+
+The name reaches assistive technology from exactly one place — a visually hidden text
+node in the rail's `<h1>` — and every brand image is `alt="" aria-hidden="true"`. Two
+artworks are in the DOM at all times with CSS choosing between them, so an `alt` on
+each would announce the product twice at whichever width the other is hidden.
 
 ### The approved shell, and where it differs from the reference
 
 `reference/Web-Ui.html` is the approved visual source for the shell and the Usage
 screen; it is tracked so the port can be reviewed against it rather than against a
-description of it. `apps/dashboard/src/Shell.tsx` carries the approved brand mark,
-type scale, rail breakpoints, and mobile header unchanged.
+description of it. `apps/dashboard/src/Shell.tsx` carries the approved type scale and
+rail breakpoints unchanged; the brand mark is the approved GOAT ROUTER lockup (see
+[The GOAT ROUTER identity](#the-goat-router-identity)).
 
-Two differences are deliberate, and both are recorded in the source:
+Three differences are deliberate, and all are recorded in the source:
 
 - **Every navigation entry is live.** The reference is a Usage-only preview whose
   other buttons are `disabled` shell elements. Here each one reaches a working
   screen and `aria-current="page"` moves with the selection, because a nav button
   that looks live and does nothing is the most misleading thing a shell can ship.
-- **`Settings` is not offered.** Bayz has no settings screen, so the slot holds the
-  screens it does have — Proxies, Identities, Chat — rather than a label for a
+- **`Settings` is not offered.** GOAT ROUTER has no settings screen, so the slot holds
+  the screens it does have — Proxies, Identities, Chat — rather than a label for a
   screen that does not exist.
+- **The reference has no mobile navigation, so one was built.** See
+  [Mobile navigation](#mobile-navigation) below.
 
 Only the unauthenticated liveness check renders before the token gate. Every screen
 that reads operator data stays behind `TokenGate`, so navigating to one shows the
 screen and then asks for the token; it does not render unlocked.
+
+### Mobile navigation
+
+Below 640px the approved reference has **no way to change screen at all**. Its rail is
+`display: none` at that width, it ships no menu trigger, and the only thing in its
+mobile header is a caption reading `<screen> / FLUX CORE V2` — which reads like a
+two-item menu and is not interactive. `mobile-nav` appears zero times in the file.
+
+The caption is gone and the rail is a real drawer on mobile:
+
+- The **menu trigger** sits in the mobile header, labelled `Open navigation` /
+  `Close navigation` for assistive technology rather than being an unlabelled glyph,
+  and carries `aria-expanded` plus an `aria-controls` that resolves to the panel.
+- The drawer holds **every canonical screen** — Home, Usage, Providers, Routes,
+  Proxies, Identities, Chat — because it is generated from the same `SCREENS` array
+  the desktop rail maps. There is no second list.
+- **Choosing a screen navigates and closes the drawer.** `aria-current="page"` moves
+  with the selection, so the active screen is indicated in both forms of the nav.
+- **Escape and a tap on the backdrop dismiss it** without changing screen, and the
+  page behind an open drawer does not scroll.
+- While closed the panel is `translateX(-100%)` and `visibility: hidden`, so a
+  keyboard user does not tab into an invisible menu.
+
+**One nav, not two.** `.side-nav` *is* the drawer below 640px and the static rail from
+640px up — the same element and the same single `SCREENS` map. A separate mobile list
+could drift from the rail, and duplicated labels would make every
+`getByRole("button", { name })` in the suite ambiguous.
+
+Desktop navigation is unchanged: the approved 84px rail at 640px and 224px rail at
+1024px still resolve exactly as before, with the trigger, the backdrop and the mobile
+header all hidden from 640px up.
+
+The **login surface stays navigation-free.** `App` returns the token gate without
+mounting the shell at all, so there is no drawer, no trigger and no rail before
+authentication — not a hidden one, an absent one.
+
+Verification, and its limit:
+
+- `apps/dashboard/test/App.test.tsx` covers the behaviour (trigger, `aria-expanded`,
+  every entry reaching its own screen's heading, close-on-select, Escape).
+- `apps/dashboard/test/shell-responsive.test.ts` covers the breakpoint, because jsdom
+  applies no stylesheet — every behavioural test above would pass just as happily on a
+  rail that was still `display: none`.
+- `node scripts/dashboard-smoke.mjs` re-checks it in the **emitted** CSS and bundle
+  (checks 49-71), which is a separate claim: vite minifies `(min-width: 640px)` into
+  `(width>=640px)`.
+- `node scripts/drawer-breakpoint-report.mjs [origin]` resolves the served stylesheet
+  against the shell's selectors at 360 / 640 / 1024px and prints which rule wins.
+- **Not verified:** rendered pixels, tap-target size, motion, and how it actually
+  looks. There is no browser on this host. Check it on the phone.
 
 ### The Usage screen shows telemetry or says it has none
 

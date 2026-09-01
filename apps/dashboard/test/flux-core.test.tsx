@@ -133,12 +133,24 @@ describe("FluxCoreSlot", () => {
     expect(container.querySelector(".flux-vignette")).not.toBeNull();
   });
 
-  it("keeps the approved core copy and legend", () => {
+  it("keeps the approved core caption and drops the decorative legend", () => {
     render(<FluxCoreSlot />);
-    expect(screen.getByText("BAYZ")).toBeInTheDocument();
-    expect(screen.getByText(/01 \/ SOURCE/)).toBeInTheDocument();
-    expect(screen.getByText(/02 \/ HANDOFF/)).toBeInTheDocument();
-    expect(screen.getByText(/03 \/ IMPACT/)).toBeInTheDocument();
+    /*
+     * The caption is the routing mode plus real counts, which is what the approved core
+     * copy carried once the branding was removed: it used to read `BAYZ` over
+     * `COMBO ROUTING` over `5 PROVIDERS / ROUTED n`.
+     *
+     * The legend went with it — `01 / SOURCE`, `02 / HANDOFF`, `03 / IMPACT` over
+     * "Provider route", "Braided traffic", "Packet into core" were numbered captions
+     * naming parts of an animation, which is decoration explaining decoration. Its absence
+     * is asserted here rather than only in the copy contract, so the two agree.
+     */
+    expect(screen.getByText("Combo")).toBeInTheDocument();
+    expect(screen.getByText(/routing \/ \d+ requests/)).toBeInTheDocument();
+    expect(screen.queryByText(/01 \/ SOURCE/)).toBeNull();
+    expect(screen.queryByText(/02 \/ HANDOFF/)).toBeNull();
+    expect(screen.queryByText(/03 \/ IMPACT/)).toBeNull();
+    expect(screen.queryByText("BAYZ")).toBeNull();
   });
 });
 
@@ -210,10 +222,11 @@ describe("provider count control", () => {
 
   it("switches the routing mode word with the active count", async () => {
     render(<FluxCore />);
-    expect(await screen.findByText("COMBO ROUTING")).toBeInTheDocument();
+    // Sentence case since the copy pass: the mode is real state, the shouting was not.
+    expect(await screen.findByText("Combo")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "1" }));
-    await waitFor(() => expect(screen.getByText("DIRECT ROUTE")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Direct")).toBeInTheDocument());
   });
 });
 
@@ -364,8 +377,20 @@ describe("untrusted display data", () => {
   });
 
   it("marks a simulated view model explicitly", () => {
-    render(<FluxCore />);
-    expect(screen.getByText(/SIM/)).toBeInTheDocument();
+    const { container } = render(<FluxCore />);
+    /*
+     * `Simulated`, not `SIM`. The badge is the one thing on this panel that must not be
+     * softened away — a simulation presented as measurement is the only dishonesty the
+     * visualization could commit — but the shouted three-letter form was jargon, and the
+     * copy contract bans it.
+     *
+     * Asserted on the panel head's own meta line rather than by text search: the activity
+     * subhead legitimately says `Simulated events` too, so a document-wide query matches
+     * twice and cannot tell which one is the source badge.
+     */
+    const meta = container.querySelector(".panel-head .panel-meta");
+    expect(meta?.textContent).toBe("Simulated");
+    expect(screen.queryByText(/\bSIM\b/)).toBeNull();
   });
 });
 

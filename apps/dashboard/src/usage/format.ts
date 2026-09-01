@@ -105,9 +105,11 @@ export function formatTokenPair(
 /**
  * The word shown in the Status column.
  *
- * A retried-but-successful request is `RETRY`, not `OK`: the attempt count is real
+ * A retried-but-successful request is `Retry`, not `OK`: the attempt count is real
  * information about a provider wobbling, and collapsing it into `OK` hides the thing an
  * operator opened this screen to find. A failure keeps its category as the title text.
+ *
+ * Sentence case, except `OK` which is an initialism rather than a shouted word.
  */
 export type RequestStatus = { word: string; retried: boolean; failed: boolean };
 
@@ -115,10 +117,10 @@ export function requestStatus(row: UsageRequestView): RequestStatus {
   const failed = row.outcome !== "ok";
   const attempts = Number.isFinite(row.attempts) ? row.attempts : 1;
   if (failed) {
-    return { word: "FAILED", retried: attempts > 1, failed: true };
+    return { word: "Failed", retried: attempts > 1, failed: true };
   }
   return attempts > 1
-    ? { word: "RETRY", retried: true, failed: false }
+    ? { word: "Retry", retried: true, failed: false }
     : { word: "OK", retried: false, failed: false };
 }
 

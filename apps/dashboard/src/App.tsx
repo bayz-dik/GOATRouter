@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { HealthResponse } from "@bayz/contracts";
 import { fetchHealth } from "./api/health";
 import { createApiClient, type ApiClient } from "./api/client";
@@ -26,13 +26,28 @@ type AppProps = {
   initialScreen?: ScreenId;
 };
 
-/** Screen chrome shared by every non-Usage screen, matching the approved header block. */
-function ScreenHeader({ kicker, title }: { kicker: string; title: string }) {
+/**
+ * Screen chrome shared by every non-Usage screen.
+ *
+ * The kicker is gone. It sat above each title as a two-word caption — "Upstream
+ * configuration" over "Providers.", "Model routing" over "Routes." — restating the title
+ * in different words, which is the definition of decorative copy. Titles also lose the
+ * trailing period they carried from the reference preview: it was an affectation, and it
+ * made every heading read as a sentence fragment.
+ *
+ * The `id` is load-bearing rather than cosmetic: the panel below adopts this heading as
+ * its own accessible name instead of printing the same word a second time. Before this,
+ * the Providers screen rendered `<h2>Providers</h2>` twice — once as the screen title and
+ * once inside the panel — which is one heading too many by the same rule that removed the
+ * kicker, and it made `getByRole("heading", { name: "Providers" })` ambiguous.
+ */
+function ScreenHeader({ title, id }: { title: string; id: string }) {
   return (
     <div className="screen-header">
       <div>
-        <p className="kicker">{kicker}</p>
-        <h2 className="screen-title">{title}</h2>
+        <h2 className="screen-title" id={id}>
+          {title}
+        </h2>
       </div>
     </div>
   );
@@ -45,6 +60,18 @@ export function App({
   initialScreen = "home",
 }: AppProps) {
   const [screen, setScreen] = useState<ScreenId>(initialScreen);
+
+  /**
+   * Authentication decides the whole render tree, not the contents of one panel.
+   *
+   * Previously every screen mounted `Shell` and wrapped its *panel* in `TokenGate`, so
+   * an unauthenticated visitor got the navigation rail, a screen heading and a liveness
+   * line around the token field. The gate worked — no panel data leaked — but the shell
+   * was chrome for a session that did not exist yet. Now the login surface is returned
+   * before `Shell` is mounted at all.
+   */
+  const [unlocked, setUnlocked] = useState(() => tokenStore.isSet());
+  useEffect(() => tokenStore.subscribe(() => setUnlocked(tokenStore.isSet())), [tokenStore]);
 
   const api = useMemo(
     () =>
@@ -72,19 +99,22 @@ export function App({
     return `${location.host}/v1`;
   }, []);
 
+  if (!unlocked) {
+    return <TokenGate store={tokenStore} />;
+  }
+
   return (
     <Shell screen={screen} onSelect={setScreen} endpoint={endpoint}>
       {screen === "home" && (
         <section className="screen" aria-labelledby="home-title">
           <div className="screen-header">
             <div>
-              <p className="kicker">Local router</p>
               <h2 className="screen-title" id="home-title">
-                Home.
+                Home
               </h2>
             </div>
           </div>
-          {/* Unauthenticated liveness: it must render before, and independently of, the gate. */}
+          {/* A real reading from `/api/health`, not a decorative status label. */}
           <CoreStatus healthClient={healthClient} />
           <TokenGate store={tokenStore}>
             <StatusPanel load={() => api.getStatus()} />
@@ -99,44 +129,49 @@ export function App({
       )}
 
       {screen === "providers" && (
-        <section className="screen">
-          <ScreenHeader kicker="Upstream configuration" title="Providers." />
+        <section className="screen" aria-labelledby="providers-title">
+          <ScreenHeader title="Providers" id="providers-title" />
           <TokenGate store={tokenStore}>
-            <ProvidersPanel api={api} />
+            <ProvidersPanel api={api} headingId="providers-title" />
           </TokenGate>
         </section>
       )}
 
       {screen === "routes" && (
-        <section className="screen">
-          <ScreenHeader kicker="Model routing" title="Routes." />
+        <section className="screen" aria-labelledby="routes-title">
+          <ScreenHeader title="Routes" id="routes-title" />
           <TokenGate store={tokenStore}>
-            <RoutesPanel api={api} />
+            <RoutesPanel api={api} headingId="routes-title" />
           </TokenGate>
         </section>
       )}
 
       {screen === "proxies" && (
-        <section className="screen">
-          <ScreenHeader kicker="Egress" title="Proxies." />
+        <section className="screen" aria-labelledby="proxies-title">
+          <ScreenHeader title="Proxies" id="proxies-title" />
           <TokenGate store={tokenStore}>
-            <ProxiesPanel api={api} />
+            <ProxiesPanel api={api} headingId="proxies-title" />
           </TokenGate>
         </section>
       )}
 
       {screen === "identities" && (
-        <section className="screen">
-          <ScreenHeader kicker="Client access" title="Identities." />
+        <section className="screen" aria-labelledby="identities-title">
+          <ScreenHeader title="Identities" id="identities-title" />
           <TokenGate store={tokenStore}>
+            {/*
+              The panel keeps its own `Client identities` heading: it names something
+              narrower than the screen does — the client keys, not the screen — so it is a
+              real section title rather than the screen's title said twice.
+            */}
             <IdentitiesPanel api={api} />
           </TokenGate>
         </section>
       )}
 
       {screen === "chat" && (
-        <section className="screen">
-          <ScreenHeader kicker="Verification" title="Chat." />
+        <section className="screen" aria-labelledby="chat-title">
+          <ScreenHeader title="Chat" id="chat-title" />
           <TokenGate store={tokenStore}>
             <ChatPanel api={api} />
           </TokenGate>

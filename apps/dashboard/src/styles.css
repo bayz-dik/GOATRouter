@@ -1,16 +1,19 @@
 /*
- * BAYZ dashboard shell — ported from the approved reference/Web-Ui.html.
+ * GOAT ROUTER dashboard shell — ported from the approved reference/Web-Ui.html.
  *
- * Two production changes, both required by BAYZ constraints and neither altering
- * the approved appearance beyond the substituted font stack:
+ * Three production changes, none altering the approved geometry beyond the
+ * substituted font stack and the brand artwork:
  *
- *   1. The remote Google Fonts @import is REMOVED. BAYZ is local-first and the
+ *   1. The remote Google Fonts @import is REMOVED. GOAT ROUTER is local-first and the
  *      strict CSP (`font-src 'self'`, `style-src 'self'`) must not need an
  *      exception. Archivo / Archivo Black / IBM Plex Mono are still named first,
  *      followed by local stacks that preserve the intended character.
  *   2. The reference is a preview whose Home/Routes/Providers/Settings buttons are
  *      disabled shell elements. Here the navigation is real, so `.nav-button`
  *      carries hover, active, and current-page states for every screen that exists.
+ *   3. The reference's CSS-drawn skewed-bar mark and its text wordmark are replaced
+ *      by the approved GOAT ROUTER artwork, served from `public/brand/`. See the
+ *      brand block below for why the boxes use measured content ratios.
  *
  * Everything else — geometry, spacing, breakpoints, type scale, borders, and the
  * monochrome palette — is the approved system. The relay stage itself is styled by
@@ -19,10 +22,49 @@
 
 :root {
   --bayz-font-body: Archivo, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --bayz-font-display: "Archivo Black", Archivo, "Helvetica Neue", Impact,
-    Haettenschweiler, "Arial Narrow Bold", sans-serif;
   --bayz-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
+
+  /* ================= type scale =================
+   *
+   * Five roles, closed. Every `font-size` in this file spends one of these; the audit
+   * found thirteen distinct literals from 9px to 40px, which is not a scale anybody
+   * designed. A rule can still be *wrong* now, but it can no longer be arbitrary.
+   *
+   *   page-title      the one heading naming the screen
+   *   section-title   a panel heading
+   *   body            prose, and a figure read as prose
+   *   label           a control, a table cell, a form field
+   *   meta            a micro-label, a note, a unit
+   *
+   * The clamps carry the responsive step that per-breakpoint overrides used to carry, so
+   * the scale is declared once instead of being re-stated at 1024px and 1800px.
+   *
+   * **The display family is retired.** `Archivo Black` / `Impact` / `Haettenschweiler` is
+   * a poster face, and it is what made the headings read as techno rather than strong.
+   * Hierarchy now comes from weight and size in the one UI sans. The GOAT ROUTER artwork
+   * keeps its own lettering, which is an image rather than a font.
+   */
+  --type-page-title: clamp(26px, 4vw, 38px);
+  --type-section-title: clamp(17px, 1.6vw, 21px);
+  --type-body: 14px;
+  --type-label: 12px;
+  --type-meta: 11px;
+
+  /* ================= spacing and controls =================
+   *
+   * One gutter, spent by the screen padding and by every panel that has to line up with
+   * it. It steps with the viewport in the same declaration rather than being re-set in
+   * three media queries, which is what let the left edges disagree.
+   *
+   * One control height, spent by every button, input and select. The audit found
+   * `min-height` set independently on `.button`, `.nav-button`, `.period-button` and the
+   * flux controls — four values, so controls in one row did not line up. 44px is the
+   * touch-target floor and is kept as the floor here.
+   */
+  --gutter: clamp(14px, 3.2vw, 32px);
+  --control-height: 44px;
+  --control-height-small: 36px;
 
   --black: #050505;
   --near: #171717;
@@ -67,16 +109,97 @@ button {
   grid-template-columns: 1fr;
   overflow: hidden;
 }
+/*
+ * While the mobile drawer is open the page behind it must not scroll — otherwise a swipe
+ * meant for the menu drags the dashboard underneath it. Applied to the shell rather than
+ * `body`, so nothing outside this component is touched.
+ */
+.app[data-menu-open] {
+  overflow: hidden;
+  height: 100dvh;
+}
 .app-body {
   min-width: 0;
 }
+/*
+ * The navigation, in its two forms.
+ *
+ * Below 640px `.side-nav` is a fixed drawer, off-canvas until opened. From 640px the same
+ * element is the static rail the reference specifies. One element, one `SCREENS` map — a
+ * separate mobile list could drift from the rail, and duplicate labels would make every
+ * `getByRole("button", { name })` in the suite ambiguous.
+ */
 .side-nav {
-  display: none;
-  position: sticky;
+  position: fixed;
   top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  width: min(84vw, 300px);
   height: 100dvh;
+  overflow-y: auto;
   background: var(--black);
   color: var(--white);
+  /*
+   * `translateX(-100%)` rather than `display: none`: a hidden-by-display element cannot
+   * transition, and `visibility` keeps it out of the tab order while closed so a keyboard
+   * user does not tab into an invisible menu.
+   */
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform 180ms ease, visibility 180ms;
+}
+.side-nav[data-open] {
+  transform: translateX(0);
+  visibility: visible;
+}
+.nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgb(0 0 0 / 55%);
+}
+/*
+ * The menu trigger: three bars drawn in CSS rather than a glyph, so it needs no icon font
+ * and matches the monochrome system exactly.
+ */
+.nav-toggle {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--dark);
+  background: transparent;
+  color: var(--white);
+  display: grid;
+  place-items: center;
+  transition: background-color 140ms, border-color 140ms;
+}
+.nav-toggle:hover:not(:disabled) {
+  background: var(--near);
+  border-color: var(--mid);
+}
+.nav-toggle-bars,
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+}
+.nav-toggle-bars {
+  position: relative;
+}
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  content: "";
+  position: absolute;
+  left: 0;
+}
+.nav-toggle-bars::before {
+  top: -6px;
+}
+.nav-toggle-bars::after {
+  top: 6px;
 }
 .brand {
   height: 72px;
@@ -86,39 +209,58 @@ button {
   padding: 0 20px;
   border-bottom: 1px solid var(--dark);
 }
-.brand-mark {
-  width: 54px;
-  height: 34px;
-  position: relative;
-  flex: none;
-}
-.brand-mark::before,
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  background: #fff;
-  transform: skewX(-22deg);
-}
-.brand-mark::before {
-  width: 31px;
-  height: 10px;
-  left: 2px;
-  top: 5px;
-}
-.brand-mark::after {
-  width: 42px;
-  height: 10px;
-  left: 9px;
-  top: 19px;
-}
-.brand-word {
+/* ================= GOAT ROUTER brand =================
+ *
+ * The approved lockup, used as ONE unit wherever it appears: `object-fit: contain` with
+ * the file's own 1672x941 ratio, so character, halo, separator and wordmark keep their
+ * delivered relationship. Nothing crops it, nothing recolours it, and no breakpoint
+ * swaps in a character-only variant — the rail shows the same mark smaller.
+ *
+ * The file is letterboxed on pure black (its full 3px border ring measures a maximum
+ * luma of 1 out of 255), so it sits on the black rail with no visible edge and needs no
+ * blend mode.
+ */
+.goat-brand {
   margin: 0;
-  font-family: var(--bayz-font-display);
-  font-size: 22px;
-  font-weight: 400;
-  letter-spacing: -1.5px;
-  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  /*
+   * The heading box must not add its own type metrics around the image. `line-height: 0`
+   * alone is enough because the `img` is `display: block` inside a flex container, so it
+   * generates no inline box for a font size to act on — and `font-size: 0` was the one
+   * declaration in the file that could not spend a scale token.
+   */
+  line-height: 0;
 }
+/*
+ * Available to assistive technology, absent from the visual layout. `clip-path` plus a
+ * 1px box rather than `display: none`, which would remove it from the a11y tree too and
+ * leave the shell with no accessible product name.
+ */
+.goat-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.goat-brand-lockup {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1672 / 941;
+  object-fit: contain;
+}
+.mobile-brand .goat-brand-lockup {
+  width: auto;
+  height: 30px;
+}
+
 .nav-stack {
   display: flex;
   flex-direction: column;
@@ -127,6 +269,11 @@ button {
 }
 .nav-button {
   position: relative;
+  /*
+   * The rail row height is approved-reference geometry, not an arbitrary control size, so
+   * it keeps its own value rather than spending `--control-height`. It is still above the
+   * 44px touch floor.
+   */
   min-height: 54px;
   width: 100%;
   border: 0;
@@ -137,7 +284,7 @@ button {
   gap: 13px;
   padding: 0 14px;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -172,14 +319,16 @@ button {
   font-weight: 600;
 }
 .side-foot {
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 22px;
+  /*
+   * `static` in the drawer: `absolute` + `bottom` pinned it to the viewport bottom, which
+   * on a scrollable drawer means it overlaps the last nav item instead of sitting after
+   * it. The rail re-pins it at 1024px, where the column height is fixed.
+   */
+  margin: 22px 20px;
   border-top: 1px solid var(--dark);
   padding-top: 14px;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   line-height: 1.6;
   color: var(--soft);
   overflow-wrap: anywhere;
@@ -201,23 +350,14 @@ button {
   display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
 }
-.mobile-brand .brand-mark {
-  transform: scale(0.72);
-  transform-origin: left center;
-  width: 40px;
-}
-.mobile-brand .brand-word {
-  font-size: 19px;
-  letter-spacing: -1.3px;
-}
-.shell-tag {
-  font-family: var(--bayz-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #aaa;
-}
+/*
+ * `.shell-tag` was deleted with the preview caption it styled. The mobile header used to
+ * render `<screen> / FLUX CORE V2` in it, which read as a two-item navigation on the one
+ * viewport that had no navigation at all. `App.test.tsx` asserts `.mobile-head` contains
+ * no `.shell-tag`, so the rule is gone rather than left styling nothing.
+ */
 .main {
   height: calc(100dvh - 56px);
   overflow: auto;
@@ -226,7 +366,12 @@ button {
 
 /* ================= screen ================= */
 .screen {
-  padding: 16px 14px 28px;
+  /*
+   * One gutter token, not three per-breakpoint literals. The screen padding used to be
+   * restated at 640px, 1024px and 1800px, and the panels inside it used their own 12px —
+   * so nothing lined up with anything. `--gutter` steps with the viewport by itself.
+   */
+  padding: var(--gutter) var(--gutter) calc(var(--gutter) * 2);
 }
 .screen-header {
   border-bottom: 4px solid var(--black);
@@ -240,19 +385,18 @@ button {
 .kicker {
   margin: 0 0 5px;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--mid);
 }
 .screen-title {
   margin: 0;
-  font-family: var(--bayz-font-display);
-  font-size: clamp(34px, 7vw, 68px);
-  font-weight: 400;
+  font-size: var(--type-page-title);
+  font-weight: 800;
   line-height: 0.88;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .header-actions {
@@ -263,13 +407,18 @@ button {
   justify-content: flex-end;
 }
 .tag {
-  min-height: 32px;
+  /*
+   * The tag, the period tabs and the Refresh button share one row in the screen header.
+   * They were 32 / 46 / 36px, which is why that row never lined up. All three now spend
+   * the control token.
+   */
+  min-height: var(--control-height);
   border: 1px solid var(--black);
   padding: 0 10px;
   display: inline-flex;
   align-items: center;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -283,12 +432,12 @@ button {
 }
 .period-button {
   min-width: 54px;
-  min-height: 46px;
+  min-height: var(--control-height);
   border: 0;
   border-right: 1px solid var(--black);
   background: var(--white);
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -321,22 +470,21 @@ button {
   border-right: 0;
 }
 .score-label {
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .score-value {
   margin-top: 8px;
-  font-family: var(--bayz-font-display);
-  font-size: 25px;
+  font-size: var(--type-section-title);
   line-height: 1;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.02em;
 }
 .score-note {
   margin-top: 6px;
   font-family: var(--bayz-font-mono);
-  font-size: 9px;
+  font-size: var(--type-meta);
   color: var(--mid);
   overflow-wrap: anywhere;
 }
@@ -366,23 +514,21 @@ button {
 }
 .panel-head h2 {
   margin: 0;
-  font-family: var(--bayz-font-display);
-  font-size: 18px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
+  font-size: var(--type-section-title);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .panel-head h3 {
   margin: 0;
-  font-family: var(--bayz-font-display);
-  font-size: 15px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
+  font-size: var(--type-body);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .panel-meta {
   font-family: var(--bayz-font-mono);
-  font-size: 9px;
+  font-size: var(--type-meta);
   text-transform: uppercase;
   color: var(--mid);
   overflow-wrap: anywhere;
@@ -403,9 +549,9 @@ button {
 .bayz-bulk-controls button,
 .bayz-assign-bar button,
 .bayz-session button,
-.bayz-token-gate button,
 .bayz-reveal button {
-  min-height: 44px;
+  /* One token, spent by every control. See `--control-height`. */
+  min-height: var(--control-height);
   border: 1px solid var(--black);
   background: var(--white);
   color: var(--black);
@@ -413,7 +559,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: var(--type-label);
   font-weight: 800;
   text-transform: uppercase;
   transition: background-color 140ms, color 140ms, transform 100ms;
@@ -425,7 +571,6 @@ button {
 .bayz-bulk-controls button:hover:not(:disabled),
 .bayz-assign-bar button:hover:not(:disabled),
 .bayz-session button:hover:not(:disabled),
-.bayz-token-gate button:hover:not(:disabled),
 .bayz-reveal button:hover:not(:disabled) {
   background: var(--black);
   color: var(--white);
@@ -440,9 +585,9 @@ button {
   cursor: default;
 }
 .button.small {
-  min-height: 36px;
+  min-height: var(--control-height-small);
   padding: 0 11px;
-  font-size: 10px;
+  font-size: var(--type-meta);
 }
 
 .table-wrap {
@@ -453,14 +598,14 @@ button {
   width: 100%;
   border-collapse: collapse;
   min-width: 650px;
-  font-size: 12px;
+  font-size: var(--type-label);
 }
 .usage-table th {
   height: 38px;
   padding: 0 10px;
   text-align: left;
   border-bottom: 2px solid var(--black);
-  font-size: 9px;
+  font-size: var(--type-meta);
   text-transform: uppercase;
   letter-spacing: 0.07em;
 }
@@ -484,7 +629,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -537,7 +682,7 @@ button {
   margin: 0;
   padding: 18px 12px;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--mid);
@@ -573,7 +718,7 @@ button {
   gap: 8px;
   padding: 0 12px 12px;
   font-family: var(--bayz-font-mono);
-  font-size: 9px;
+  font-size: var(--type-meta);
   text-transform: uppercase;
   color: var(--mid);
 }
@@ -594,20 +739,19 @@ button {
 .status-panel p {
   margin: 0;
   font-family: var(--bayz-font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
 .status-panel strong {
-  font-family: var(--bayz-font-display);
-  font-size: clamp(22px, 4vw, 34px);
-  font-weight: 400;
-  letter-spacing: -0.05em;
+  font-size: var(--type-section-title);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .status-panel span {
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--soft);
@@ -619,26 +763,127 @@ button {
   justify-content: flex-end;
   padding: 14px 0 0;
 }
-.bayz-token-gate {
-  margin-top: 14px;
-  border: 1px solid var(--black);
-  padding: 18px 14px;
+/* ================= GOAT ROUTER login =================
+ *
+ * The whole pre-authentication surface: the approved lockup, a token field, an Unlock
+ * button. Nothing else — no card, no border, no panel.
+ *
+ * **The background is `#000`, not the palette's `--black`.**
+ *
+ * The lockup's own background measures **91.9% exactly (0,0,0)** across its border ring,
+ * with the remainder at 1/255. The palette's `--black` is `#050505`. Painting the page
+ * `--black` therefore leaves a 5/255 step around the entire image rectangle — faint, but
+ * a hard straight edge, which reads as a black card pasted onto the page. True `#000`
+ * makes the asset's letterboxing disappear into the surface, which is the whole point of
+ * shipping an asset that is already black.
+ *
+ * The lockup is used as ONE unit: `object-fit: contain` with the file's own 1672x941
+ * ratio, so character, halo, separator and wordmark keep their delivered relationship.
+ * Nothing crops it, nothing recolours it, no breakpoint recomposes it — only the width
+ * clamp changes.
+ */
+.goat-login {
+  /*
+   * `fixed` + `inset: 0` rather than `min-height: 100dvh`, so the black is genuinely the
+   * whole viewport: `body` is white for the dashboard, and a merely-tall element leaves
+   * white showing in the overscroll area on a phone and behind the address bar as it
+   * collapses. `overflow-y: auto` keeps a short landscape viewport scrollable instead of
+   * clipping the button.
+   */
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  /* Matches the asset's own background exactly. See above. */
+  background: #000;
+  color: var(--white);
   display: grid;
-  gap: 10px;
-  max-width: 560px;
+  align-content: center;
+  justify-items: center;
+  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
 }
-.bayz-token-gate label {
-  font-size: 10px;
+.goat-login-inner {
+  width: 100%;
+  /*
+   * Mobile: `88vw` so the group keeps a constant proportion of the screen, with a 360px
+   * ceiling so it never sprawls. A fixed px width alone is what makes desktop-site mode
+   * collapse — see the pointer-based rules in the responsive section.
+   */
+  max-width: min(88vw, 360px);
+  display: grid;
+  justify-items: center;
+  /* Optical lift: the group's centre sits a little above the viewport's. */
+  margin-bottom: 6dvh;
+  /* Restrained, and tighter than the 34px first attempt — the mark and the form read as
+     one group rather than two stacked blocks. */
+  gap: 26px;
+}
+.goat-login-lockup {
+  display: block;
+  /* Mobile portrait: the approved band. */
+  width: clamp(220px, 58vw, 260px);
+  height: auto;
+  /* The file's own ratio: `contain` letterboxes rather than crops, and the delivered
+     framing is part of the approved composition. */
+  aspect-ratio: 1672 / 941;
+  object-fit: contain;
+}
+.goat-login-form {
+  width: 100%;
+  display: grid;
+  /* Input and button are both grid items at 100% width, so they cannot disagree. */
+  gap: 8px;
+}
+.goat-login-form label {
+  font-size: var(--type-meta);
   font-weight: 800;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--soft);
 }
-.bayz-token-note {
+.goat-login-form input {
+  /* A single-line token field. `height` rather than `min-height`: `min-height` let the
+     mono font's line box push it toward a textarea's proportions. */
+  height: var(--control-height);
+  width: 100%;
+  border: 1px solid var(--soft);
+  background: #000;
+  color: var(--white);
+  padding: 0 12px;
+  font-family: var(--bayz-font-mono);
+  font-size: var(--type-body);
+}
+.goat-login-form input:focus-visible {
+  outline: 2px solid var(--white);
+  outline-offset: 2px;
+}
+.goat-login-form button {
+  height: var(--control-height);
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid var(--white);
+  background: var(--white);
+  color: #000;
+  font-size: var(--type-label);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: background-color 140ms, border-color 140ms;
+}
+.goat-login-form button:hover:not(:disabled) {
+  background: var(--soft);
+  border-color: var(--soft);
+}
+.goat-login-error {
   margin: 0;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
-  line-height: 1.5;
-  color: var(--mid);
+  font-size: var(--type-label);
+  /* Grayscale, like everything else here: a red error would be the only colour on the
+     surface, and the message is already unambiguous. */
+  border-left: 3px solid var(--white);
+  padding: 6px 10px;
+  color: var(--white);
+  overflow-wrap: anywhere;
 }
 
 .bayz-panel {
@@ -654,16 +899,15 @@ button {
   align-items: center;
   padding: 8px 12px;
   border-bottom: 1px solid var(--black);
-  font-family: var(--bayz-font-display);
-  font-size: 18px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
+  font-size: var(--type-section-title);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
 }
 .bayz-panel > h3,
 .bayz-panel fieldset legend {
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -673,17 +917,17 @@ button {
   margin-right: 12px;
 }
 .bayz-panel p {
-  font-size: 12px;
+  font-size: var(--type-label);
   line-height: 1.5;
 }
 .bayz-note {
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   color: var(--mid);
 }
 .bayz-error {
   font-family: var(--bayz-font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   border-left: 4px solid var(--black);
   padding: 8px 10px;
   background: var(--field);
@@ -704,7 +948,7 @@ button {
 .bayz-facts dt {
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -714,7 +958,7 @@ button {
   padding: 9px 0 9px 10px;
   border-bottom: 1px solid var(--line);
   font-family: var(--bayz-font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   overflow-wrap: anywhere;
 }
 .bayz-counts {
@@ -732,7 +976,7 @@ button {
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
   font-family: var(--bayz-font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   text-transform: uppercase;
 }
 .bayz-counts li:last-child {
@@ -751,13 +995,12 @@ button {
   padding: 11px 12px;
   display: grid;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--type-label);
 }
 .bayz-list-item strong {
-  font-family: var(--bayz-font-display);
-  font-size: 15px;
-  font-weight: 400;
-  letter-spacing: -0.03em;
+  font-size: var(--type-body);
+  font-weight: 800;
+  letter-spacing: -0.02em;
   text-transform: uppercase;
   overflow-wrap: anywhere;
 }
@@ -765,7 +1008,7 @@ button {
 .bayz-list-item span,
 .bayz-list-item small {
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   overflow-wrap: anywhere;
 }
 .bayz-actions {
@@ -783,7 +1026,7 @@ button {
   max-height: 260px;
   overflow: auto;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
 }
 .bayz-models li {
   border-bottom: 1px solid var(--line);
@@ -805,7 +1048,7 @@ button {
 .bayz-bulk-controls label {
   display: grid;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--type-meta);
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -813,13 +1056,14 @@ button {
 input,
 select,
 textarea {
-  min-height: 42px;
+  /* A field is a control: same height as the button beside it. */
+  min-height: var(--control-height);
   border: 1px solid var(--black);
   background: var(--white);
   color: var(--black);
   padding: 0 10px;
   font-family: var(--bayz-font-mono);
-  font-size: 12px;
+  font-size: var(--type-label);
 }
 textarea {
   padding: 9px 10px;
@@ -841,12 +1085,42 @@ fieldset {
   gap: 8px;
 }
 .bayz-headers,
-.bayz-header-row {
+.bayz-header-row,
+.bayz-compat {
   display: grid;
   gap: 8px;
 }
 .bayz-header-row {
   grid-template-columns: 1fr 1fr;
+}
+/* ================= advanced disclosure =================
+ *
+ * The add-provider form's overrides: the provider id, the kind override, eight header
+ * rows, the compatibility fields, and the loopback authorisation. A real `<details>`, so
+ * it is keyboard operable and announced without any JavaScript, and so its contents stay
+ * in the DOM — a validation error inside a collapsed section still has to be findable.
+ *
+ * `summary` gets the control height and a visible marker rather than being styled as a
+ * button: it is a disclosure, and dressing it as a button implies it submits something.
+ */
+.bayz-advanced {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.bayz-advanced > summary {
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: var(--type-meta);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.bayz-advanced > summary:hover {
+  color: var(--mid);
 }
 .bayz-bulk-controls,
 .bayz-assign-bar {
@@ -873,7 +1147,7 @@ fieldset {
 }
 .bayz-reveal code {
   font-family: var(--bayz-font-mono);
-  font-size: 11px;
+  font-size: var(--type-label);
   overflow-wrap: anywhere;
 }
 .bayz-transcript {
@@ -892,7 +1166,7 @@ fieldset {
 .bayz-prompt,
 .bayz-reply {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--type-label);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -902,30 +1176,174 @@ fieldset {
 .bayz-routing {
   margin: 0;
   font-family: var(--bayz-font-mono);
-  font-size: 10px;
+  font-size: var(--type-meta);
   color: var(--mid);
   overflow-wrap: anywhere;
 }
 
 /* ================= responsive ================= */
+
+/*
+ * Login scale.
+ *
+ * **Why this is not keyed on width alone, and why it is not keyed on dpr either.**
+ *
+ * A phone in "desktop site" mode reports a CSS viewport of ~980-1280px while the physical
+ * screen stays ~430px wide. Sizing off width alone hands that phone the desktop bucket,
+ * and one CSS px there is 430/980 = 0.44 of a real px — a 300px mark renders physically as
+ * ~132px, which is the miniature collapse.
+ *
+ * The obvious second signal, `min-resolution: 2dppx`, does NOT work, and this was measured
+ * rather than assumed: desktop-site mode lays out a wide viewport on the same panel, so the
+ * ratio *drops* (1290 physical / 980 css = **1.32**) and the 2dppx gate misses the exact
+ * case it was added for. `pointer: coarse` alone is not enough either — it is true for both
+ * a real tablet and a phone lying about its width.
+ *
+ * **Aspect ratio is the reliable discriminator.** A phone keeps its physical proportions
+ * whatever viewport it claims; a tablet's are squarer:
+ *
+ *   phone portrait   0.45-0.56      phone landscape  2.06-2.18
+ *   iPad (any)       0.75-1.33      desktop/laptop   1.60
+ *
+ * So `aspect-ratio < 0.6` or `> 2` means phone-shaped, and 0.6-2 with a coarse pointer and
+ * real width means tablet. Verified against ten device shapes including both desktop-site
+ * orientations: each falls in exactly one band.
+ *
+ * Throughout, only the width clamps and the form's max-width change. The lockup keeps
+ * `object-fit: contain` and the 1672x941 ratio at every size, so the composition is
+ * identical and only its scale moves.
+ */
+
+/* Tablet, and any real pointer from 600px. */
+@media (min-width: 600px) and (pointer: fine) {
+  .goat-login-lockup {
+    width: clamp(260px, 30vw, 300px);
+  }
+  .goat-login-inner {
+    max-width: 380px;
+    gap: 30px;
+  }
+}
+/* Desktop. Capped: more viewport is not a reason to grow the group. */
+@media (min-width: 1024px) and (pointer: fine) {
+  .goat-login-lockup {
+    width: clamp(300px, 24vw, 340px);
+  }
+  .goat-login-inner {
+    max-width: 400px;
+  }
+}
+
+/*
+ * A genuine tablet: coarse pointer, real width, and tablet PROPORTIONS. The aspect clause
+ * is what keeps desktop-site-on-phone out of this rule — 980x1743 is 0.56, outside the
+ * range, so it falls through to the readable band below instead of being sized like an
+ * iPad.
+ */
+@media (min-width: 700px) and (pointer: coarse) and (min-aspect-ratio: 3 / 5) and (max-aspect-ratio: 2 / 1) {
+  .goat-login-lockup {
+    width: clamp(260px, 34vw, 300px);
+  }
+  .goat-login-inner {
+    max-width: 380px;
+    gap: 30px;
+  }
+}
+
+/*
+ * **Desktop-site mode on a phone**, and any phone-shaped viewport claiming to be wide.
+ *
+ * `vw` units are useless here — 24vw of a 1280px fake viewport is physically tiny — so the
+ * sizes are fixed px inside the approved 220-250 / 300-360 bands, which stay readable at
+ * the real physical scale. Type sizes are bumped for the same reason.
+ *
+ * Last of the width rules in source order, so it wins over both bands above.
+ */
+@media (min-width: 600px) and (pointer: coarse) and (max-aspect-ratio: 3 / 5),
+  (min-width: 600px) and (pointer: coarse) and (min-aspect-ratio: 2 / 1) {
+  .goat-login-lockup {
+    width: 240px;
+  }
+  .goat-login-inner {
+    max-width: 340px;
+    gap: 24px;
+  }
+  /*
+   * Type steps up one role rather than shrinking with the layout: the viewport is lying
+   * about its width, so the physical rendering is smaller than the CSS px implies.
+   */
+  .goat-login-form label {
+    font-size: var(--type-label);
+  }
+  .goat-login-form input {
+    font-size: var(--type-body);
+  }
+  .goat-login-form button {
+    font-size: var(--type-label);
+  }
+}
+
+/*
+ * Phone landscape, keyed on HEIGHT and placed last so it wins over every width rule. A
+ * 740x360 viewport is "wide" by width alone, and sizing off width is what pushes the
+ * Unlock button below the fold.
+ */
+@media (orientation: landscape) and (max-height: 520px) {
+  .goat-login {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+  .goat-login-inner {
+    /* Held in the approved 300-360 band rather than collapsing. */
+    max-width: 340px;
+    gap: 16px;
+    /* No optical lift on a short viewport: the height is the constraint, and shifting the
+       group upward there just costs clearance under the button. */
+    margin-bottom: 0;
+  }
+  .goat-login-lockup {
+    /* Approved 220-250 band. Not a `vw` clamp: on a short landscape viewport the width is
+       plentiful and the height is what runs out. */
+    width: 220px;
+  }
+}
+
 @media (min-width: 640px) {
   .app {
     grid-template-columns: 84px 1fr;
   }
+  /*
+   * From 640px the drawer becomes the static rail again: back in the grid, no transform,
+   * always visible. The mobile trigger and backdrop are irrelevant here — the trigger is
+   * hidden with the mobile header, and the backdrop only renders while the drawer is open,
+   * which cannot happen once the rail is permanent.
+   */
   .side-nav {
-    display: block;
+    position: sticky;
+    width: auto;
+    z-index: auto;
+    transform: none;
+    visibility: visible;
+    transition: none;
+  }
+  .nav-toggle,
+  .nav-backdrop {
+    display: none;
   }
   .brand {
     padding: 0;
     justify-content: center;
   }
-  .brand-word,
   .nav-label,
   .side-foot {
     display: none;
   }
-  .brand-mark {
-    width: 48px;
+  /*
+   * 84px rail: the same lockup, scaled to fit the narrow rail. Not a character-only
+   * swap — one mark, one composition, at every width.
+   */
+  .side-nav .goat-brand-lockup {
+    width: 68px;
   }
   .nav-stack {
     padding: 12px 8px;
@@ -942,9 +1360,6 @@ fieldset {
   }
   .main {
     height: 100dvh;
-  }
-  .screen {
-    padding: 22px 24px 42px;
   }
   .score-strip {
     grid-auto-flow: initial;
@@ -966,10 +1381,21 @@ fieldset {
     justify-content: flex-start;
     padding: 0 20px;
   }
-  .brand-word,
   .nav-label,
   .side-foot {
     display: block;
+  }
+  /* The 224px rail has a fixed height, so the foot is pinned to its bottom again. */
+  .side-foot {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 22px;
+    margin: 0;
+  }
+  /* 224px rail: the same lockup at full rail width. */
+  .side-nav .goat-brand-lockup {
+    width: 100%;
   }
   .nav-stack {
     padding: 14px 10px;
@@ -979,7 +1405,7 @@ fieldset {
     padding: 0 14px;
   }
   .screen {
-    padding: 26px 32px 56px;
+    /* Padding stays on the gutter token; only the reading-width cap is new here. */
     max-width: 1700px;
     margin: 0 auto;
   }
@@ -989,13 +1415,6 @@ fieldset {
   .chart-body {
     height: 270px;
   }
-  .score-value {
-    font-size: 32px;
-  }
-  .panel-head h2,
-  .bayz-panel > h2 {
-    font-size: 21px;
-  }
   .bayz-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1003,21 +1422,10 @@ fieldset {
 @media (min-width: 1800px) {
   .screen {
     max-width: none;
-    padding: 34px 44px 70px;
   }
   .usage-grid {
     grid-template-columns: minmax(0, 1.7fr) minmax(560px, 0.8fr);
     gap: 20px;
-  }
-  .score-value {
-    font-size: 40px;
-  }
-  .panel-head h2,
-  .bayz-panel > h2 {
-    font-size: 26px;
-  }
-  .usage-table {
-    font-size: 14px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1027,6 +1435,14 @@ fieldset {
   .nav-button,
   .button,
   .period-button {
+    transition: none;
+  }
+  /*
+   * The drawer slides in from off-canvas, which is the largest motion the shell has. It
+   * still needs `visibility` to change instantly rather than not at all, or a closed
+   * drawer would stay in the tab order.
+   */
+  .side-nav {
     transition: none;
   }
 }

@@ -168,8 +168,9 @@ describe("Usage screen renders measured telemetry", () => {
     expect(screen.getByText("claude-opus")).toBeInTheDocument();
     expect(screen.getByText("12.9K / 241")).toBeInTheDocument();
     expect(screen.getByText("9.7K / 154")).toBeInTheDocument();
-    // A retried success keeps its retry marker.
-    expect(within(screen.getByTestId("request-req_beta")).getByText(/RETRY/)).toBeInTheDocument();
+    // A retried success keeps its retry marker. Sentence case since the copy pass — the
+    // attempt count is the fact, the shouting was not.
+    expect(within(screen.getByTestId("request-req_beta")).getByText(/Retry/)).toBeInTheDocument();
   });
 
   it("names the failure category on a failed request", async () => {
@@ -186,7 +187,7 @@ describe("Usage screen renders measured telemetry", () => {
     // incident list both name it — so this asserts presence rather than uniqueness.
     expect((await screen.findAllByText(/rate_limited/)).length).toBeGreaterThan(0);
     expect(
-      within(screen.getByTestId("request-req_alpha")).getByText(/FAILED/),
+      within(screen.getByTestId("request-req_alpha")).getByText(/Failed/),
     ).toBeInTheDocument();
   });
 });
@@ -212,7 +213,9 @@ describe("Usage screen stays honest about what it does not know", () => {
     expect(screen.getByTestId("score-input")).toHaveTextContent("—");
     expect(screen.getByTestId("score-output")).toHaveTextContent("—");
     expect(screen.getByTestId("score-cached")).toHaveTextContent("—");
-    expect(screen.getAllByText("NOT REPORTED").length).toBeGreaterThan(0);
+    // Sentence case since the copy pass: `NOT REPORTED` in caps read as an error when it
+    // is a normal, expected state. The distinction it draws is unchanged.
+    expect(screen.getAllByText("Not reported").length).toBeGreaterThan(0);
   });
 
   it("preserves a genuine zero as zero", async () => {
@@ -227,7 +230,7 @@ describe("Usage screen stays honest about what it does not know", () => {
     );
     // Four requests reported counts and they summed to zero, which is a measurement.
     expect(await screen.findByTestId("score-input")).toHaveTextContent("0");
-    expect(screen.queryByText("NOT REPORTED")).toBeNull();
+    expect(screen.queryByText("Not reported")).toBeNull();
   });
 
   it("states cost unavailable with the server's reason and never a figure", async () => {
@@ -310,8 +313,17 @@ describe("Usage screen drives Flux Core from live data", () => {
     const slot = container.querySelector("[data-bayz-flux-core-slot]");
     expect(slot).not.toBeNull();
     expect(slot!.querySelector("canvas")).not.toBeNull();
-    // `LIVE`, not `SIM`: the panel meta says which it is, and the two never blend.
-    await waitFor(() => expect(screen.getByText(/LIVE/)).toBeInTheDocument());
+    /*
+     * Live, not simulated: the panel's own meta line says which, and the two never blend.
+     * Read from that element rather than by text search — the activity subhead says
+     * `Router events` / `Simulated events` too, so a document-wide query is ambiguous.
+     * (`LIVE` / `SIM` were the shouted forms the copy pass removed.)
+     */
+    await waitFor(() =>
+      expect(
+        container.querySelector(".flux-panel .panel-head .panel-meta")?.textContent,
+      ).toMatch(/^Live/),
+    );
     expect(screen.queryByText(/\bSIM\b/)).toBeNull();
   });
 

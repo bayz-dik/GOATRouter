@@ -6,7 +6,7 @@ import type {
   RouteView,
   UpdateRouteBody,
 } from "../api/types";
-import { PanelError, useAsync } from "./shared";
+import { PanelError, useAsync, type PanelHeadingProps } from "./shared";
 
 export type RoutesApi = {
   listRoutes(): Promise<RouteView[]>;
@@ -101,7 +101,7 @@ function isNoFreeRoute(error: unknown): boolean {
   );
 }
 
-export function RoutesPanel({ api }: { api: RoutesApi }) {
+export function RoutesPanel({ api, headingId }: { api: RoutesApi } & PanelHeadingProps) {
   const routes = useAsync(() => api.listRoutes());
   const providers = useAsync(() => api.listProviders());
   const proxies = useAsync(() => api.listProxies());
@@ -140,8 +140,9 @@ export function RoutesPanel({ api }: { api: RoutesApi }) {
   const providerList = providers.value ?? [];
 
   return (
-    <section className="bayz-panel" aria-labelledby="routes-heading">
-      <h2 id="routes-heading">Routes</h2>
+    <section className="bayz-panel" aria-labelledby={headingId ?? "routes-heading"}>
+      {/* Printed only when the screen has not already titled this panel. */}
+      {headingId === undefined && <h2 id="routes-heading">Routes</h2>}
 
       {actionError !== undefined && <PanelError error={actionError} />}
       {isNoFreeRoute(actionError) && <NoFreeRouteHelp />}

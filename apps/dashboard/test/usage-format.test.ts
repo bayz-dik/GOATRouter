@@ -126,21 +126,22 @@ describe("requestStatus", () => {
     expect(requestStatus(request())).toEqual({ word: "OK", retried: false, failed: false });
   });
 
-  it("reports RETRY for a success that took more than one attempt", () => {
+  it("reports Retry for a success that took more than one attempt", () => {
     // Collapsing this into OK would hide a provider wobbling, which is the thing an
-    // operator opens this screen to find.
+    // operator opens this screen to find. Sentence case since the copy pass; `OK` stays
+    // capitalised because it is an initialism rather than a shouted word.
     expect(requestStatus(request({ attempts: 3 }))).toEqual({
-      word: "RETRY",
+      word: "Retry",
       retried: true,
       failed: false,
     });
   });
 
-  it("reports FAILED for any non-ok outcome", () => {
+  it("reports Failed for any non-ok outcome", () => {
     const status = requestStatus(
       request({ outcome: "failed", attempts: 2, failureCategory: "timeout" }),
     );
-    expect(status.word).toBe("FAILED");
+    expect(status.word).toBe("Failed");
     expect(status.failed).toBe(true);
   });
 

@@ -235,7 +235,12 @@ describe("routing mode prominence", () => {
     const { container } = render(
       <FluxCore model={model(providers, { routingMode: "failover" })} />,
     );
-    expect(screen.getByText("FAILOVER SEQUENCE")).toBeInTheDocument();
+    /*
+     * `Failover`, not `FAILOVER SEQUENCE`. The mode is real state from `routingMode` and is
+     * still asserted; the copy pass removed the shouting, which was never a fact. See the
+     * copy contract in `copy-contract.test.tsx`, which bans the old string outright.
+     */
+    expect(screen.getByText("Failover")).toBeInTheDocument();
     expect(container.querySelector('[data-provider-id="promoted"]')?.className).toContain(
       "route-primary",
     );

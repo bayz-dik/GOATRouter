@@ -1,5 +1,5 @@
 /**
- * Shapes returned by the Bayz local API.
+ * Shapes returned by the GOAT ROUTER local API.
  *
  * These mirror the server's view types rather than re-deriving them: a credential
  * or password appears only as a boolean presence flag, because no endpoint returns
@@ -334,7 +334,7 @@ export type UsageSummaryView = {
   tokenReports: number;
   averageLatencyMs: number | null;
   /**
-   * Always `false`: Bayz has no pricing table and no billing API, so a cost figure
+   * Always `false`: GOAT ROUTER has no pricing table and no billing API, so a cost figure
    * would be fabricated. `costReason` says why instead.
    */
   costAvailable: boolean;
@@ -348,7 +348,7 @@ export type UsageProviderView = {
   displayName: string;
   kind: string;
   enabled: boolean;
-  /** Presence only. There is no read path for the value anywhere in Bayz. */
+  /** Presence only. There is no read path for the value anywhere in GOAT ROUTER. */
   credentialPresent: boolean;
   attempts: number;
   failures: number;

@@ -67,6 +67,32 @@ function shell(n: number): Shell {
 const SH_OUT = shell(720);
 const SH_IN = shell(280);
 
+/**
+ * Pick the `k`th index when drawing `budget` of a shell's `total` points.
+ *
+ * **This exists because of a real defect.** `drawShell` used to loop `i < n` with `n`
+ * reduced for mobile (430 of 720) and again for adaptive quality (x0.65, x0.45). But
+ * `shell()` lays points out with `uy` running monotonically from +1 to -1, so index 0 is
+ * the north pole and `total - 1` the south. Taking a *prefix* therefore deleted the
+ * southern hemisphere instead of thinning the sphere, and the core rendered as a cap —
+ * the reported "bowl on mobile". Measured y-coverage of the outer shell was 59.7% at the
+ * mobile default and 26.7% at the lowest quality level; desktop escaped only because its
+ * top quality level draws all 720.
+ *
+ * Spreading the same budget across the whole array fixes it at identical cost: the loop
+ * still runs `budget` times, so the point count — the thing that actually costs frame
+ * time — is unchanged. The mapping is monotonic and hits both `0` and `total - 1`, so the
+ * draw order still sweeps the sphere once (which matters: the shells composite additively
+ * with no depth buffer, and a scattered order would change how points accumulate).
+ */
+export function spherePointIndex(k: number, budget: number, total: number): number {
+  if (budget <= 1 || total <= 1) {
+    return 0;
+  }
+  const n = Math.min(budget, total);
+  return Math.round((k * (total - 1)) / (n - 1));
+}
+
 /* reactor heart: dense deterministic nucleus */
 const HN = 110;
 const HX = new Float32Array(HN);
@@ -632,7 +658,13 @@ export function createFluxEngine(options: FluxEngineOptions): FluxEngine {
     const wobA = 0.02 + en * 0.022;
     const breath = 0.01 + en * 0.008;
     const bw = performance.now() * 0.0011 * S.speed;
-    for (let i = 0; i < n; i += 1) {
+    for (let k = 0; k < n; k += 1) {
+      /*
+       * Sampled across the whole shell rather than taken as a prefix. `n` is reduced for
+       * mobile and for adaptive quality, and the points are ordered pole to pole, so
+       * `i = k` deleted the southern hemisphere and drew a bowl. See `spherePointIndex`.
+       */
+      const i = spherePointIndex(k, n, sh.ux.length);
       const x = sh.ux[i]!;
       const y = sh.uy[i]!;
       const z = sh.uz[i]!;

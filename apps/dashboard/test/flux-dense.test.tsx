@@ -70,7 +70,8 @@ describe("1 provider DIRECT", () => {
   it("renders one node and reports a direct route", () => {
     const { container } = render(<FluxCore model={model(providers(1))} />);
     expect(nodeCount(container)).toBe(1);
-    expect(screen.getByText("DIRECT ROUTE")).toBeInTheDocument();
+    // Sentence case since the copy pass; `DIRECT ROUTE` is banned by the copy contract.
+    expect(screen.getByText("Direct")).toBeInTheDocument();
   });
 });
 
@@ -83,7 +84,7 @@ describe("5 provider COMBO", () => {
     }
     // Every provider labelled at the approved count: no reduction.
     expect(labelCount(container)).toBe(5);
-    expect(screen.getByText("COMBO ROUTING")).toBeInTheDocument();
+    expect(screen.getByText("Combo")).toBeInTheDocument();
   });
 });
 
@@ -102,7 +103,14 @@ describe("40 provider COMBO", () => {
   it("renders all forty nodes without truncation", () => {
     const { container } = render(<FluxCore model={model(providers(40))} />);
     expect(nodeCount(container)).toBe(40);
-    expect(screen.getByText(/40 NODES/)).toBeInTheDocument();
+    /*
+     * The count is asserted on the core caption now. The old assertion read `/40 NODES/`
+     * from the panel meta line, which the copy pass removed — `NODES` was jargon for
+     * providers, and the line also carried stale branding and a fake liveness badge. The
+     * caption states the same fact as `40 of 40 routing`, so the property survives its
+     * wording.
+     */
+    expect(screen.getByText(/40 of 40 routing/)).toBeInTheDocument();
   });
 
   it("keeps every provider individually addressable", () => {
@@ -130,7 +138,7 @@ describe("40 provider COMBO", () => {
 
   it("still reports combo routing", () => {
     render(<FluxCore model={model(providers(40))} />);
-    expect(screen.getByText("COMBO ROUTING")).toBeInTheDocument();
+    expect(screen.getByText("Combo")).toBeInTheDocument();
   });
 });
 
@@ -153,8 +161,9 @@ describe("40 provider COMBO with 1 FAILED", () => {
 
   it("reports 39 active and shows failover state", () => {
     render(<FluxCore model={model(list)} />);
-    expect(screen.getByText(/39 PROVIDERS \/ ROUTED 4210/)).toBeInTheDocument();
-    expect(screen.getByText("FAILOVER SEQUENCE")).toBeInTheDocument();
+    // Same two facts as before, in the caption's post-cleanup wording.
+    expect(screen.getByText(/39 of 40 routing \/ 4210 requests/)).toBeInTheDocument();
+    expect(screen.getByText("Failover")).toBeInTheDocument();
   });
 
   it("keeps the failed provider clickable for focus", () => {
@@ -358,12 +367,24 @@ describe("live model boundary", () => {
     expect(screen.getByRole("button", { name: "Calm" })).toBeEnabled();
   });
 
-  it("labels a live source as LIVE and a simulated one as SIM", () => {
+  it("labels a live source as live and a simulated one as simulated", () => {
+    /*
+     * Sentence case, and spelled out. `LIVE` / `SIM` were the shouted forms the copy pass
+     * removed; what matters — and what this asserts — is that the two states are still
+     * distinguishable on screen and never blended.
+     *
+     * Read from the panel head's own meta line: the activity subhead says
+     * `Router events` / `Simulated events` as well, so a document-wide text query matches
+     * twice and cannot say which element is the source badge.
+     */
+    const source = (root: HTMLElement): string | undefined =>
+      root.querySelector(".panel-head .panel-meta")?.textContent ?? undefined;
+
     const live = render(<FluxCore model={model(providers(4))} />);
-    expect(live.container.textContent).toContain("LIVE");
+    expect(source(live.container)).toBe("Live");
     live.unmount();
 
-    render(<FluxCore />);
-    expect(screen.getByText(/SIM/)).toBeInTheDocument();
+    const simulated = render(<FluxCore />);
+    expect(source(simulated.container)).toBe("Simulated");
   });
 });

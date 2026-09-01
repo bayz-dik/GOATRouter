@@ -118,17 +118,26 @@ test("the tarball contents are exactly the intended set", () => {
    *
    * The two `assets/index-*` names carry vite's content hash, so they move whenever the dashboard
    * source does — and they are still written out literally rather than globbed, because deriving them
-   * from `apps/dashboard/dist` would make those two entries assert nothing. Re-pinned here for the
-   * Usage-screen shell integration (`Shell.tsx`, `src/usage/`, the widened `styles.css`), which is a
-   * source change and therefore a legitimate hash move; the count, the paths, and every other entry
-   * are unchanged. A re-pin that added or dropped a file would show up as a length change.
+   * from `apps/dashboard/dist` would make those two entries assert nothing. Re-pinned for the
+   * Usage-screen shell integration, again for the GOAT ROUTER brand integration, and again for the
+   * authenticated mobile drawer; all three are source changes and therefore legitimate hash moves.
+   *
+   * `dist/dashboard/brand/*` arrived with the brand integration: the two approved artwork files are
+   * served from the dashboard's `public/` directory, so vite copies them into the bundle verbatim and
+   * `scripts/pack.mjs` ships whatever is in `dist`. They are pinned by name for the same reason as
+   * everything else here — an image is shipped to every user forever, and a *third* brand file
+   * appearing (a stray export, a colour variant) must fail rather than ride along. The artwork is
+   * also the only binary content in the artifact, and the secret scan two tests below reads it as
+   * bytes like every other entry.
    */
   assert.deepEqual(files, [
     "package/LICENSE",
     "package/README.md",
     "package/dist/bayz.mjs",
-    "package/dist/dashboard/assets/index-CG1SpnTD.css",
-    "package/dist/dashboard/assets/index-DNsUQghD.js",
+    "package/dist/dashboard/assets/index-CrO7BK7j.js",
+    "package/dist/dashboard/assets/index-DmTs9FlI.css",
+    "package/dist/dashboard/brand/goat-router-character.webp",
+    "package/dist/dashboard/brand/goat-router-lockup.png",
     "package/dist/dashboard/index.html",
     "package/dist/server.mjs",
     "package/package.json",

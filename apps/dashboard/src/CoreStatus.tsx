@@ -39,7 +39,7 @@ export function CoreStatus({ healthClient }: CoreStatusProps) {
       {offline && (
         <>
           <strong>Core offline</strong>
-          <span>Check the Bayz process and try again.</span>
+          <span>Check the GOAT ROUTER process and try again.</span>
         </>
       )}
     </section>

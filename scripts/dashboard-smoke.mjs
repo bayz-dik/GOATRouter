@@ -280,6 +280,154 @@ section("11. Emitted HTML and CSS carry no secret");
   check("no token-shaped attribute in html", !/value\s*=\s*["'][0-9a-f]{32,}/.test(text));
 }
 
+/*
+ * Appended, never inserted: check numbers are contractual citations (see `check`), so this
+ * section starts after the existing 48 rather than beside the navigation checks it relates
+ * to.
+ *
+ * Why it exists: the mobile drawer's correctness lives in CSS, and the test suite runs
+ * under jsdom, which applies no stylesheet. `test/shell-responsive.test.ts` asserts the
+ * *source* CSS; this asserts the **emitted** CSS, which is a different claim — vite
+ * minifies media queries into range syntax (`(width>=640px)`), and a build that dropped or
+ * rewrote a breakpoint would still leave the source test green.
+ */
+section("12. The authenticated mobile drawer survived the build");
+{
+  const css = collect(DIST, [".css"]).map((file) => readFileSync(file, "utf8")).join("\n");
+  const html = collect(DIST, [".html"]).map((file) => readFileSync(file, "utf8")).join("\n");
+
+  // The reported bug: below the breakpoint the rail was `display:none` with no drawer and
+  // no trigger, so a phone had no way to change screen.
+  check("the drawer panel is emitted", /\.side-nav\{[^}]*position:fixed/.test(css));
+  check(
+    "the drawer opens on the attribute the shell sets",
+    /\.side-nav\[data-open\]\{[^}]*translatex?\(0\)/i.test(css),
+  );
+  check("the drawer backdrop is emitted", /\.nav-backdrop\{/.test(css));
+  check("the menu trigger is emitted", /\.nav-toggle\{/.test(css));
+  check(
+    "the scroll lock behind the open drawer is emitted",
+    /\.app\[data-menu-open\]\{[^}]*overflow:hidden/.test(css),
+  );
+
+  /*
+   * Both breakpoints survive minification. Written as two alternatives because vite
+   * rewrites `(min-width: 640px)` to the range form `(width>=640px)`; asserting only the
+   * authored spelling would pass on a stylesheet that shipped neither.
+   */
+  const at640 = /@media\s*\((?:min-width:\s*640px|width>=640px)\)/.test(css);
+  const at1024 = /@media\s*\((?:min-width:\s*1024px|width>=1024px)\)/.test(css);
+  check("the 640px breakpoint is emitted", at640);
+  check("the 1024px breakpoint is emitted", at1024);
+
+  // Desktop navigation is unchanged: the approved rail columns are still there.
+  check("the approved 84px rail column is emitted", /grid-template-columns:84px 1fr/.test(css));
+  check("the approved 224px rail column is emitted", /grid-template-columns:224px 1fr/.test(css));
+
+  /*
+   * One nav, not two. A `.mobile-nav` rule would mean a second button list built from a
+   * second source, free to drift from `SCREENS`.
+   */
+  check("no second mobile navigation was shipped", !/\.mobile-nav[\s{,.:]/.test(css));
+
+  // The trigger is labelled rather than an unlabelled glyph, and it reports its state.
+  check("the menu trigger ships an accessible name", /Open navigation/.test(bundle));
+  check("the menu trigger ships its closed-state name", /Close navigation/.test(bundle));
+  check("the menu trigger ships aria-expanded", /aria-expanded/.test(bundle));
+
+  /*
+   * The preview caption that caused the report — `<screen> / FLUX CORE V2` in the mobile
+   * header — is gone from the shipped markup. `FLUX CORE V2` itself still appears in the
+   * rail foot, which is a real label for the relay visualization, so this asserts on the
+   * caption's own class rather than banning the string.
+   */
+  check("the preview header caption class is gone", !/shell-tag/.test(`${css}\n${bundle}`));
+
+  /*
+   * Every canonical screen is reachable from the one list.
+   *
+   * Matched as `label:<quote>Name<quote>` with the quote left open, because this bundler
+   * emits string literals in **backticks**, not double quotes. The first version of these
+   * checks asserted `"Home"` and failed on a correct build — which is the right kind of
+   * failure to have found here rather than in a citation six months from now. Pinning
+   * `label:` as well as the name keeps it from matching a screen heading or a table cell
+   * that happens to contain the same word.
+   */
+  const navLabel = (label) => new RegExp(`label:["'\`]${label}["'\`]`);
+  for (const label of ["Home", "Usage", "Providers", "Routes", "Proxies", "Identities", "Chat"]) {
+    check(`the ${label} entry is emitted`, navLabel(label).test(bundle));
+  }
+  // `Settings` is not a screen the product has, so it must not ship as a nav label.
+  check("no inert Settings entry was shipped", !navLabel("Settings").test(bundle));
+
+  // The login surface stays navigation-free: the shell is not in the pre-auth markup.
+  check("the emitted shell is client-rendered, not baked into the html", !/side-nav/.test(html));
+}
+
+/*
+ * ================= 13. the direct provider setup flow survived the build =================
+ *
+ * Asserted on the emitted artifact rather than only in jsdom, because the *ordering* of the
+ * form is a build-time property of the bundle and a `<details>` that vite tree-shook or a
+ * label that got renamed would leave every component test green.
+ */
+{
+  const css = collect(DIST, [".css"]).map((file) => readFileSync(file, "utf8")).join("\n");
+  const html = collect(DIST, [".html"]).map((file) => readFileSync(file, "utf8")).join("\n");
+
+  // The three primary fields, by the ids their labels point at.
+  check("the display name field is emitted", /provider-display-name/.test(bundle));
+  check("the base URL field is emitted", /provider-base-url/.test(bundle));
+  check("the API key field is emitted", /provider-api-key/.test(bundle));
+
+  /*
+   * The key field is a password input with autocomplete off, exactly as the per-row
+   * credential field is. A `type="text"` key box would put a live credential on screen and
+   * into the browser's autofill store.
+   *
+   * The quote class is left open because this bundler emits **backticks** — the same thing
+   * that broke checks 63-69 on a correct build the first time round, so the lesson is
+   * applied here rather than relearned.
+   */
+  check(
+    "the API key field is a password input with autocomplete off",
+    /provider-api-key[\s\S]{0,200}type:["'`]password["'`][\s\S]{0,80}autoComplete:["'`]off["'`]/.test(
+      bundle,
+    ),
+  );
+
+  // Advanced exists as a real disclosure element, and holds the overrides.
+  check("the advanced disclosure is emitted", /bayz-advanced/.test(bundle));
+  check("the advanced disclosure is styled", /\.bayz-advanced/.test(css));
+  check("the provider id override is emitted", /provider-id-note/.test(bundle));
+  check("the compatibility fields are emitted", /provider-discovery-path/.test(bundle));
+  check("the loopback opt-in is still emitted", /provider-allow-loopback/.test(bundle));
+
+  /*
+   * `Add provider` and `Add and test connection` both ship. The second is what makes setup
+   * verifiable in one pass instead of create-then-hunt-for-the-row.
+   */
+  check("the add button is emitted", /Add provider/.test(bundle));
+  check("the create-and-test button is emitted", /Add and test connection/.test(bundle));
+
+  /*
+   * A proxy is optional and the shipped copy says so. This is the one claim in the flow that
+   * is a product promise rather than a mechanism, so it is asserted on the bytes that reach
+   * the operator.
+   */
+  check("the shipped copy states that a proxy is optional", /A proxy is optional/.test(bundle));
+
+  /*
+   * No credential-shaped literal rode along with the new field. The existing scan (checks
+   * 44-48) covers the whole bundle; this is the same property re-asserted after adding a
+   * form that handles a key, because that is exactly when a fixture leaks into source.
+   */
+  check(
+    "no key-shaped literal accompanies the new field",
+    !/sk-[A-Za-z0-9]{16,}/.test(`${bundle}\n${css}\n${html}`),
+  );
+}
+
 console.log(`\n${checks - failures.length}/${checks} checks passed`);
 if (failures.length > 0) {
   console.error("dashboard smoke: FAIL");
