@@ -1,4 +1,4 @@
-# Hermes Agent → BAYZ Router
+# Hermes Agent → GOAT ROUTER
 
 `hermes` is present on this host: `/root/.local/bin/hermes` →
 `/usr/local/lib/hermes-agent/venv/bin/hermes`, `--version` reports
@@ -9,7 +9,7 @@
 
 ## Verification status: VERIFIED, all 17 capabilities
 
-**Hermes has been driven against BAYZ for real.** `scripts/verify-hermes.mjs` runs the actual
+**Hermes has been driven against GOAT ROUTER for real.** `scripts/verify-hermes.mjs` runs the actual
 binary as a child process across nine scenarios and writes a transcript for each under
 `docs/transcripts/hermes/`. Every cell in the `hermes` row of
 [the compatibility matrix](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md)

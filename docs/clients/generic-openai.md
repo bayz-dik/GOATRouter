@@ -1,4 +1,4 @@
-# Generic OpenAI-compatible client → BAYZ Router
+# Generic OpenAI-compatible client → GOAT ROUTER
 
 For any client that speaks the OpenAI chat-completions API: an SDK, `curl`, a custom
 script, or a tool not covered by the other three guides.
@@ -6,7 +6,7 @@ script, or a tool not covered by the other three guides.
 ## Verification status
 
 This is the **only** row in the compatibility matrix with evidence behind it. Every claim
-below cites a numbered check in `scripts/client-conformance.mjs`, which drives BAYZ over
+below cites a numbered check in `scripts/client-conformance.mjs`, which drives GOAT ROUTER over
 real HTTP with real `fetch` against a real listener, a real SQLite database, and real
 scripted upstream origins — no in-process shortcuts. Run it yourself:
 
@@ -48,7 +48,7 @@ not mean any particular third-party client has been run — that is what the `op
 | model | exactly an `id` from `GET /v1/models` |
 
 Most SDKs take the base URL and key as constructor arguments or environment variables. The
-OpenAI Python and Node SDKs read `OPENAI_BASE_URL` and `OPENAI_API_KEY`; BAYZ requires no
+OpenAI Python and Node SDKs read `OPENAI_BASE_URL` and `OPENAI_API_KEY`; GOAT ROUTER requires no
 SDK-specific setting beyond those two, because it does not inspect client identity.
 
 `20128` is the default port (`BAYZ_PORT` in `apps/server/src/config.ts`). Use whatever port

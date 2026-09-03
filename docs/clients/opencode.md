@@ -1,11 +1,11 @@
-# OpenCode → BAYZ Router
+# OpenCode → GOAT ROUTER
 
 `opencode` is present on this host: `/usr/local/bin/opencode` →
 `/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe`, `--version` reports **1.18.23**.
 
 ## Verification status: VERIFIED, 16 of 17 capabilities
 
-**OpenCode has been driven against BAYZ for real.** `scripts/verify-opencode.mjs` runs the
+**OpenCode has been driven against GOAT ROUTER for real.** `scripts/verify-opencode.mjs` runs the
 actual binary as a child process — a real config file in an isolated HOME, real stdout and
 stderr, a real BAYZ listener, real provider origins, a real HTTP CONNECT proxy — and writes
 a transcript per scenario under `docs/transcripts/opencode/`. Every cell in the `opencode`

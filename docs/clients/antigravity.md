@@ -1,4 +1,4 @@
-# Antigravity → BAYZ Router
+# Antigravity → GOAT ROUTER
 
 ## Verification status: UNVERIFIED, all 17 capabilities — and the client is absent
 
@@ -34,8 +34,8 @@ So: no invented fields, and no invented capabilities.
 
 ## What is known, and is enough to configure it once it exists
 
-BAYZ exposes a standard OpenAI-compatible surface. Any client that speaks it needs three
-things, and BAYZ requires nothing beyond them:
+GOAT ROUTER exposes a standard OpenAI-compatible surface. Any client that speaks it needs three
+things, and GOAT ROUTER requires nothing beyond them:
 
 | setting | value |
 | --- | --- |

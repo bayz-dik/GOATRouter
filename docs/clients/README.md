@@ -1,4 +1,4 @@
-# Connecting a client to BAYZ Router
+# Connecting a client to GOAT ROUTER
 
 Four guides, one per client row in the compatibility matrix:
 
@@ -14,10 +14,10 @@ Four guides, one per client row in the compatibility matrix:
 These are **configuration** guides. They tell you what to paste where. They are not
 compatibility claims.
 
-The distinction is the whole point of Phase 9H. BAYZ implements an OpenAI-compatible
+GOAT ROUTER implements an OpenAI-compatible
 gateway with streaming, tool calling, scoped client keys, custom providers, proxy-bound
 routes, combos, failover, and free-only routing — proven by 1897 tests and 998 smoke
-checks. That is what BAYZ *does*. Whether a **specific client** works against it is a
+checks. That is what GOAT ROUTER *does*. Whether a **specific client** works against it is a
 separate question, answered only by running that client, and recorded cell by cell in
 [`../superpowers/2026-08-27-bayz-client-compatibility-matrix.md`](../superpowers/2026-08-27-bayz-client-compatibility-matrix.md).
 
