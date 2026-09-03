@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="apps/dashboard/public/brand/goat-router-lockup.png" alt="GOAT ROUTER" width="800">
+</p>
+
 # GOAT ROUTER
 
 GOAT ROUTER is a local-first LLM router with an OpenAI-compatible gateway, a browser dashboard, direct provider connections, optional proxy routing, and encrypted local credential storage.
