@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ApiErrorResponse } from "@bayz/contracts";
 import { verifyApiToken } from "./api-token.js";
+import { isLoopbackPeer } from "./posture.js";
 import {
   bootstrapPrincipal,
   type BayzPrincipal,
@@ -50,6 +51,31 @@ export type RateLimitOptions = {
 
 export type InstallApiGuardsOptions = {
   apiToken: string;
+  /**
+   * A live read of the current API token. When supplied, the guard checks the
+   * presented credential against `apiTokenLive()` on every request instead of
+   * the value captured at install time — so a live token rotation takes effect
+   * immediately. Defaults to `() => apiToken`.
+   */
+  apiTokenLive?: () => string;
+  /**
+   * Route paths that a local operator may reach with the full admin scope
+   * WITHOUT presenting a token, when two conditions both hold:
+   *   - the peer is loopback, and
+   *   - the request carries no `Origin` header.
+   *
+   * The loopback condition confines it to the machine. The no-Origin condition
+   * is what keeps it out of reach of a browser: any cross-origin request a
+   * website could fire carries an `Origin`, and the existing host/origin guard
+   * already rejects every non-loopback origin before this point. A bare
+   * non-browser client (a local `bayz`, `curl`) sends no Origin, which is how a
+   * same-uid local operator is distinguished. Same-uid local processes already
+   * own the data directory, so this grants no capability that user did not
+   * already hold — it exists so a lost API token can be rotated without a
+   * deadlock. Any other caller (remote, or a browser) still needs the admin
+   * token exactly as before.
+   */
+  loopbackLocalAdminRoutes?: ReadonlySet<string>;
   rateLimit?: RateLimitOptions;
   /**
    * Maximum guarded requests in flight at once. Omitted, non-integer, or below 1
@@ -278,6 +304,28 @@ export function installApiGuards(
       return;
     }
 
+    /*
+     * The loopback-local admin bypass. Before the token is even considered, a
+     * request to a designated route may proceed without a credential when it is
+     * loopback-originated AND carries no Origin header. The no-Origin condition
+     * is the CSRF gate: a browser cross-origin request always sends Origin, and
+     * any such request was already rejected above (or will be — non-loopback
+     * origins never survive). A bare local client sends no Origin. This is the
+     * contained seam that lets a same-uid operator rotate a lost token.
+     */
+    const pathname = (request.url.split("?")[0] ?? "").toString();
+    if (
+      options.loopbackLocalAdminRoutes !== undefined &&
+      options.loopbackLocalAdminRoutes.has(pathname) &&
+      isLoopbackPeer(request.ip) &&
+      request.headers.origin === undefined
+    ) {
+      // Authenticated as the local admin principal; still counted for rate
+      // limiting so a stray loopback flood cannot run unchecked.
+      request.principal = bootstrapPrincipal();
+      return acquire(request, reply);
+    }
+
     const key = request.ip ?? "unknown";
     const counter = counterFor(key);
 
@@ -302,9 +350,11 @@ export function installApiGuards(
     }
 
     const presented = match[1]!;
+    // Resolve the live token each request so a rotation is honoured immediately.
+    const liveToken = options.apiTokenLive ? options.apiTokenLive() : options.apiToken;
     // The bootstrap token is checked first and unconditionally, so an identity
     // resolver can never shadow or weaken the Phase 6 credential.
-    if (verifyApiToken(options.apiToken, presented)) {
+    if (verifyApiToken(liveToken, presented)) {
       request.principal = bootstrapPrincipal();
       return acquire(request, reply);
     }

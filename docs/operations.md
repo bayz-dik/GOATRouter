@@ -70,7 +70,7 @@ token stays under the operator's control.
 
 ## Dashboard unlock
 
-Open the dashboard at `http://127.0.0.1:20128` (or your `BAYZ_PORT` / `BAYZ_HOST`
+Open the dashboard at `http://127.0.0.1:20156` (or your `BAYZ_PORT` / `BAYZ_HOST`
 if set) and enter the token. The dashboard keeps it in memory only — it is never
 written to browser storage.
 

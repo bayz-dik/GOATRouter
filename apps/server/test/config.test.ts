@@ -8,7 +8,9 @@ import { loadRuntimeConfig } from "../src/config.js";
 test("uses private local defaults", () => {
   const config = loadRuntimeConfig({});
   assert.equal(config.host, "127.0.0.1");
-  assert.equal(config.port, 20128);
+  // GOAT ROUTER's permanent default port is 20156 (its own, distinct from
+  // 9Router's 20128). BAYZ_PORT overrides it; the override test covers that.
+  assert.equal(config.port, 20156);
   /*
    * 9J Task 3 moved data directory resolution into `src/data-dir.ts`, and this assertion changed
    * with it. It used to be `/\.bayz$/`, which pinned the *old inlined* `${homedir()}/.bayz` — the

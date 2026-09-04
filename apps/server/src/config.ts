@@ -24,7 +24,11 @@ export function loadRuntimeConfig(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeConfig {
   const host = env.BAYZ_HOST ?? "127.0.0.1";
-  const port = Number(env.BAYZ_PORT ?? "20128");
+  /*
+   * GOAT ROUTER's own permanent default port is 20156. 20128 is the 9Router
+   * default and must never be ours. BAYZ_PORT always overrides this default.
+   */
+  const port = Number(env.BAYZ_PORT ?? "20156");
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("BAYZ_PORT must be an integer from 1 to 65535");
   }

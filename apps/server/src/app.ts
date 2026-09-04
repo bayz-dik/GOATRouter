@@ -67,6 +67,13 @@ export type BuildAppOptions = {
    * from full access.
    */
   requireSigning?: boolean;
+  /**
+   * Enable the loopback-local admin seam: a same-uid loopback operator (no
+   * Origin header) may reach designated admin routes, such as rotating a lost
+   * API token, without presenting a credential. Set ONLY by the real server
+   * entry; test harnesses keep the strict token-required rule.
+   */
+  loopbackLocalAdmin?: boolean;
 };
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -113,6 +120,18 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
           });
     installApiGuards(app, {
       apiToken: options.apiToken,
+      // A runtime may rotate its API token live; the guard must then see the new
+      // token. Passing a live read (rather than the value captured at build time)
+      // keeps the running process consistent with the store without a restart.
+      ...(options.runtime === undefined
+        ? {}
+        : { apiTokenLive: () => options.runtime!.apiToken }),
+      // The loopback-local admin seam (rotate a lost token) is an explicit opt-in
+      // that only the real server entry enables. Test harnesses that build an app
+      // with a runtime must keep the strict "every route needs the token" rule.
+      ...(options.loopbackLocalAdmin === true
+        ? { loopbackLocalAdminRoutes: new Set(["/api/security/rotate-api-token"]) }
+        : {}),
       ...(resolveIdentity === undefined ? {} : { resolveIdentity }),
       ...(options.rateLimit === undefined ? {} : { rateLimit: options.rateLimit }),
       ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),

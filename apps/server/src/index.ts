@@ -87,6 +87,9 @@ const app = buildApp({
   // posture was satisfied by signing rather than by mutual TLS — otherwise the
   // requirement would have been *declared* met and never enforced.
   requireSigning: posture.requestSigning,
+  // The real server enables the loopback-local admin seam so a same-uid operator
+  // can rotate a lost API token without a credential deadlock.
+  loopbackLocalAdmin: true,
 });
 
 app.log.info(
@@ -126,7 +129,7 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
  * Registered before `listen`, so no request can be served during a window in which a
  * proxy-bound route could tunnel back into BAYZ itself. The registry lives in
  * `@bayz/proxy` rather than being a constant there because the bind address is
- * configuration: a hard-coded `127.0.0.1:20128` would miss a `lan` deployment and miss
+ * configuration: a hard-coded `127.0.0.1:20156` would miss a `lan` deployment and miss
  * a non-default port.
  */
 registerLocalListener({ host: config.host, port: config.port });

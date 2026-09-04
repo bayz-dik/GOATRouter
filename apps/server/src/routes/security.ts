@@ -50,6 +50,27 @@ export function registerSecurityRoutes(app: FastifyInstance, runtime: BayzRuntim
     });
   });
 
+  /**
+   * Rotate the local API token.
+   *
+   * `admin`-only and loopback-only like every management route. A replacement is
+   * minted by the runtime and returned exactly once; there is no route that reads
+   * the stored token back. This mirrors the identity-key rotation precedent: a new
+   * credential is minted and shown to the caller who authorised the operation.
+   * The old token stops working immediately because the guard reads the live
+   * token.
+   */
+  app.post("/api/security/rotate-api-token", async (request, reply) => {
+    const denied = requireScope(request, reply, "admin");
+    if (denied !== undefined) {
+      return denied;
+    }
+    return handleDomain(request, reply, () => {
+      const result = runtime.rotateApiToken();
+      return { token: result.token, tokenShownOnce: true };
+    });
+  });
+
   app.get<{ Querystring: { limit?: string } }>(
     "/api/security/audit",
     async (request, reply) => {

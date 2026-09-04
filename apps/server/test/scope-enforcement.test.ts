@@ -138,6 +138,12 @@ const MANAGEMENT_ROUTES: Array<{ method: string; url: string; scope: ClientScope
   // "may re-key the whole deployment" would be a sensible grant.
   { method: "POST", url: "/api/security/rotate-root-key", scope: "admin" },
   { method: "GET", url: "/api/security/audit", scope: "admin" },
+  // API-token rotation. The credential that guards every `/api` route is
+  // `admin`-only and loopback-only for the same reason as the root key: minting a
+  // replacement is deployment custody, not a chat-client operation. The
+  // loopback-local admin seam lets a same-uid operator rotate without a token,
+  // but a presented lesser scope is still refused here.
+  { method: "POST", url: "/api/security/rotate-api-token", scope: "admin" },
 ];
 
 test("every registered API route is covered by this suite", async (t) => {
@@ -174,7 +180,7 @@ test("every registered API route is covered by this suite", async (t) => {
   assert.ok(registered.length >= 29, `only ${registered.length} routes found`);
   assert.equal(
     registered.filter((route) => route.url.startsWith("/api/")).length,
-    43,
+    44,
     "the management surface changed size without a scope decision",
   );
 });

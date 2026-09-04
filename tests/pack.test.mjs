@@ -129,11 +129,17 @@ test("the tarball contents are exactly the intended set", () => {
    * appearing (a stray export, a colour variant) must fail rather than ride along. The artwork is
    * also the only binary content in the artifact, and the secret scan two tests below reads it as
    * bytes like every other entry.
+   *
+   * `dist/control.mjs` arrived with the operator terminal surface (D2): the
+   * bundled `bayz` control plane (daemon lifecycle + TUI + doctor/backup), which
+   * ships alongside `dist/server.mjs` and `dist/update-cli.mjs`. It is a
+   * separate bundle because importing the server bundle would start the daemon.
    */
   assert.deepEqual(files, [
     "package/LICENSE",
     "package/README.md",
     "package/dist/bayz.mjs",
+    "package/dist/control.mjs",
     "package/dist/dashboard/assets/index-L1-b80dY.css",
     "package/dist/dashboard/assets/index-PkBLOcOF.js",
     "package/dist/dashboard/brand/goat-router-character.webp",
@@ -259,6 +265,33 @@ test("the bin entry resolves and --version prints without opening a database", (
   assert.equal(existsSync(dataDir), false, "--version created the data directory");
 
   rmSync(staging, { recursive: true, force: true });
+});
+
+test("the bayz bin is the operator control plane, not a foreground server import", () => {
+  /*
+   * D2 of the terminal design: the packed `bayz` is a full operator CLI
+   * (start/stop/restart/status/doctor/backup/restore + bare auto-start/TUI),
+   * delegating to the bundled control.mjs. Two things must hold:
+   *   - the bin must not `import "./server.mjs"` at the top level, or `--help`
+   *     and `--status` would start the daemon as a side effect;
+   *   - the operator command surface must ship in dist/control.mjs.
+   */
+  const bin = pack.entryText(entries, "package/dist/bayz.mjs");
+  assert.doesNotMatch(bin, /import\(\.\/server\.mjs\)|import ["']\.\/server\.mjs/, "the bin imports the server bundle");
+  assert.match(bin, /control\.mjs/, "the bin does not dispatch to the control plane");
+  assert.ok(files.includes("package/dist/control.mjs"), "dist/control.mjs is not in the artifact");
+
+  const control = pack.entryText(entries, "package/dist/control.mjs");
+  // The bundled control plane must carry the lifecycle engine and the TUI, so
+  // bare `bayz` can auto-start and open the operator menu without a repo.
+  for (const marker of [
+    "startHealthy",        // lifecycle engine
+    "rotate-api-token",    // the API-token rotation the TUI drives
+    "Open Web UI",         // the root menu
+    "Run `bayz`",          // the non-TTY hint
+  ]) {
+    assert.ok(control.includes(marker), `the control bundle lacks: ${marker}`);
+  }
 });
 
 test("the version is embedded, not read from disk at runtime", () => {

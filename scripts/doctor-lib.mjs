@@ -52,7 +52,11 @@ if (isMain && !process.env.BAYZ_DOCTOR_LOADER) {
 }
 
 export const MIN_NODE_MAJOR = 24;
-const DEFAULT_PORT = "20128";
+/*
+ * GOAT ROUTER's own default port is 20156. 20128 is the 9Router default; GOAT
+ * must never fall back to it. BAYZ_PORT always overrides this.
+ */
+const DEFAULT_PORT = "20156";
 const DEFAULT_HOST = "127.0.0.1";
 const PID_FILE = "bayz.pid";
 const LOG_FILE = "bayz.log";
@@ -228,7 +232,7 @@ export function checkEncryptedState(dir) {
  * Run all diagnostics. Returns an array of { name, status, detail } where
  * status is "pass" | "warn" | "fail". Never includes secrets.
  */
-export async function runDoctor({ env = process.env, dir = dataDir(env) } = {}) {
+export async function runDoctor({ env = process.env, dir = dataDir(env), installed = false } = {}) {
   const results = [];
   const add = (name, status, detail = "") => results.push({ name, status, detail });
 
@@ -238,10 +242,14 @@ export async function runDoctor({ env = process.env, dir = dataDir(env) } = {}) 
   const npm = spawnSync("npm", ["--version"], { encoding: "utf8" });
   add("npm", npm.status === 0 ? "pass" : "fail", npm.status === 0 ? npm.stdout.trim() : "not found");
 
-  // Runtime files
-  const required = ["apps/server/src/index.ts", "apps/dashboard/dist/index.html"];
-  const missing = required.filter((f) => !existsSync(join(ROOT, f)));
-  add("runtime files", missing.length === 0 ? "pass" : "fail", missing.length === 0 ? "present" : `missing: ${missing.join(", ")}`);
+  // Runtime files. In the repository this means the source tree; in an installed
+  // control plane (bare `bayz`) there is no checkout, so the packaged bundle is
+  // the proof instead.
+  if (!installed) {
+    const required = ["apps/server/src/index.ts", "apps/dashboard/dist/index.html"];
+    const missing = required.filter((f) => !existsSync(join(ROOT, f)));
+    add("runtime files", missing.length === 0 ? "pass" : "fail", missing.length === 0 ? "present" : `missing: ${missing.join(", ")}`);
+  }
 
   // Data directory
   const dirExists = existsSync(dir);
@@ -328,9 +336,12 @@ export async function runDoctor({ env = process.env, dir = dataDir(env) } = {}) 
   // Provider state (external connectivity is WARN, not FAIL)
   add("provider state", "warn", "external provider connectivity is not a core failure");
 
-  // Backup capability
-  const backupLib = join(ROOT, "scripts/backup-lib.mjs");
-  add("backup capability", existsSync(backupLib) ? "pass" : "fail", existsSync(backupLib) ? "available" : "missing");
+  // Backup capability. In an installed control plane the backup engine is
+  // bundled with `bayz`, so it is always available there.
+  if (!installed) {
+    const backupLib = join(ROOT, "scripts/backup-lib.mjs");
+    add("backup capability", existsSync(backupLib) ? "pass" : "fail", existsSync(backupLib) ? "available" : "missing");
+  }
 
   // Disk space
   try {

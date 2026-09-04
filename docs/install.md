@@ -42,15 +42,21 @@ node scripts/goat.mjs status
 
 Or as npm scripts: `npm run goat:start`, `goat:stop`, `goat:restart`, `goat:status`. See `docs/operations.md` for the full lifecycle, update, backup, and rollback guide.
 
-## Start
+## Start and run
+
+After a global install, run `bayz` (no arguments) in a terminal:
 
 ```sh
-BAYZ_API_TOKEN=<your-token> bayz
+bayz
 ```
 
-With no `BAYZ_HOST` or `BAYZ_PORT`, GOAT ROUTER listens on `http://127.0.0.1:20128` and serves the dashboard there. `BAYZ_API_TOKEN` is required for a non-loopback bind. On a loopback first start without one, GOAT ROUTER generates a token, stores it encrypted, and prints it once.
+Bare `bayz` makes sure the server is running — starting it as a background daemon on the first run if it is not — then opens a small operator menu (Web UI launcher, API Token management, server controls, status, doctor). Exiting the menu never stops the server; only `bayz stop` does. In a non-TTY `bayz` prints a concise status instead.
+
+With no `BAYZ_HOST` or `BAYZ_PORT`, GOAT ROUTER listens on `http://127.0.0.1:20156` and serves the dashboard there. `BAYZ_API_TOKEN` is required for a non-loopback bind. On a loopback first start without one, GOAT ROUTER generates a token, stores it encrypted, and prints it once (the terminal menu can rotate a lost token, showing a new one once).
 
 Set `BAYZ_HOST`, `BAYZ_PORT`, and `BAYZ_DATA_DIR` only when needed. Non-loopback `BAYZ_HOST` requires `BAYZ_ALLOW_REMOTE=true`; review the server security posture before exposing the service.
+
+A subsequent `bayz` always reuses the already-running daemon (same data directory and port), so there is never a second server.
 
 ## Data
 
@@ -84,7 +90,7 @@ documented repair is to delete that one row through the API:
 DELETE /api/providers/<id>
 ```
 
-(For example with `curl -X DELETE http://127.0.0.1:20128/api/providers/<id>
+(For example with `curl -X DELETE http://127.0.0.1:20156/api/providers/<id>
 -H "Authorization: Bearer <token>"`.) Then recreate the provider with a valid
 configuration. Do not edit the database directly to fix the row; deletion
 through the API removes only the corrupt provider and leaves the rest of the

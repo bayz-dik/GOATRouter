@@ -13,6 +13,17 @@ export type ResolvedApiToken = {
   source: ApiTokenSource;
 };
 
+/**
+ * Mint a fresh 64-hex API token.
+ *
+ * Rotation must mint a replacement that is indistinguishable from a first-boot
+ * generation in strength (32 random bytes, hex), so a rotated credential is not
+ * weaker than one that was never rotated.
+ */
+export function mintApiToken(): string {
+  return randomBytes(TOKEN_BYTES).toString("hex");
+}
+
 export type ResolveApiTokenOptions = {
   storage: SecretStorage;
   env?: Record<string, string | undefined>;
@@ -57,7 +68,7 @@ export function resolveApiToken(
     return { token: existing, source: "stored" };
   }
 
-  const token = randomBytes(TOKEN_BYTES).toString("hex");
+  const token = mintApiToken();
   options.storage.put(API_TOKEN_SECRET_NAME, token);
   notify(
     `Bayz local API token (shown only once, store it now): ${token}`,

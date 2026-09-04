@@ -39,7 +39,7 @@ Start the server from the repository root:
 npm run start --workspace @bayz/server
 ```
 
-The default listener is `http://127.0.0.1:20128`. The dashboard is served at that address. Open it in a browser on the same device.
+The default listener is `http://127.0.0.1:20156`. The dashboard is served at that address. Open it in a browser on the same device.
 
 Set an API token explicitly when starting a long-lived installation:
 
@@ -49,11 +49,19 @@ BAYZ_API_TOKEN=<your-token> npm run start --workspace @bayz/server
 
 If `BAYZ_API_TOKEN` is unset on a loopback install, GOAT ROUTER generates one on first start, stores it encrypted, and prints it once. Save it before opening the dashboard. Every API endpoint except `GET /api/health` requires `Authorization: Bearer <token>`.
 
-`BAYZ_HOST` defaults to `127.0.0.1`; `BAYZ_PORT` defaults to `20128`. A non-loopback bind requires `BAYZ_ALLOW_REMOTE=true` and additional posture protections. See `docs/install.md` before exposing the service beyond loopback.
+`BAYZ_HOST` defaults to `127.0.0.1`; `BAYZ_PORT` defaults to `20156`. A non-loopback bind requires `BAYZ_ALLOW_REMOTE=true` and additional posture protections. See `docs/install.md` before exposing the service beyond loopback.
+
+### The `bayz` operator launcher
+
+An installed GOAT ROUTER (`npm install -g bayz-router-<version>.tgz`) is driven by the `bayz` command. Running bare `bayz` in a terminal makes sure the server is running (auto-starting it as a background daemon if it is not), then opens a small operator menu: Web UI launcher, API Token management, server controls, status, and doctor. Exiting the menu never stops the server — only `bayz stop` does. In a non-TTY `bayz` prints a concise status.
+
+Subcommands run from any directory: `bayz start`, `stop`, `restart`, `status`, `doctor`, `backup`, `restore`, `update`. The daemon and the command share one data directory and one default port (`20156`), so a `bayz` started later always reuses the running server rather than starting a second one.
+
+To generate a fresh token on a first boot, start the server once and read the printed token; the terminal menu's **API Token** option can rotate a lost token (a new 64-hex token is shown once and stored encrypted).
 
 ## Dashboard and provider setup
 
-1. Open `http://127.0.0.1:20128` and enter the API token. The dashboard keeps it in memory only.
+1. Open `http://127.0.0.1:20156` and enter the API token. The dashboard keeps it in memory only.
 2. Open **Providers** and enter a display name, base URL, and API key or credential.
 3. Select a provider kind only when the URL cannot be recognized. Advanced fields hold the provider ID, headers, loopback permission, and compatibility settings.
 4. Use **Add and test connection**. GOAT ROUTER creates the provider, stores the credential through its write-only encrypted path, then tests the stored provider.
@@ -73,7 +81,7 @@ A provider pointing at `127.0.0.1`, `localhost`, or another loopback address mus
 
 Create a scoped client identity in **Identities**, then configure an OpenAI-compatible client with:
 
-- Base URL: `http://127.0.0.1:20128/v1`
+- Base URL: `http://127.0.0.1:20156/v1`
 - API key: the client key shown once when the identity is created
 - Model: a model returned by `GET /v1/models`
 

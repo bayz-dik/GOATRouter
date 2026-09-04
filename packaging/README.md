@@ -29,7 +29,9 @@ package/package.json
 package/README.md
 package/LICENSE
 package/dist/bayz.mjs
+package/dist/control.mjs
 package/dist/server.mjs
+package/dist/update-cli.mjs
 package/dist/dashboard/index.html
 package/dist/dashboard/assets/*
 package/dist/dashboard/brand/*
@@ -37,15 +39,19 @@ package/dist/dashboard/brand/*
 
 The package bundles internal `@bayz/*` workspaces into `dist/server.mjs`. It retains only the external runtime dependencies that the produced bundles import: `fastify` and `@fastify/static`.
 
+`dist/control.mjs` is the operator control plane — the daemon lifecycle, doctor, backup, and terminal UI that the `bayz` command dispatches to. `dist/update-cli.mjs` powers `bayz update` / `--check-update`. All three are separate bundles because importing the server bundle would start the daemon as a side effect of asking for `--version` or `--help`.
+
 ## Install and run
 
 ```sh
 npm install -g packaging/out/bayz-router-0.1.1.tgz
 bayz --version
-BAYZ_API_TOKEN=<your-token> bayz
+bayz
 ```
 
-`bayz --version` and `bayz --help` do not open the database. Starting `bayz` serves the packaged dashboard and uses the same `BAYZ_*` configuration variables as a source checkout.
+`bayz --version` and `bayz --help` do not open the database or bind a listener. Bare `bayz` in a terminal starts the server in the background if needed and opens a small operator menu (server controls, API-token rotation, Web UI launcher); in a non-TTY it prints a concise status. Exiting the menu never stops the daemon — only `bayz stop` does.
+
+Operator commands: `bayz start`, `stop`, `restart`, `status`, `doctor`, `backup`, `backup-verify`, `restore`, `update`. They use the same `BAYZ_*` configuration variables as a source checkout.
 
 ## Packaging checks
 

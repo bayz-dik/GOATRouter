@@ -18,7 +18,12 @@ import {
   type SecurityAuditRepository,
   type StorageLogger,
 } from "@bayz/storage";
-import { resolveApiToken, type ApiTokenSource } from "./api-token.js";
+import {
+  API_TOKEN_SECRET_NAME,
+  mintApiToken,
+  resolveApiToken,
+  type ApiTokenSource,
+} from "./api-token.js";
 import type { RuntimeConfig } from "./config.js";
 
 export type BayzRuntimeStatus = {
@@ -50,6 +55,11 @@ export type BayzSecurity = {
   recentAudit(limit?: number): SecurityAuditRecord[];
 };
 
+export type RotateApiTokenResult = {
+  token: string;
+  previousSource: ApiTokenSource;
+};
+
 export type BayzRuntime = {
   readonly identities: IdentityManager;
   readonly providers: ProviderManager;
@@ -57,8 +67,10 @@ export type BayzRuntime = {
   readonly router: Router;
   readonly usage: UsageRepository;
   readonly security: BayzSecurity;
+  /** The current live API token; the guard reads this each request. */
   readonly apiToken: string;
   readonly apiTokenSource: ApiTokenSource;
+  rotateApiToken(): RotateApiTokenResult;
   describe(): BayzRuntimeStatus;
   close(): void;
 };
@@ -127,6 +139,17 @@ export function createBayzRuntime(
         "Remote exposure requires an explicit BAYZ_API_TOKEN; refusing to bind a non-loopback host with a freshly generated token",
       );
     }
+
+    /*
+     * A mutable holder for the live API token. The guard reads this each
+     * request through the runtime's `apiToken` getter, so a rotation takes
+     * effect immediately without a restart. `environment` tokens are never
+     * rotated into the store (they stay external); rotation from an
+     * environment source stores the replacement so a later boot keeps working
+     * without the env var.
+     */
+    let currentToken = resolved.token;
+    let tokenSource: ApiTokenSource = resolved.source;
 
     const identities = createIdentityManager({
       storage,
@@ -203,8 +226,29 @@ export function createBayzRuntime(
       router,
       usage,
       security,
-      apiToken: resolved.token,
-      apiTokenSource: resolved.source,
+      // Live getters: rotation updates `currentToken`/`tokenSource`, so the guard
+      // and status report see the current value on the next read.
+      get apiToken(): string {
+        return currentToken;
+      },
+      get apiTokenSource(): ApiTokenSource {
+        return tokenSource;
+      },
+
+      rotateApiToken(): RotateApiTokenResult {
+        const replacement = mintApiToken();
+        // Persist first so a crash cannot leave the store on the old token while
+        // the live process already rejects it.
+        storage.put(API_TOKEN_SECRET_NAME, replacement);
+        currentToken = replacement;
+        // After a rotation the source is stored, not environment: an operator who
+        // relied on the env var now has a persisted replacement. This is the
+        // behaviour the rotation menu promises (the new token keeps working on the
+        // next boot).
+        const previousSource = tokenSource;
+        tokenSource = "stored";
+        return { token: replacement, previousSource };
+      },
 
       describe(): BayzRuntimeStatus {
         // Only operational facts. The key is represented by its one-way
