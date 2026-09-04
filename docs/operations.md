@@ -106,7 +106,46 @@ makes the encrypted credentials unrecoverable.
 
 ## Update
 
-The safe update flow preserves your data and credentials:
+There are two update paths, depending on how GOAT ROUTER was installed.
+
+### From a GitHub Release (recommended for installed users)
+
+If you installed the `bayz` package from a GitHub Release, update straight from
+the release feed:
+
+```sh
+bayz --version          # current version
+bayz --check-update     # is a newer release available? (no install)
+bayz update             # download latest stable, verify checksum, install
+```
+
+`bayz update`:
+
+1. Reads the installed version.
+2. Queries the official `bayz-dik/GOATRouter` GitHub Releases feed for the
+   latest **stable** release (never a prerelease or draft).
+3. If already current, exits cleanly with no change.
+4. Downloads the release artifact and its `SHA256SUMS.txt`.
+5. Verifies the SHA256 **before** installing. A mismatch blocks the install.
+6. Reinstalls the verified artifact into the same npm prefix; the runtime data
+   directory is never touched.
+7. Verifies the installed `bayz --version` matches the release, and rolls back
+   to the previous release if it does not.
+
+If the network is unavailable or the feed errors, the current installation keeps
+working and `bayz update` reports the failure without changing anything.
+
+### Data safety on update
+
+Updating never deletes, recreates, or copies the runtime data directory
+(`bayz.db`, `master.key`, WAL files, encrypted credentials, providers, routes,
+proxies, identities, the API token, usage). `npm install` replaces only the
+installed package. Back up the data directory before a significant upgrade, as
+described under "Data location".
+
+### From source (when you have a repository checkout)
+
+The developer-facing lifecycle CLI in the repository does a source update:
 
 ```sh
 node scripts/goat.mjs update
@@ -134,20 +173,21 @@ goat: The working tree has uncommitted tracked changes. Commit or stash them
 first; update never discards your changes.
 ```
 
-## Rollback limitations
+## Rollback
 
-This repository manages GOAT ROUTER from source, not from an immutable release
-feed. `goat:update` fast-forwards to the latest commit on the current branch; it
-is not a binary-package updater.
+From a GitHub Release install, `bayz update` restores the previous release
+automatically if the new one fails its version check after install. For a manual
+rollback to an earlier release:
 
-- To roll back to an earlier commit, `git checkout <commit>` and rebuild. The
-  data directory is untouched and remains readable.
-- **Downgrade is refused by the schema**, not silently applied. A database built
-  at a newer schema version refuses to start with an older build, so you cannot
-  start an older GOAT ROUTER against a database it would not understand. The
-  refusal names the storage stage rather than failing opaquely.
-- Always keep a backup of the data directory before any update or rollback, as
-  described above.
+```sh
+# Reinstall a specific release tarball you already have:
+npm install -g bayz-router-0.0.0.tgz
+```
+
+From a source checkout, roll back to an earlier commit and rebuild. The data
+directory is untouched and remains readable. **Downgrade is refused by the
+schema**, not silently applied: a database built at a newer schema version
+refuses to start with an older build.
 
 ## Verification
 

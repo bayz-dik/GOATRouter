@@ -140,6 +140,7 @@ test("the tarball contents are exactly the intended set", () => {
     "package/dist/dashboard/brand/goat-router-lockup.png",
     "package/dist/dashboard/index.html",
     "package/dist/server.mjs",
+    "package/dist/update-cli.mjs",
     "package/package.json",
   ]);
 });
