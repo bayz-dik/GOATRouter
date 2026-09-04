@@ -19,6 +19,7 @@ import { registerSecurityRoutes } from "./routes/security.js";
 import { registerUsageRoutes } from "./routes/usage.js";
 import type { BayzRuntime } from "./runtime.js";
 import { registerStaticDashboard } from "./static-dashboard.js";
+import { VERSION } from "./version.js";
 
 /** 1 MiB, matching the router's own request cap. */
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -134,7 +135,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   app.get("/api/health", async (): Promise<HealthResponse> => ({
     status: "ok",
-    version: options.version ?? "0.1.0",
+    version: options.version ?? VERSION,
     uptimeSeconds: process.uptime(),
   }));
 

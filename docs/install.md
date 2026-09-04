@@ -69,6 +69,27 @@ Uninstalling the CLI does not remove data:
 npm uninstall -g bayz-router
 ```
 
+## Corrupted provider configuration
+
+BAYZ stores each provider's configuration in its database. A single row whose
+stored configuration cannot be parsed — a truncated write, a hand-edit, or a
+future build writing a shape this one rejects — does **not** stop the server from
+starting. One bad provider row is survivable: BAYZ still starts, other providers
+keep serving, and encrypted credentials are unaffected.
+
+The affected provider reports `invalid_provider_config` when accessed. The
+documented repair is to delete that one row through the API:
+
+```sh
+DELETE /api/providers/<id>
+```
+
+(For example with `curl -X DELETE http://127.0.0.1:20128/api/providers/<id>
+-H "Authorization: Bearer <token>"`.) Then recreate the provider with a valid
+configuration. Do not edit the database directly to fix the row; deletion
+through the API removes only the corrupt provider and leaves the rest of the
+registry intact.
+
 ## Removing BAYZ
 
 Deleting the selected data directory is **irreversible**. It permanently removes all providers, routes, identities, telemetry, and encrypted credentials, and the encryption keys that could have decrypted them go with it. There is no recovery from a deleted `bayz.db` or `master.key`. Back up the directory before deleting it, and only delete it when you intend to remove all data permanently.
