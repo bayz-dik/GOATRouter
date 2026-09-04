@@ -113,6 +113,21 @@ BAYZ_API_TOKEN=<your-token> bayz
 
 Run `node scripts/pack.mjs --self-test` to exercise the packaging safeguards. `packaging/README.md` documents the artifact contents and boundaries. Local artifacts are unsigned; see `docs/release-verification.md` for verification rules.
 
+## Published releases
+
+The first release is `v0.1.0`:
+
+- Release: https://github.com/bayz-dik/GOATRouter/releases/tag/v0.1.0
+- Artifact: `bayz-router-0.1.0.tgz` (SHA256 in `SHA256SUMS.txt` on the release)
+
+Install the published artifact with:
+
+```sh
+npm install -g bayz-router-0.1.0.tgz
+bayz --version
+BAYZ_API_TOKEN=<your-token> bayz
+```
+
 ## Limits worth knowing
 
 - Credentials are encrypted at rest, but a compromised host or running process can still access active secrets.
