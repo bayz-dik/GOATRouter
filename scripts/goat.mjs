@@ -31,6 +31,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   openSync,
   readFileSync,
   rmSync,
@@ -136,6 +137,11 @@ function serverCommand() {
 
 function startServer({ dir }) {
   const [cmd, args] = serverCommand();
+  // The data directory is created by the server's storage layer, but the CLI
+  // opens the log here, so create the directory up front on a fresh install.
+  // An explicit BAYZ_DATA_DIR must exist; the storage layer is strict about
+  // an empty value, so only create when absent.
+  mkdirSync(dir, { recursive: true });
   const logFd = openSync(logPath(dir), "a", 0o600);
   const child = spawn(cmd, args, {
     cwd: ROOT,
@@ -148,15 +154,8 @@ function startServer({ dir }) {
   return child.pid;
 }
 
-function isFreshDataDir(dir) {
-  // A token is generated exactly once, on the first boot of a data directory. If
-  // the database already exists, any token was generated and surfaced before, so
-  // re-printing it would violate "shown only once".
-  return !existsSync(join(dir, "bayz.db"));
-}
-
-function surfaceFirstBootToken(dir) {
-  if (!isFreshDataDir(dir)) return;
+function surfaceFirstBootToken(dir, fresh) {
+  if (!fresh) return;
   const path = logPath(dir);
   if (!existsSync(path)) return;
   const log = readFileSync(path, "utf8");
@@ -275,6 +274,9 @@ async function cmdStart() {
     console.log("Removing a stale pidfile.");
     removePid(dir);
   }
+  // Capture freshness before the server creates the database, so the one-time
+  // token is surfaced exactly on first boot and never again.
+  const fresh = !existsSync(join(dir, "bayz.db"));
   const pid = startServer({ dir });
   console.log(`Starting GOAT ROUTER (pid ${pid})...`);
   const ready = await waitForHealth();
@@ -285,7 +287,7 @@ async function cmdStart() {
     return;
   }
   console.log(`GOAT ROUTER is ready at ${healthUrl()}.`);
-  surfaceFirstBootToken(dir);
+  surfaceFirstBootToken(dir, fresh);
 }
 
 async function cmdStop() {
@@ -296,6 +298,8 @@ async function cmdStop() {
 async function cmdRestart() {
   const dir = dataDir();
   await stopServer({ dir });
+  // Capture freshness before the server may create a database on a first boot.
+  const fresh = !existsSync(join(dir, "bayz.db"));
   const pid = startServer({ dir });
   console.log(`Restarting GOAT ROUTER (pid ${pid})...`);
   const ready = await waitForHealth();
@@ -306,7 +310,7 @@ async function cmdRestart() {
     return;
   }
   console.log(`GOAT ROUTER is ready at ${healthUrl()}.`);
-  surfaceFirstBootToken(dir);
+  surfaceFirstBootToken(dir, fresh);
 }
 
 async function cmdStatus() {
