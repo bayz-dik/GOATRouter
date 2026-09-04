@@ -24,6 +24,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const remoteLoad = await import(join(dirname(fileURLToPath(import.meta.url)), "remote-load.mjs"));
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /*
@@ -471,8 +473,8 @@ async function main() {
       check("the packaged bundle is served", asset.status === 200 && asset.text.length > 1000, String(asset.status));
       check(
         "the served bundle loads no remote origin",
-        !/googleapis|gstatic|unpkg|cdn\.jsdelivr|@import\s+url\(https?:/i.test(asset.text),
-        "a remote origin reference is present in the served bundle",
+        !remoteLoad.hasRemoteLoadReference(asset.text),
+        "a remote resource load reference is present in the served bundle",
       );
     } else {
       check("the packaged bundle is served", false, "no asset reference to follow");
