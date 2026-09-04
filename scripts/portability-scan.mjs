@@ -49,6 +49,7 @@ export const USER_RUN_SCRIPTS = [
   "scripts/platform-gate.mjs",
   "scripts/goat.mjs",
   "scripts/remote-load.mjs",
+  "scripts/backup-lib.mjs",
 ];
 
 const SOURCE_ROOTS = [

@@ -189,6 +189,18 @@ directory is untouched and remains readable. **Downgrade is refused by the
 schema**, not silently applied: a database built at a newer schema version
 refuses to start with an older build.
 
+## Backups and migration
+
+See `docs/backup-restore.md` for the full backup / restore / cross-device
+migration guide. Quick reference:
+
+```sh
+node scripts/goat.mjs backup                # create a backup
+node scripts/goat.mjs backup-verify <file>  # verify without restoring
+node scripts/goat.mjs restore <file>        # restore into a fresh runtime
+node scripts/goat.mjs restore <file> --replace  # overwrite existing runtime
+```
+
 ## Verification
 
 ```sh

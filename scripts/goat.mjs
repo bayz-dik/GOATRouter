@@ -55,6 +55,7 @@ if (!process.env.BAYZ_GOAT_LOADER) {
 }
 
 const { resolveRuntimeDataDir } = await import("../apps/server/src/data-dir.ts");
+const backup = await import("./backup-lib.mjs");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PID_FILE = "bayz.pid";
@@ -421,6 +422,65 @@ async function cmdUpdate() {
   console.log("Update complete. Operator data was not touched.");
 }
 
+async function cmdBackup() {
+  const dir = dataDir();
+  const wasRunning = readPid(dir) !== undefined && isAlive(readPid(dir));
+  if (wasRunning) {
+    console.log("Stopping GOAT ROUTER for a consistent snapshot...");
+    await stopServer({ dir });
+  }
+  try {
+    const outPath = process.env.BAYZ_BACKUP_OUTPUT ?? join(dir, `bayz-backup-${Date.now()}.tgz`);
+    const path = backup.createBackup({ dataDir: dir, outPath, version: version() });
+    console.log(`Backup created: ${path}`);
+    console.log("Contains: bayz.db, master.key, integrity.json (encrypted state).");
+    console.log("Store it somewhere safe; it is as sensitive as the database.");
+  } finally {
+    if (wasRunning) {
+      console.log("Restarting GOAT ROUTER...");
+      await cmdRestart();
+    }
+  }
+}
+
+async function cmdBackupVerify() {
+  const archivePath = process.argv[3];
+  if (archivePath === undefined) {
+    throw new Error("backup-verify requires a backup file path");
+  }
+  const { manifest } = backup.verifyBackup(archivePath);
+  console.log(`Backup OK: format v${manifest.formatVersion}, ${manifest.files.length} files.`);
+  console.log(`  created: ${manifest.createdAt}`);
+  console.log(`  source:  ${manifest.sourceDataDir}`);
+  for (const file of manifest.files) {
+    console.log(`  ${file.name}  ${file.sha256}`);
+  }
+}
+
+async function cmdRestore() {
+  const archivePath = process.argv[3];
+  if (archivePath === undefined) {
+    throw new Error("restore requires a backup file path");
+  }
+  const replace = process.argv.includes("--replace");
+  const dir = dataDir();
+  const wasRunning = readPid(dir) !== undefined && isAlive(readPid(dir));
+  if (wasRunning) {
+    console.log("Stopping GOAT ROUTER before restore...");
+    await stopServer({ dir });
+  }
+  try {
+    backup.restoreBackup({ archivePath, dataDir: dir, replace });
+    console.log(`Restored runtime from ${archivePath} into ${dir}.`);
+    console.log("The restored database will be opened on next start.");
+  } finally {
+    if (wasRunning) {
+      console.log("Restarting GOAT ROUTER...");
+      await cmdRestart();
+    }
+  }
+}
+
 async function cmdVerify() {
   const scan = spawnSync(process.execPath, ["scripts/portability-scan.mjs"], {
     cwd: ROOT,
@@ -443,6 +503,9 @@ function usage() {
   console.log("  stop      stop the server");
   console.log("  restart   stop then start");
   console.log("  status    report pid, health, data dir, version");
+  console.log("  backup    create a consistent backup archive");
+  console.log("  backup-verify <file>   verify a backup archive");
+  console.log("  restore <file> [--replace]   restore a backup archive");
   console.log("  update    fetch latest code, rebuild, verify, restart");
   console.log("  verify    run the portability scan and a version check");
   console.log("  help      this message");
@@ -457,6 +520,9 @@ const handlers = {
   stop: cmdStop,
   restart: cmdRestart,
   status: cmdStatus,
+  backup: cmdBackup,
+  "backup-verify": cmdBackupVerify,
+  restore: cmdRestore,
   update: cmdUpdate,
   verify: cmdVerify,
   help: usage,
