@@ -56,6 +56,7 @@ if (!process.env.BAYZ_GOAT_LOADER) {
 
 const { resolveRuntimeDataDir } = await import("../apps/server/src/data-dir.ts");
 const backup = await import("./backup-lib.mjs");
+const doctor = await import("./doctor-lib.mjs");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PID_FILE = "bayz.pid";
@@ -481,6 +482,44 @@ async function cmdRestore() {
   }
 }
 
+async function cmdDoctor() {
+  const dir = dataDir();
+  const wantJson = process.argv.includes("--json");
+  const wantRepair = process.argv.includes("--repair");
+
+  if (wantRepair) {
+    const actions = doctor.safeRepair({ dir });
+    if (wantJson) {
+      console.log(JSON.stringify({ repaired: actions }));
+    } else {
+      console.log(
+        actions.length === 0
+          ? "No low-risk repairs needed."
+          : `Repaired: ${actions.join(", ")}`,
+      );
+    }
+    return;
+  }
+
+  const results = await doctor.runDoctor({ dir });
+  const failures = results.filter((r) => r.status === "fail");
+  const warnings = results.filter((r) => r.status === "warn");
+
+  if (wantJson) {
+    console.log(JSON.stringify({ healthy: failures.length === 0, results }, null, 2));
+  } else {
+    for (const r of results) {
+      const mark = r.status === "pass" ? "PASS" : r.status === "warn" ? "WARN" : "FAIL";
+      console.log(`${mark.padEnd(5)} ${r.name.padEnd(24)} ${r.detail}`);
+    }
+    console.log("");
+    console.log(
+      `${results.length - failures.length - warnings.length} pass, ${warnings.length} warn, ${failures.length} fail`,
+    );
+  }
+  process.exitCode = failures.length > 0 ? 1 : 0;
+}
+
 async function cmdVerify() {
   const scan = spawnSync(process.execPath, ["scripts/portability-scan.mjs"], {
     cwd: ROOT,
@@ -506,6 +545,7 @@ function usage() {
   console.log("  backup    create a consistent backup archive");
   console.log("  backup-verify <file>   verify a backup archive");
   console.log("  restore <file> [--replace]   restore a backup archive");
+  console.log("  doctor    run diagnostics (--json, --repair)");
   console.log("  update    fetch latest code, rebuild, verify, restart");
   console.log("  verify    run the portability scan and a version check");
   console.log("  help      this message");
@@ -523,6 +563,7 @@ const handlers = {
   backup: cmdBackup,
   "backup-verify": cmdBackupVerify,
   restore: cmdRestore,
+  doctor: cmdDoctor,
   update: cmdUpdate,
   verify: cmdVerify,
   help: usage,

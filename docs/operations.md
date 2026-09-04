@@ -207,5 +207,15 @@ node scripts/goat.mjs restore <file> --replace  # overwrite existing runtime
 node scripts/goat.mjs verify   # portability scan + version
 ```
 
+## Diagnostics
+
+```sh
+node scripts/goat.mjs doctor             # read-only diagnostics
+node scripts/goat.mjs doctor --json      # machine-readable JSON
+node scripts/goat.mjs doctor --repair    # low-risk deterministic repairs only
+```
+
+See `docs/doctor.md` for the full diagnostic and safe-repair guide.
+
 `npm run runtime:verify` runs the full test suite and build; on a constrained
 phone run workspace tests and builds one at a time.

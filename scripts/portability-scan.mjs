@@ -50,6 +50,7 @@ export const USER_RUN_SCRIPTS = [
   "scripts/goat.mjs",
   "scripts/remote-load.mjs",
   "scripts/backup-lib.mjs",
+  "scripts/doctor-lib.mjs",
 ];
 
 const SOURCE_ROOTS = [
