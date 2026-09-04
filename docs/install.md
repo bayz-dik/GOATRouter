@@ -17,7 +17,7 @@ From the repository root:
 npm ci
 npm run runtime:build
 npm run release:pack
-npm install -g packaging/out/bayz-router-0.1.0.tgz
+npm install -g packaging/out/bayz-router-0.1.1.tgz
 bayz --version
 ```
 

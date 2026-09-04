@@ -1,6 +1,6 @@
 {
   "name": "@bayz/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -17,16 +17,16 @@
     "src"
   ],
   "dependencies": {
-    "@bayz/capability": "0.1.0",
-    "@bayz/contracts": "0.1.0",
-    "@bayz/gateway": "0.1.0",
-    "@bayz/identity": "0.1.0",
-    "@bayz/providers": "0.1.0",
-    "@bayz/proxy": "0.1.0",
-    "@bayz/router": "0.1.0",
-    "@bayz/security": "0.1.0",
-    "@bayz/storage": "0.1.0",
-    "@bayz/telemetry": "0.1.0",
+    "@bayz/capability": "0.1.1",
+    "@bayz/contracts": "0.1.1",
+    "@bayz/gateway": "0.1.1",
+    "@bayz/identity": "0.1.1",
+    "@bayz/providers": "0.1.1",
+    "@bayz/proxy": "0.1.1",
+    "@bayz/router": "0.1.1",
+    "@bayz/security": "0.1.1",
+    "@bayz/storage": "0.1.1",
+    "@bayz/telemetry": "0.1.1",
     "@fastify/static": "^10.1.3",
     "fastify": "^5.0.0"
   }

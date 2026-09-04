@@ -40,7 +40,7 @@ The package bundles internal `@bayz/*` workspaces into `dist/server.mjs`. It ret
 ## Install and run
 
 ```sh
-npm install -g packaging/out/bayz-router-0.1.0.tgz
+npm install -g packaging/out/bayz-router-0.1.1.tgz
 bayz --version
 BAYZ_API_TOKEN=<your-token> bayz
 ```

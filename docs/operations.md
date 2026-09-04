@@ -78,7 +78,7 @@ written to browser storage.
 
 ```sh
 node scripts/goat.mjs status
-# GOAT ROUTER 0.1.0
+# GOAT ROUTER 0.1.1
 #   data dir:  /root/.local/share/bayz
 #   pid:       5047
 #   health:    ok

@@ -272,7 +272,7 @@ function verifyRequiredFiles() {
   const required = [
     "apps/dashboard/dist/index.html",
     "apps/server/src/index.ts",
-    "packaging/out/bayz-router-0.1.0.tgz",
+    `packaging/out/bayz-router-${version()}.tgz`,
   ];
   for (const file of required) {
     if (!existsSync(join(ROOT, file))) {
@@ -307,7 +307,7 @@ async function cmdInstall() {
   runNpm(["run", "release:pack"]);
   verifyRequiredFiles();
   console.log("Installing the artifact globally...");
-  runNpm(["install", "-g", "packaging/out/bayz-router-0.1.0.tgz"]);
+  runNpm(["install", "-g", `packaging/out/bayz-router-${version()}.tgz`]);
   const check = spawnSync("bayz", ["--version"], { encoding: "utf8" });
   if (check.status !== 0) {
     throw new Error("bayz --version failed after global install");

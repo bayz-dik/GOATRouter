@@ -13,8 +13,8 @@ The artifact path is `packaging/out/bayz-router-<version>.tgz`. `tests/pack.test
 ## Inspect an artifact
 
 ```sh
-tar -xOf packaging/out/bayz-router-0.1.0.tgz package/package.json
-npm install -g packaging/out/bayz-router-0.1.0.tgz
+tar -xOf packaging/out/bayz-router-0.1.1.tgz package/package.json
+npm install -g packaging/out/bayz-router-0.1.1.tgz
 bayz --version
 ```
 

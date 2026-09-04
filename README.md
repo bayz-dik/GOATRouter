@@ -101,12 +101,12 @@ npm run runtime:build
 npm run release:pack
 ```
 
-The artifact is written to `packaging/out/bayz-router-0.1.0.tgz`. The public product is GOAT ROUTER; the existing artifact and CLI identifiers remain `bayz-router` and `bayz` for compatibility.
+The artifact is written to `packaging/out/bayz-router-0.1.1.tgz`. The public product is GOAT ROUTER; the existing artifact and CLI identifiers remain `bayz-router` and `bayz` for compatibility.
 
 Install that local artifact with:
 
 ```sh
-npm install -g packaging/out/bayz-router-0.1.0.tgz
+npm install -g packaging/out/bayz-router-0.1.1.tgz
 bayz --version
 BAYZ_API_TOKEN=<your-token> bayz
 ```
@@ -115,18 +115,21 @@ Run `node scripts/pack.mjs --self-test` to exercise the packaging safeguards. `p
 
 ## Published releases
 
-The first release is `v0.1.0`:
+The latest release is `v0.1.1`:
 
-- Release: https://github.com/bayz-dik/GOATRouter/releases/tag/v0.1.0
-- Artifact: `bayz-router-0.1.0.tgz` (SHA256 in `SHA256SUMS.txt` on the release)
+- Release: https://github.com/bayz-dik/GOATRouter/releases/tag/v0.1.1
+- Artifact: `bayz-router-0.1.1.tgz` (SHA256 in `SHA256SUMS.txt` on the release)
 
 Install the published artifact with:
 
 ```sh
-npm install -g bayz-router-0.1.0.tgz
+npm install -g bayz-router-0.1.1.tgz
 bayz --version
 BAYZ_API_TOKEN=<your-token> bayz
 ```
+
+The first release, `v0.1.0`, remains published at
+https://github.com/bayz-dik/GOATRouter/releases/tag/v0.1.0.
 
 ## Limits worth knowing
 
