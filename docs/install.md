@@ -23,6 +23,25 @@ bayz --version
 
 The tarball bundles the internal `@bayz/*` workspaces. Its only external runtime dependencies are `fastify` and `@fastify/static`; no internal package registry is required.
 
+For a one-command install that checks prerequisites, builds, packs, verifies, and installs globally, use the lifecycle CLI:
+
+```sh
+npm run goat:install
+```
+
+## Start, stop, restart, status
+
+The lifecycle CLI manages the server as a background process without systemd:
+
+```sh
+node scripts/goat.mjs start
+node scripts/goat.mjs stop
+node scripts/goat.mjs restart
+node scripts/goat.mjs status
+```
+
+Or as npm scripts: `npm run goat:start`, `goat:stop`, `goat:restart`, `goat:status`. See `docs/operations.md` for the full lifecycle, update, backup, and rollback guide.
+
 ## Start
 
 ```sh
@@ -35,7 +54,14 @@ Set `BAYZ_HOST`, `BAYZ_PORT`, and `BAYZ_DATA_DIR` only when needed. Non-loopback
 
 ## Data
 
-The runtime stores its database and key material in `BAYZ_DATA_DIR` when set. Otherwise it reuses an existing `~/.bayz`, then chooses a platform data location. The startup log records the chosen directory and reason. Back up the entire selected directory: `bayz.db` without `master.key` cannot restore encrypted provider credentials.
+The runtime stores its database and key material in a data directory read in order:
+
+1. `BAYZ_DATA_DIR`, when set.
+2. An existing `~/.bayz` (backward compatibility).
+3. The platform default: `$XDG_DATA_HOME/bayz` or `~/.local/share/bayz` on Linux/Termux; `%LOCALAPPDATA%\bayz` on Windows; `~/Library/Application Support/bayz` on macOS.
+4. `~/.bayz` when no platform path is available.
+
+The startup log records the chosen directory and reason. Back up the entire selected directory: `bayz.db` without `master.key` cannot restore encrypted provider credentials, because the DEKs needed to decrypt them live in that same directory.
 
 Uninstalling the CLI does not remove data:
 
@@ -43,6 +69,8 @@ Uninstalling the CLI does not remove data:
 npm uninstall -g bayz-router
 ```
 
-Delete the selected data directory only when you intend to permanently remove all providers, routes, identities, telemetry, and encrypted credentials.
+## Removing BAYZ
+
+Deleting the selected data directory is **irreversible**. It permanently removes all providers, routes, identities, telemetry, and encrypted credentials, and the encryption keys that could have decrypted them go with it. There is no recovery from a deleted `bayz.db` or `master.key`. Back up the directory before deleting it, and only delete it when you intend to remove all data permanently.
 
 See `packaging/README.md` for artifact contents and `README.md` for first provider setup.

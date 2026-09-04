@@ -11,7 +11,14 @@
     "runtime:test": "npm run test --workspaces --if-present",
     "runtime:build": "npm run build --workspace @bayz/contracts --if-present && npm run build --workspace @bayz/security --if-present && npm run build --workspace @bayz/storage --if-present && npm run build --workspace @bayz/telemetry --if-present && npm run build --workspace @bayz/identity --if-present && npm run build --workspace @bayz/capability --if-present && npm run build --workspace @bayz/providers --if-present && npm run build --workspace @bayz/proxy --if-present && npm run build --workspace @bayz/gateway --if-present && npm run build --workspace @bayz/router --if-present && npm run build --workspace @bayz/dashboard && npm run build --workspace @bayz/server",
     "runtime:verify": "npm run runtime:test && npm run runtime:build",
-    "release:pack": "node scripts/pack.mjs"
+    "release:pack": "node scripts/pack.mjs",
+    "goat:install": "node scripts/goat.mjs install",
+    "goat:start": "node scripts/goat.mjs start",
+    "goat:stop": "node scripts/goat.mjs stop",
+    "goat:restart": "node scripts/goat.mjs restart",
+    "goat:status": "node scripts/goat.mjs status",
+    "goat:update": "node scripts/goat.mjs update",
+    "goat:verify": "node scripts/goat.mjs verify"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",

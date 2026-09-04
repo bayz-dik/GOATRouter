@@ -47,6 +47,7 @@ export const USER_RUN_SCRIPTS = [
   "scripts/install-smoke.mjs",
   "scripts/upgrade-smoke.mjs",
   "scripts/platform-gate.mjs",
+  "scripts/goat.mjs",
 ];
 
 const SOURCE_ROOTS = [
