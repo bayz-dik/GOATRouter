@@ -1,4 +1,9 @@
 export {
+  CircuitBreaker,
+  type CircuitOptions,
+  type CircuitState,
+} from "./circuit.js";
+export {
   RouterError,
   asRouterError,
   type RouterErrorCode,

@@ -27,6 +27,7 @@ import {
 } from "./selection.js";
 import { sendChatRequest, sendChatRequestStreaming } from "./transport.js";
 import type { ChatChunk } from "./chunk.js";
+import { CircuitBreaker, type CircuitOptions, type CircuitState } from "./circuit.js";
 
 /**
  * Failures where another provider may legitimately succeed.
@@ -95,6 +96,8 @@ export type CreateRouterOptions = {
   /** When present, routing facts are reported here as metadata. */
   recorder?: RouterRecorder;
   now?: () => string;
+  /** Overrides for the per-provider circuit breaker. Optional. */
+  circuit?: CircuitOptions;
 };
 
 export interface Router {
@@ -119,6 +122,8 @@ export interface Router {
     request: unknown,
     options?: ChatOptions,
   ): AsyncGenerator<RoutedChatChunk, void, undefined>;
+  /** The current circuit state for a provider (diagnostics/tests). */
+  circuitState(providerId: string): CircuitState;
   close(): void;
 }
 
@@ -172,6 +177,7 @@ export function createRouter(options: CreateRouterOptions): Router {
   const { storage, providers, proxies, now } = options;
   const log: RouterLogger = options.logger ?? (() => {});
   const recorder = options.recorder;
+  const breaker = new CircuitBreaker(options.circuit);
   const repositoryOptions: CreateRouteRepositoryOptions =
     now === undefined ? {} : { now };
   const repository: RouteRepository = createRouteRepository(
@@ -451,10 +457,20 @@ export function createRouter(options: CreateRouterOptions): Router {
         // resolver, so the two cannot disagree.
         const effectiveProxy = effectiveProxyId(route, provider);
 
+        // A tripped circuit skips this candidate without an attempt: routing to a
+        // known-failing provider would waste the request budget and add latency on
+        // every subsequent request until the cooldown expires. Skipping is silent —
+        // the provider is still enabled, it is just momentarily unhealthy.
+        if (!breaker.allow(provider.id)) {
+          skipped += 1;
+          continue;
+        }
+
         attempts += 1;
         const started = Date.now();
         try {
           const response = await attempt(route, provider, request);
+          breaker.onSuccess(provider.id);
           const latencyMs = Date.now() - started;
           log(
             redactSecrets({
@@ -543,6 +559,12 @@ export function createRouter(options: CreateRouterOptions): Router {
             attempts,
           });
           lastFailure = error;
+          // A transient upstream failure is exactly what the breaker counts.
+          // Non-failover errors (auth/config/validation) never reach it — they
+          // must surface rather than silently tripping the provider's circuit.
+          if (code !== undefined && FAILOVER_CODES.has(code)) {
+            breaker.onTransientFailure(provider.id);
+          }
           if (code === undefined || !FAILOVER_CODES.has(code)) {
             // Deterministic failures and credential problems must surface, not be
             // masked by trying somewhere else.
@@ -667,6 +689,12 @@ export function createRouter(options: CreateRouterOptions): Router {
         // before the first body byte has to match what the socket did.
         const effectiveProxy = effectiveProxyId(route, provider);
 
+        // Same circuit gate as the buffered path: skip a tripped provider.
+        if (!breaker.allow(provider.id)) {
+          skipped += 1;
+          continue;
+        }
+
         attempts += 1;
         const started = Date.now();
         let opened: Awaited<ReturnType<typeof attemptStream>>;
@@ -697,9 +725,13 @@ export function createRouter(options: CreateRouterOptions): Router {
             attempts,
           });
           lastFailure = error;
-          // A client cancellation is not a provider fault, so it never triggers
-          // failover even though the transport reports it as `unreachable`.
+          // A failed stream open is a transient upstream failure when it is a
+          // failover code; count it so a provider that cannot even open a
+          // connection trips its circuit. Client abort is not a provider fault.
           const aborted = signal?.aborted === true;
+          if (!aborted && code !== undefined && FAILOVER_CODES.has(code)) {
+            breaker.onTransientFailure(provider.id);
+          }
           if (aborted || code === undefined || !FAILOVER_CODES.has(code)) {
             emit({
               kind: "request.failed",
@@ -757,6 +789,9 @@ export function createRouter(options: CreateRouterOptions): Router {
             };
             step = await opened.iterator.next();
           }
+          // A fully-delivered stream is a successful call to the provider, so
+          // any transient streak is reset.
+          breaker.onSuccess(provider.id);
           const latencyMs = Date.now() - started;
           log(
             redactSecrets({
@@ -841,6 +876,10 @@ export function createRouter(options: CreateRouterOptions): Router {
 
     close(): void {
       storage.close();
+    },
+
+    circuitState(providerId: string): CircuitState {
+      return breaker.state(providerId);
     },
   };
 
