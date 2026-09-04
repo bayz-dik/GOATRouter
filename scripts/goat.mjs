@@ -117,18 +117,67 @@ function removePid(dir) {
   if (existsSync(path)) rmSync(path);
 }
 
-async function waitForHealth(timeoutMs = 30_000) {
+/**
+ * Wait for the spawned server to become ready, keying on the server's OWN log
+ * line rather than a bare health probe.
+ *
+ * The health probe alone is not enough: when the target port is already bound by
+ * another server, the freshly spawned child dies with EADDRINUSE while
+ * GET /api/health still answers 200 against the other process, so a probe-only
+ * wait would report a false "ready" and leave a dead pidfile.
+ *
+ * The deterministic signal is the child's own log: on success it writes a JSON
+ * line with its pid and `"msg":"Bayz Core ready"`; on a port conflict it crashes
+ * with EADDRINUSE. Only that pid's own readiness counts.
+ */
+async function waitForHealthWatching(child, dir, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  let exited = false;
+  let exitCode = undefined;
+  child.once("exit", (code) => {
+    exited = true;
+    exitCode = code;
+  });
+
+  const readLogTail = () => {
+    const path = logPath(dir);
+    if (!existsSync(path)) return "";
     try {
-      const response = await fetch(healthUrl());
-      if (response.status === 200) return true;
+      return readFileSync(path, "utf8");
     } catch {
-      // Not listening yet.
+      return "";
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  };
+
+  // Does the log show OUR pid declaring readiness, or our pid hitting a port
+  // conflict?
+  const ourReady = () => {
+    const log = readLogTail();
+    return new RegExp(`Bayz Core ready`).test(log) && log.includes(`"pid":${child.pid}`);
+  };
+  const ourEaddrinuse = () => {
+    const log = readLogTail();
+    return /EADDRINUSE|address already in use/.test(log) && log.includes(`(${child.pid})`);
+  };
+
+  while (Date.now() < deadline) {
+    if (exited) {
+      return { ready: false, reason: `exited(code ${exitCode})` };
+    }
+    if (ourReady()) {
+      // Our child logged readiness; confirm the port actually answers.
+      try {
+        const response = await fetch(healthUrl());
+        if (response.status === 200) return { ready: true, reason: "healthy" };
+      } catch {
+        // Not answering yet — keep waiting.
+      }
+    } else if (ourEaddrinuse()) {
+      return { ready: false, reason: "EADDRINUSE" };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  return false;
+  return { ready: false, reason: "timeout" };
 }
 
 function serverCommand() {
@@ -151,7 +200,10 @@ function startServer({ dir }) {
   });
   writePid(dir, child.pid);
   child.unref();
-  return child.pid;
+  // Return the child so the caller can detect an early exit (e.g. EADDRINUSE) —
+  // the health probe alone cannot distinguish "our server is ready" from
+  // "some other server is already answering on this port".
+  return { pid: child.pid, child };
 }
 
 function surfaceFirstBootToken(dir, fresh) {
@@ -277,12 +329,13 @@ async function cmdStart() {
   // Capture freshness before the server creates the database, so the one-time
   // token is surfaced exactly on first boot and never again.
   const fresh = !existsSync(join(dir, "bayz.db"));
-  const pid = startServer({ dir });
+  const { pid, child } = startServer({ dir });
   console.log(`Starting GOAT ROUTER (pid ${pid})...`);
-  const ready = await waitForHealth();
+  const { ready, reason } = await waitForHealthWatching(child, dir);
   if (!ready) {
-    console.error("GOAT ROUTER did not become healthy. Check the log:");
+    console.error(`GOAT ROUTER did not become healthy (${reason}). Check the log:`);
     console.error(`  ${logPath(dir)}`);
+    removePid(dir);
     process.exitCode = 1;
     return;
   }
@@ -300,12 +353,13 @@ async function cmdRestart() {
   await stopServer({ dir });
   // Capture freshness before the server may create a database on a first boot.
   const fresh = !existsSync(join(dir, "bayz.db"));
-  const pid = startServer({ dir });
+  const { pid, child } = startServer({ dir });
   console.log(`Restarting GOAT ROUTER (pid ${pid})...`);
-  const ready = await waitForHealth();
+  const { ready, reason } = await waitForHealthWatching(child, dir);
   if (!ready) {
-    console.error("GOAT ROUTER did not become healthy after restart. Check the log:");
+    console.error(`GOAT ROUTER did not become healthy after restart (${reason}). Check the log:`);
     console.error(`  ${logPath(dir)}`);
+    removePid(dir);
     process.exitCode = 1;
     return;
   }
