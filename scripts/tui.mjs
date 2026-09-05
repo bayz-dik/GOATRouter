@@ -19,17 +19,97 @@
  *   - Keyboard input is read in-band; no shell utility is spawned.
  */
 
+/* Node stdlib only — this module ships inside the artifact bundle and must not
+ * pull a runtime dependency. */
+import { readFileSync, existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 /* ---------------------------------------------------------------- branding */
 
-/** Small monochrome goat derived from the GOAT ROUTER identity (6 rows). */
-export const GOAT_ART = [
-  "     ___",
-  "    (o o)",
-  "   /GOAT \\",
-  "   \\_____/",
-  "     | |",
-  "     ---",
-].join("\n");
+/**
+ * Branding policy for the terminal operator surface.
+ *
+ * Two modes, decided per invocation by `imageCapability()`:
+ *
+ *   MODE A — terminal positively reports an inline-image protocol AND the
+ *   approved character asset is available. Render the ACTUAL approved GOAT
+ *   ROUTER character (a small inline image), never an ASCII approximation.
+ *
+ *   MODE B — everything else (normal Termux, xterm, SSH without passthrough).
+ *   Draw NO fake character (no robot, no goat face, no Braille/Unicode
+ *   portrait). Show a restrained monochrome GOAT ROUTER wordmark header.
+ *
+ * Detection never trusts `TERM` alone and never emits image escape garbage
+ * into a terminal that has not positively opted in. When no protocol is
+ * detected, `brandingRows` emits plain text only.
+ */
+
+/** The approved GOAT ROUTER character asset name (ships with the artifact). */
+export const CHARACTER_ASSET = "goat-router-character.webp";
+const APPROVED_BRAND_SUBDIR = "brand";
+
+/**
+ * True when both stdin and stdout are real interactive terminals.
+ */
+export function isTty() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+/**
+ * Detect a terminal that positively reports an inline-image protocol we can
+ * serve correctly with the approved asset bytes.
+ *
+ * We never infer an image protocol from `TERM` alone, and we never claim a
+ * protocol whose bytes we cannot actually deliver. The approved character is a
+ * WebP, and we will not add an image-decoder dependency to the artifact, so the
+ * only protocol we advertise is iTerm2's inline image (OSC 1337), which renders
+ * WebP natively and is signalled by the explicit TERM_PROGRAM=iTerm.app. A
+ * kitty TERM is NOT treated as image-capable here: without a WebP->PNG
+ * rasterizer we cannot guarantee kitty can decode the asset, and emitting an
+ * un-decodable image would be garbage — the wordmark fallback is the honest
+ * choice for kitty until a native-capable path exists.
+ *
+ * `env` defaults to process.env and `stdout` to process.stdout so tests can
+ * simulate a supported terminal without a real one. Returns a capability
+ * object, or null when no supported protocol is positively detected.
+ */
+export function imageCapability(env = process.env, stdout = process.stdout) {
+  if (!(stdout && stdout.isTTY)) return null;
+  if (env.TERM_PROGRAM === "iTerm.app") {
+    return { protocol: "iterm2" };
+  }
+  return null;
+}
+
+/**
+ * Resolve the approved character asset path for this run context.
+ *
+ * Returns a file path that exists for the CURRENT context, mirroring how the
+ * control plane resolves everything else:
+ *   - installed artifact: dist/control.mjs sits beside dist/dashboard/, so the
+ *     approved character is dist/dashboard/brand/goat-router-character.webp.
+ *   - source checkout: scripts/control.mjs sits in the repo, and the source of
+ *     truth for the approved artwork is apps/dashboard/public/brand/.
+ * Callers must check the path exists before emitting an image.
+ */
+export function assetDir(env = process.env, metaUrl = import.meta.url) {
+  const here = dirname(fileURLToPath(metaUrl));
+  const fromEnv = env.BAYZ_DASHBOARD_ROOT;
+  if (typeof fromEnv === "string" && fromEnv.length > 0) {
+    return join(fromEnv, APPROVED_BRAND_SUBDIR);
+  }
+  // Installed artifact: control.mjs -> ../dist/control.mjs; dashboard is a
+  // sibling of dist. Source checkout: scripts/tui.mjs -> repo apps/dashboard.
+  const dist = join(here, "dashboard", APPROVED_BRAND_SUBDIR);
+  const app = join(here, "..", "apps", "dashboard", "public", APPROVED_BRAND_SUBDIR);
+  return existsSync(dist) ? dist : app;
+}
+
+/** The packaged/resolved asset filename. */
+export function characterAssetName() {
+  return CHARACTER_ASSET;
+}
 
 /** The wordmark as terminal text (never requires an image capability). */
 export function wordmark(version) {
@@ -50,10 +130,79 @@ export function statusText(state, url) {
   }
 }
 
-/** True when both fds are interactive terminals. */
-export function isTty() {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+/**
+ * A clean monochrome header rule for the current terminal width. Never
+ * truncates the wordmark; shortens decoration only. Returns "" on a very
+ * narrow terminal where a rule would crowd the menu.
+ */
+export function rule(width) {
+  const columns = Number.isFinite(width) && width > 0 ? Math.max(12, Math.floor(width)) : 48;
+  if (columns < 20) return "";
+  // Keep the rule comfortably inside the menu indentation.
+  const n = Math.max(10, columns - 2);
+  return "─".repeat(n);
 }
+
+/**
+ * Build the branding header rows.
+ *
+ * MODE A — `cap` is a positively-detected image protocol we can serve AND the
+ * approved character asset is available. The first block is the ACTUAL
+ * approved character (inline image), then the wordmark line and status below
+ * it. No ASCII approximation is ever drawn.
+ *
+ * MODE B — `cap` is null or the asset is missing (normal Termux, xterm, SSH,
+ * kitty, a checkout without the dashboard build). A restrained monochrome
+ * wordmark + rule header. NO fake character of any kind.
+ *
+ * `rows` are drawn at the top of the alternate screen. The inline image is
+ * kept small (a bounded pixel width) so it never dominates the menu.
+ *
+ * Params:
+ *   - cap: imageCapability result or null
+ *   - version: product version
+ *   - status/url: state line values
+ *   - width: terminal columns (defaults to process.stdout.columns)
+ *   - assetPath: resolved approved asset path (already exists), if cap present
+ */
+export function headerRows({ cap = null, version: ver, status, url = null, width = null, assetPath = null }) {
+  const columns = Number.isFinite(width) && width > 0 ? Math.max(10, Math.floor(width)) : 48;
+  const rows = [];
+  const canImage = cap !== null && cap.protocol === "iterm2" && typeof assetPath === "string" && assetPath.length > 0;
+  if (canImage) {
+    rows.push(inlineImage(assetPath, columns));
+    rows.push("");
+  }
+  // Wordmark line always present (Mode A shows it below the image; Mode B is
+  // the header itself). wordmark(version) yields "GOAT ROUTER  v0.1.4".
+  rows.push(`  ${wordmark(ver)}`);
+  if (!canImage) rows.push(`  ${rule(columns)}`);
+  rows.push(`  ${status}`);
+  if (url !== null) rows.push(`  ${url}`);
+  rows.push("");
+  return rows;
+}
+
+/**
+ * Emit the approved character as a small inline image (iTerm2 OSC 1337).
+ *
+ * Only called when imageCapability() has positively reported iTerm2, whose
+ * inline-image protocol renders WebP natively, so the ACTUAL approved asset
+ * bytes are embedded and no pixel decoding / no new dependency is needed. The
+ * width is capped so the image stays a small header accent, never a
+ * full-screen block.
+ */
+function inlineImage(assetPath, columns) {
+  const name = basename(assetPath);
+  const bytes = readFileSync(assetPath);
+  const b64 = bytes.toString("base64");
+  // Cap the rendered width to a modest header size regardless of how wide the
+  // terminal is. iTerm2 keeps the aspect ratio, so a bounded width yields a
+  // character ~6 terminal rows tall rather than the 1206x2144 source.
+  const px = Math.max(40, Math.min(columns * 7, 220));
+  return `\x1b]1337;File=name=${encodeURIComponent(name)};inline=1;width=${px}px:${b64}\x07`;
+}
+
 
 /* --------------------------------------------------------- terminal safety */
 

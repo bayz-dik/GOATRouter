@@ -35,10 +35,78 @@ test("GOAT ROUTER's permanent default port is 20156, not 9Router's 20128", () =>
 
 /* --------------------------------------------------------------- TUI helpers */
 
+const CHARACTER_ASSET_PATH = join(root, "apps", "dashboard", "public", "brand", "goat-router-character.webp");
+const hasAsset = existsSync(CHARACTER_ASSET_PATH);
+
 test("the TUI wordmark is plain terminal text, no image is required", () => {
   assert.match(tui.wordmark("0.1.2"), /^GOAT ROUTER  v0\.1\.2$/);
-  assert.equal(typeof tui.GOAT_ART, "string");
-  assert.ok(tui.GOAT_ART.length > 0);
+});
+
+test("the TUI no longer draws the crude ASCII character (branding hotfix)", () => {
+  // The released TUI drew a hand-rolled ASCII "GOAT" face. The approved
+  // identity is the real character asset + wordmark; the ASCII approximation is
+  // removed. Mode B must never render a fake character of any kind.
+  assert.equal("GOAT_ART" in tui, false, "the ASCII GOAT_ART export must be gone");
+  const rows = tui.headerRows({ cap: null, version: "0.1.4", status: "RUNNING", width: 60 });
+  const joined = rows.join("\n");
+  assert.doesNotMatch(joined, /\(o o\)|GOAT_|goat face|robot/i);
+  assert.ok(rows.some((r) => r.includes("GOAT ROUTER")), "wordmark header must still appear");
+});
+
+test("Mode B (unsupported/Termux terminal) shows a clean wordmark header, no image escapes", () => {
+  // A plain terminal (no TERM_PROGRAM, non-iterm2) must get the clean wordmark
+  // header and MUST NOT receive an inline-image escape sequence.
+  const rows = tui.headerRows({ cap: null, version: "0.1.4", status: "● Server   RUNNING", url: "http://127.0.0.1:20156", width: 70 });
+  const joined = rows.join("\n");
+  assert.ok(rows[0].includes("GOAT ROUTER"), `header should open with wordmark: ${rows[0]}`);
+  assert.ok(!joined.includes("\x1b]1337"), "no iTerm2 inline-image escape in Mode B");
+  assert.ok(!joined.includes("\x1b["), "no ANSI escape should leak into a Mode B header row");
+  assert.ok(joined.includes("RUNNING"));
+  assert.ok(joined.includes("http://127.0.0.1:20156"));
+});
+
+test("image capability is only claimed for a terminal that positively opts in", () => {
+  // Never infer from TERM alone; kitty without a decoder is NOT image-capable.
+  assert.equal(tui.imageCapability({ TERM: "xterm-256color" }, { isTTY: true }), null);
+  assert.equal(tui.imageCapability({ TERM: "screen" }, { isTTY: true }), null);
+  assert.equal(tui.imageCapability({ TERM: "kitty", KITTY_WINDOW_ID: "1" }, { isTTY: true }), null);
+  assert.equal(tui.imageCapability({ TERM: "xterm-256color", TERM_PROGRAM: "iTerm.app" }, { isTTY: true })?.protocol, "iterm2");
+  // Non-TTY stdout never yields an image capability, even under iTerm2.
+  assert.equal(tui.imageCapability({ TERM_PROGRAM: "iTerm.app" }, { isTTY: false }), null);
+});
+
+test("Mode A selects the exact approved asset path and protocol", () => {
+  const asset = join(tui.assetDir(), tui.characterAssetName());
+  assert.equal(tui.characterAssetName(), "goat-router-character.webp");
+  if (hasAsset) {
+    // The approved packaged character asset is the exact one served by the Web UI.
+    const rows = tui.headerRows({
+      cap: { protocol: "iterm2" },
+      version: "0.1.4",
+      status: "RUNNING",
+      width: 80,
+      assetPath: CHARACTER_ASSET_PATH,
+    });
+    const first = rows[0];
+    assert.ok(first.startsWith("\x1b]1337;File="), "Mode A should open an iTerm2 inline-image sequence");
+    assert.ok(first.includes("goat-router-character.webp"), "must reference the approved character asset");
+    assert.ok(first.includes("inline=1"));
+    assert.ok(!first.includes("(o o)"), "Mode A must not mix in ASCII art");
+  }
+});
+
+test("narrow and wide terminals keep the menu usable", () => {
+  // Narrow (<50 cols): header must stay shallow and wordmark present.
+  const narrow = tui.headerRows({ cap: null, version: "0.1.4", status: "○ Server   STOPPED", width: 30 });
+  assert.ok(narrow.some((r) => r.includes("GOAT ROUTER")), "wordmark must not be truncated on a narrow terminal");
+  assert.ok(narrow.length <= 5, `narrow header too tall: ${narrow.length} rows`);
+  // Wide (>100 cols): rule extends but never truncates; layout stays clean.
+  const wide = tui.headerRows({ cap: null, version: "0.1.4", status: "● Server   RUNNING", url: "http://127.0.0.1:20156", width: 120 });
+  const ruleLine = wide.find((r) => r.trim().startsWith("─"));
+  assert.ok(ruleLine, "wide header should include a rule");
+  assert.ok(ruleLine.length > 60, "rule should span most of a wide terminal");
+  assert.ok(wide.some((r) => r.includes("GOAT ROUTER")));
+  assert.ok(wide.every((r) => !r.includes("\x1b]1337")), "Mode B wide header has no image escapes");
 });
 
 test("the TUI status text reports running / foreign / stopped distinctly", () => {

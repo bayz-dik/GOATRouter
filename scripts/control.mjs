@@ -470,21 +470,25 @@ export async function bare({ tty = tui.isTty() } = {}) {
 
 const ROOT_OPTIONS = ["Open Web UI", "API Token", "Server", "Status", "Doctor", "Update", "Exit TUI"];
 
-/** Render the small GOAT artwork and run the root menu. */
+/** Render the GOAT ROUTER header (Mode A image or Mode B wordmark) and run the root menu. */
 export async function runTui() {
   const state = await serverState();
   const isRunning = state.state === "running";
 
   const headerRows = () => {
-    const rows = [];
-    for (const line of tui.GOAT_ART.split("\n")) rows.push(`  ${line}`);
-    rows.push("");
-    rows.push(`  ${tui.wordmark(version())}`);
-    rows.push("");
-    rows.push(`  ${tui.statusText(state.state)}`);
-    if (isRunning) rows.push(`  ${webUrl()}`);
-    rows.push("");
-    return rows;
+    // Mode A: only when a supported image terminal is positively detected AND
+    // the approved character asset is present. Mode B everywhere else.
+    const cap = tui.imageCapability();
+    const asset = cap === null ? null : join(tui.assetDir(), tui.characterAssetName());
+    const assetOk = asset !== null && existsSync(asset);
+    return tui.headerRows({
+      cap: assetOk ? cap : null,
+      version: version(),
+      status: tui.statusText(state.state),
+      url: isRunning ? webUrl() : null,
+      width: process.stdout.columns,
+      assetPath: assetOk ? asset : null,
+    });
   };
 
   let exit = false;
