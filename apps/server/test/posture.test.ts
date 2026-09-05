@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import type { NetworkInterfaceInfo } from "node:os";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { FastifyInstance } from "fastify";
@@ -11,6 +12,7 @@ import {
   POSTURE_REQUIREMENTS,
   PostureError,
   derivePosture,
+  hostsForBind,
   isLoopbackPeer,
   resolvePosture,
   type BayzPosture,
@@ -256,6 +258,45 @@ test("isLoopbackPeer recognises local peers and refuses unknowns", () => {
   assert.equal(isLoopbackPeer("8.8.8.8"), false);
   assert.equal(isLoopbackPeer(undefined), false, "an unknown peer must not be trusted");
   assert.equal(isLoopbackPeer(""), false);
+});
+
+test("hostsForBind yields the addresses a listener actually answers", () => {
+  // A concrete loopback bind contributes only itself.
+  assert.deepEqual(hostsForBind("127.0.0.1"), ["127.0.0.1"]);
+  assert.deepEqual(hostsForBind("localhost"), ["localhost"]);
+  // A concrete non-loopback bind contributes that exact address — the Host a
+  // LAN client sends when it opens https://<that-ip>:<port>.
+  assert.deepEqual(hostsForBind("192.168.1.50"), ["192.168.1.50"]);
+  // IPv6 keeps its bracketless canonical form.
+  assert.deepEqual(hostsForBind("[::1]"), ["::1"]);
+  // An empty bind contributes nothing extra (the loopback defaults still stand).
+  assert.deepEqual(hostsForBind(undefined), []);
+  assert.deepEqual(hostsForBind(""), []);
+});
+
+test("hostsForBind on a wildcard covers the machine's real interfaces", () => {
+  const hosts = hostsForBind("0.0.0.0");
+  // Every returned host must be a real interface the wildcard could bind.
+  const real = new Set<string>();
+  for (const infos of Object.values(networkInterfaces()) as NetworkInterfaceInfo[][]) {
+    for (const info of infos ?? []) {
+      if (info.internal || (info.family === "IPv6" && info.address.toLowerCase().startsWith("fe8"))) {
+        continue;
+      }
+      real.add(info.address.toLowerCase());
+    }
+  }
+  // Loopback itself stays in the guard's default set and is not duplicated here.
+  assert.ok(!hosts.includes("127.0.0.1"));
+  // A wildcard must be usable to expose the service; if the host has any
+  // non-loopback interface, that address must appear.
+  assert.ok(
+    real.size === 0 || hosts.length > 0,
+    "a machine with a real interface must derive at least one host",
+  );
+  for (const h of hosts) {
+    assert.ok(real.has(h), `derived host ${h} must be a real interface address`);
+  }
 });
 
 /* ------------------------------------------------------------------ *

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 
 /**
  * How exposed this listener is, derived from the address it binds.
@@ -269,4 +270,55 @@ export function isLoopbackPeer(address: string | undefined): boolean {
   }
   // IPv4-mapped IPv6 loopback, which is what a dual-stack listener reports.
   return bare === "::ffff:127.0.0.1" || bare.startsWith("::ffff:127.");
+}
+
+/**
+ * The Host values a request must carry to reach this listener.
+ *
+ * A server is reached by whatever a client puts in the `Host` header, which
+ * must be one of the addresses the bound socket actually answers — the value
+ * the operator chose (`BAYZ_HOST`) plus, for a wildcard, every interface that
+ * wildcard binds. That is how a legitimate client names the server (opening
+ * `https://<lan-ip>:<port>` in a browser sends the LAN IP as Host); anything
+ * else is a DNS-rebinding or cross-site attempt and stays refused.
+ *
+ * A concrete bind contributes that single value. A wildcard bind (`0.0.0.0`,
+ * `::`) contributes every non-loopback, non-link-local local interface,
+ * because it answers on all of them. A hostname bind contributes the name as
+ * written. An empty value contributes nothing and the caller's loopback
+ * defaults still stand.
+ */
+export function hostsForBind(bind: string | undefined): string[] {
+  if (typeof bind !== "string" || bind.length === 0) {
+    return [];
+  }
+  const bare = bareAddress(bind).toLowerCase();
+  if (isIP(bare) === 0) {
+    // A hostname. Its addresses cannot be known without a DNS call; the name
+    // itself is what a client puts in `Host`, so allowing it is both correct
+    // and complete.
+    return [bare];
+  }
+  if (bare === "0.0.0.0" || bare === "::" || bare === "*") {
+    const hosts: string[] = [];
+    for (const entries of Object.values(networkInterfaces())) {
+      for (const entry of entries ?? []) {
+        if (entry.internal) {
+          // Loopback is already in the guard's default set; skip it here.
+          continue;
+        }
+        const a = entry.address.toLowerCase();
+        if (entry.family === "IPv6" && a.startsWith("fe8")) {
+          // Link-local needs a zone id to be reachable from another host.
+          continue;
+        }
+        hosts.push(a);
+      }
+    }
+    return [...new Set(hosts)];
+  }
+  // A concrete loopback address needs nothing beyond itself, which is already
+  // in the guard's default set; a concrete non-loopback address contributes
+  // itself — the address a LAN client puts in `Host`.
+  return [bare];
 }

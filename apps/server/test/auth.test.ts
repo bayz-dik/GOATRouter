@@ -255,6 +255,43 @@ test("loopback Host values are accepted", async (t) => {
   }
 });
 
+test("an operator-supplied bind Host is served, matching a non-loopback deploy", async (t) => {
+  // A LAN bind is reached by a client whose Host is the bound address. The real
+  // entry supplies that address through `allowedHosts`; this is the guard honouring it.
+  const app = buildApp({
+    logger: false,
+    apiToken: TOKEN,
+    registerTestRoutes: true,
+    rateLimit: { authMax: 1000 },
+    allowedHosts: ["10.103.211.130"],
+  });
+  t.after(() => app.close());
+
+  for (const host of ["10.103.211.130:20159", "10.103.211.130"]) {
+    const ok = await app.inject({
+      method: "GET",
+      url: "/__test/guarded",
+      headers: { ...AUTH, host },
+    });
+    assert.equal(ok.statusCode, 200, `the bound Host must be served: ${host}`);
+  }
+  // An unrelated hostname still fails closed against the same allowlist.
+  const evil = await app.inject({
+    method: "GET",
+    url: "/__test/guarded",
+    headers: { ...AUTH, host: "evil.example.com" },
+  });
+  assert.equal(evil.statusCode, 403);
+  assert.equal(evil.json().error.code, "forbidden_host");
+  // And an unauthorised request to the bound Host is still refused, not served.
+  const unauth = await app.inject({
+    method: "GET",
+    url: "/__test/guarded",
+    headers: { host: "10.103.211.130:20159" },
+  });
+  assert.equal(unauth.statusCode, 401);
+});
+
 test("health is still reachable under a hostile Host without leaking anything", async (t) => {
   const app = guardedApp({ rateLimit: { authMax: 1000 } });
   t.after(() => app.close());

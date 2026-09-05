@@ -3,7 +3,7 @@ import { registerLocalListener } from "@bayz/proxy";
 import { configureOutboundConcurrency } from "@bayz/router";
 import { buildApp } from "./app.js";
 import { loadRuntimeConfig } from "./config.js";
-import { PostureError, resolvePosture } from "./posture.js";
+import { PostureError, hostsForBind, resolvePosture } from "./posture.js";
 import { createBayzRuntime, type BayzRuntime } from "./runtime.js";
 import { TlsError, loadTlsConfig, type TlsConfig } from "./tls.js";
 
@@ -90,6 +90,15 @@ const app = buildApp({
   // The real server enables the loopback-local admin seam so a same-uid operator
   // can rotate a lost API token without a credential deadlock.
   loopbackLocalAdmin: true,
+  // The guard refuses any Host not in its allowlist. A non-loopback listener is
+  // reached by clients that put one of its bound addresses in `Host`, so those
+  // addresses must be permitted or a LAN/remote friend could never connect —
+  // even the Web UI's same-origin requests (Host = the LAN IP) would be refused.
+  // `hostsForBind` yields exactly the addresses the socket answers; unrelated
+  // attacker hostnames and cross-site origins remain refused.
+  ...(posture.posture === "loopback"
+    ? {}
+    : { allowedHosts: hostsForBind(config.host) }),
 });
 
 app.log.info(
