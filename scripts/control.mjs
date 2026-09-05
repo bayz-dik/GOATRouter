@@ -58,7 +58,7 @@ export async function dataDir() {
 export function webUrl() {
   const host = lifecycle.healthHost(process.env.BAYZ_HOST ?? lifecycle.DEFAULT_HOST);
   const port = process.env.BAYZ_PORT ?? lifecycle.DEFAULT_PORT;
-  const scheme = process.env.BAYZ_TLS === "true" ? "https" : "http";
+  const scheme = lifecycle.schemeFrom(process.env);
   return `${scheme}://${host}:${port}`;
 }
 

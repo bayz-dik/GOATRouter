@@ -52,10 +52,70 @@ export function healthHost(host) {
   return host;
 }
 
+/**
+ * The scheme the server listens with for this environment.
+ *
+ * The server enables TLS when both `BAYZ_TLS_CERT` and `BAYZ_TLS_KEY` are
+ * present (apps/server/src/tls.ts); presence of either without the other is a
+ * startup failure. Mirroring that same pair here keeps the control plane's
+ * health probe and Web-UI URL on the same scheme the listener actually uses —
+ * a LAN/TLS bind must not be probed over plain http, which can never succeed.
+ */
+export function schemeFrom(env = process.env) {
+  const present = (name) => env[name] !== undefined && env[name] !== "";
+  return present("BAYZ_TLS_CERT") && present("BAYZ_TLS_KEY") ? "https" : "http";
+}
+
 export function healthUrlFrom(env, overrides = {}) {
   const host = healthHost(env.BAYZ_HOST ?? overrides.host ?? DEFAULT_HOST);
   const port = env.BAYZ_PORT ?? overrides.port ?? DEFAULT_PORT;
-  return `http://${host}:${port}/api/health`;
+  return `${schemeFrom(env)}://${host}:${port}/api/health`;
+}
+
+/**
+ * Fetch a local health URL, tolerating the server's own TLS certificate.
+ *
+ * A LAN/TLS bind almost always uses a self-signed certificate (the operator
+ * generated it to satisfy the posture requirement, not to obtain a public CA).
+ * A liveness probe must not fail on that certificate: its entire purpose is
+ * "did the server I just started come up", and the certificate's validity is a
+ * separate concern the operator owns.
+ *
+ * Node's global fetch (undici) does not expose a stable per-request way to
+ * disable certificate verification, so the rejection flag is scoped here to the
+ * probe call itself — set immediately before the request and restored once the
+ * connection is established — and never widened for any other outbound request
+ * this process makes. That is enough for a TLS handshake against a self-signed
+ * server to succeed; a LAN/TLS bind would otherwise fail certificate
+ * verification and look like it never came up. The response and its body as
+ * pre-buffered text are returned together so a caller never re-reads the stream.
+ */
+export async function probeFetch(url, options = {}) {
+  const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  let response;
+  try {
+    response = await fetch(url, options);
+  } finally {
+    if (prev === undefined) {
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    } else {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+    }
+  }
+  // The body is read after the flag is restored, but the request itself (the
+  // part governed by certificate verification) already happened under the
+  // scoped window, so a self-signed server can still be probed end to end.
+  const text = await response.text();
+  return { response, text };
+}
+
+export function parseHealthJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 export function versionFromManifest(manifestPath) {
@@ -99,11 +159,12 @@ export async function probeHealthAt(env, overrides = {}) {
   const host = healthHost(env.BAYZ_HOST ?? overrides.host ?? DEFAULT_HOST);
   const port = env.BAYZ_PORT ?? overrides.port ?? DEFAULT_PORT;
   try {
-    const response = await fetch(`http://${host}:${port}/api/health`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const { response, text } = await probeFetch(
+      `${schemeFrom(env)}://${host}:${port}/api/health`,
+      { signal: AbortSignal.timeout(5000) },
+    );
     if (response.status !== 200) return { ok: false, status: response.status, goat: false };
-    const body = await response.json();
+    const body = parseHealthJson(text);
     const goat =
       body?.status === "ok" &&
       typeof body?.version === "string" &&
@@ -167,7 +228,7 @@ export async function waitForHealthWatching(child, dir, timeoutMs = 60_000) {
     }
     if (ourReady()) {
       try {
-        const response = await fetch(healthUrlFrom(process.env));
+        const { response } = await probeFetch(healthUrlFrom(process.env));
         if (response.status === 200) return { ready: true, reason: "healthy" };
       } catch {
         // Not answering yet — keep waiting.
